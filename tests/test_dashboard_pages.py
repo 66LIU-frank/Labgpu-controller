@@ -204,6 +204,30 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn("Showing cached snapshot", html)
         self.assertIn("ssh probe timed out", html)
 
+    def test_reachable_probe_timeout_uses_cached_label_without_offline(self):
+        cached = sample_data()["hosts"][0]
+        host = {
+            "alias": "alpha_liu",
+            "hostname": "10.0.0.1",
+            "user": "lsg",
+            "port": "22",
+            "online": True,
+            "mode": "stale",
+            "probe_status": "probe_timeout",
+            "probe_incomplete": True,
+            "error": "GPU refresh timed out; SSH is reachable.",
+            "elapsed_ms": 24000,
+            "probed_at": "2026-04-28T11:46:14+00:00",
+            "last_seen": "2026-04-28T05:08:53+00:00",
+            "cached": cached,
+            "alerts": [{"severity": "warning"}],
+        }
+        html = render_host_card(host)
+        self.assertIn("online · cached", html)
+        self.assertIn("cached 2 GPUs", html)
+        self.assertIn("SSH is reachable", html)
+        self.assertNotIn("offline · cached", html)
+
     def test_formatters_and_server_health(self):
         self.assertEqual(format_memory(60000), "58.6 GB")
         self.assertEqual(process_state_label("R+"), "running")

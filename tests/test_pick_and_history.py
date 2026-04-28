@@ -77,6 +77,35 @@ class PickAndHistoryTest(unittest.TestCase):
         self.assertEqual(idle["confidence"], "high")
         self.assertIn("VRAM", owner_message(enriched["processes"][0], server_alias="hist"))
 
+    def test_history_does_not_mark_currently_free_gpu_idle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old = os.environ.get("LABGPU_HOME")
+            os.environ["LABGPU_HOME"] = tmp
+            try:
+                server = fake_lab_hosts()[0]
+                server["alias"] = "hist-free"
+                for _ in range(5):
+                    append_history(server)
+                current = fake_lab_hosts()[0]
+                current["alias"] = "hist-free"
+                current["gpus"][1]["memory_used_mb"] = 1
+                current["gpus"][1]["memory_free_mb"] = current["gpus"][1]["memory_total_mb"] - 1
+                current["gpus"][1]["utilization_gpu"] = 0
+                current["gpus"][1]["processes"] = []
+                current["gpus"][1]["status"] = "free"
+                current["gpus"][1]["availability"] = "free"
+                current["gpus"][1]["health_status"] = "healthy"
+                current["gpus"][1].pop("idle_evidence", None)
+                enriched = apply_history_evidence(current, read_history("hist-free"))
+            finally:
+                if old is None:
+                    os.environ.pop("LABGPU_HOME", None)
+                else:
+                    os.environ["LABGPU_HOME"] = old
+
+        self.assertNotEqual(enriched["gpus"][1].get("availability"), "idle_but_occupied")
+        self.assertNotIn("idle_evidence", enriched["gpus"][1])
+
 
 if __name__ == "__main__":
     unittest.main()

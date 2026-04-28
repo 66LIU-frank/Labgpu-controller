@@ -213,9 +213,12 @@ The inventory is written to:
 LabGPU Home includes Chinese/English and light/dark mode toggles in the top navigation and remembers those preferences in the browser.
 
 If a saved server cannot be reached, LabGPU keeps it visible as
-`offline · cached` when a previous successful probe exists. The card shows the
-current SSH error and labels GPU, disk, load, and process counts as cached, so a
-timeout does not make a server disappear or look fresher than it is.
+`offline · cached` when a previous successful probe exists. If SSH is reachable
+but the live GPU/process refresh times out, LabGPU treats it as an incomplete
+refresh instead of a dead server and can show the cached GPU snapshot as
+`online · cached`. Either way, cached GPU, disk, load, and process counts are
+labeled as cached so a timeout does not make a server disappear or look fresher
+than it is.
 
 The Train Now page (`/gpus`) ranks GPUs as `Recommended`, `OK`, `Busy`, or `Not recommended` using free VRAM, model, server load, disk health, alerts, and tags. Each GPU card includes copy buttons for the SSH command, `CUDA_VISIBLE_DEVICES`, and a launch snippet.
 

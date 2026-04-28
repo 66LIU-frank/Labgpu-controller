@@ -98,7 +98,7 @@ def collect_servers(
             alias = str(result.get("alias") or futures[future].alias)
             result = apply_history_evidence(result, read_history(alias))
             result["alerts"] = alerts_for_server(result)
-            if result.get("online"):
+            if result.get("online") and not result.get("probe_incomplete"):
                 write_server_cache(result)
                 append_history(result)
             else:
@@ -1020,8 +1020,13 @@ def render_host_card(host: object, *, compact: bool = False) -> str:
     health = server_health(host)
     status = "online" if online else "offline"
     cached = host.get("cached") if isinstance(host.get("cached"), dict) else None
-    using_cache = bool(cached and not online and not (host.get("gpus") or []))
-    status_label = "offline · cached" if using_cache else (f"{status} · {health}" if online and health != "ok" else status)
+    using_cache = bool(cached and (not online or host.get("probe_incomplete")) and not (host.get("gpus") or []))
+    if using_cache and online and host.get("probe_incomplete"):
+        status_label = "online · cached"
+    elif using_cache:
+        status_label = "offline · cached"
+    else:
+        status_label = f"{status} · {health}" if online and health != "ok" else status
     error = host.get("error")
     gpus = host.get("gpus") or []
     display_host = cached if using_cache and cached else host
@@ -1037,7 +1042,12 @@ def render_host_card(host: object, *, compact: bool = False) -> str:
     href = f"/servers/{esc(host.get('alias'))}"
     cache_prefix = "cached " if using_cache else ""
     cache_notice = ""
-    if using_cache:
+    if using_cache and online and host.get("probe_incomplete"):
+        cache_notice = (
+            f"<p class='muted' title='{esc(host.get('last_seen'))}'>SSH is reachable, but the live GPU refresh timed out. "
+            f"Showing cached snapshot from {esc(relative_time(host.get('last_seen')))}.</p>"
+        )
+    elif using_cache:
         cache_notice = (
             f"<p class='muted' title='{esc(host.get('last_seen'))}'>Showing cached snapshot from "
             f"{esc(relative_time(host.get('last_seen')))} because the current SSH probe failed.</p>"
@@ -1086,7 +1096,18 @@ def render_host_card(host: object, *, compact: bool = False) -> str:
 
 
 def render_cache_notice(host: dict[str, object]) -> str:
-    if host.get("online") or not isinstance(host.get("cached"), dict):
+    if not isinstance(host.get("cached"), dict):
+        return ""
+    if host.get("online") and host.get("probe_incomplete"):
+        return (
+            "<section class='panel'>"
+            "<div class='meta'><span class='badge warning'>Cached GPU snapshot</span>"
+            f"<span title='{esc(host.get('last_seen'))}'>last live GPU data {esc(relative_time(host.get('last_seen')))}</span></div>"
+            f"<p class='muted'>SSH is reachable, but the live GPU refresh timed out: {esc(host.get('error') or 'probe timeout')}. "
+            "GPU, process, disk, and health details below are from the last successful probe.</p>"
+            "</section>"
+        )
+    if host.get("online"):
         return ""
     return (
         "<section class='panel'>"
@@ -1100,10 +1121,24 @@ def render_cache_notice(host: dict[str, object]) -> str:
 
 def display_with_cache(host: dict[str, object]) -> dict[str, object]:
     cached = host.get("cached")
-    if host.get("online") or not isinstance(cached, dict):
+    if (host.get("online") and not host.get("probe_incomplete")) or not isinstance(cached, dict):
         return host
     merged = dict(cached)
-    for key in ("alias", "hostname", "user", "port", "proxyjump", "online", "error", "elapsed_ms", "mode", "last_seen", "cached"):
+    for key in (
+        "alias",
+        "hostname",
+        "user",
+        "port",
+        "proxyjump",
+        "online",
+        "error",
+        "elapsed_ms",
+        "mode",
+        "last_seen",
+        "cached",
+        "probe_status",
+        "probe_incomplete",
+    ):
         if key in host:
             merged[key] = host[key]
     return merged

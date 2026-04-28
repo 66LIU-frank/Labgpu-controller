@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +35,7 @@ def write_server_cache(payload: dict[str, Any]) -> None:
     if not alias or not payload.get("online"):
         return
     path = server_cache_path(alias)
-    tmp = path.with_suffix(".json.tmp")
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
     tmp.replace(path)
 

@@ -1,6 +1,9 @@
+import subprocess
 import unittest
+from unittest.mock import patch
 
-from labgpu.remote.probe import parse_probe_output, redact_command
+from labgpu.remote.probe import parse_probe_output, probe_host, redact_command
+from labgpu.remote.ssh_config import SSHHost
 
 
 class RemoteProbeTest(unittest.TestCase):
@@ -46,6 +49,33 @@ available=1
         self.assertNotIn("hunter2", redacted)
         self.assertIn("--max_new_tokens 128", redacted)
         self.assertIn("--ok value", redacted)
+
+    def test_probe_timeout_is_stale_when_ssh_is_reachable(self):
+        side_effects = [
+            subprocess.TimeoutExpired(cmd="ssh", timeout=24),
+            subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr=""),
+        ]
+        with patch("labgpu.remote.probe.subprocess.run", side_effect=side_effects):
+            payload = probe_host(SSHHost(alias="alpha_liu"), timeout=8)
+
+        self.assertTrue(payload["online"])
+        self.assertTrue(payload["probe_incomplete"])
+        self.assertEqual(payload["probe_status"], "probe_timeout")
+        self.assertEqual(payload["mode"], "stale")
+        self.assertIn("SSH is reachable", payload["error"])
+
+    def test_probe_failure_is_stale_when_ssh_is_reachable(self):
+        side_effects = [
+            subprocess.CompletedProcess(args=["ssh"], returncode=255, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["ssh"], returncode=0, stdout="", stderr=""),
+        ]
+        with patch("labgpu.remote.probe.subprocess.run", side_effect=side_effects):
+            payload = probe_host(SSHHost(alias="alpha_liu"), timeout=8)
+
+        self.assertTrue(payload["online"])
+        self.assertTrue(payload["probe_incomplete"])
+        self.assertEqual(payload["probe_status"], "probe_failed")
+        self.assertEqual(payload["mode"], "stale")
 
 
 if __name__ == "__main__":

@@ -8,6 +8,8 @@ from labgpu.core.paths import cache_dir
 from labgpu.remote.cache import safe_alias
 from labgpu.utils.time import now_utc
 
+MIN_IDLE_OCCUPIED_MB = 1024
+
 
 def history_dir() -> Path:
     path = cache_dir() / "history"
@@ -129,13 +131,15 @@ def index_proc_history(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, A
 def gpu_idle_evidence(gpu: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     if len(rows) < 2:
         return None
+    used_mb = int(gpu.get("memory_used_mb") or 0)
+    if used_mb <= MIN_IDLE_OCCUPIED_MB:
+        return None
     low_util = [row for row in rows if int(row.get("utilization_gpu") or 0) < 3]
-    occupied = [row for row in rows if int(row.get("memory_used_mb") or 0) > 1024]
+    occupied = [row for row in rows if int(row.get("memory_used_mb") or 0) > MIN_IDLE_OCCUPIED_MB]
     if len(low_util) < 2 or len(occupied) < 2:
         return None
     confidence = "high" if len(low_util) >= 5 and len(occupied) >= 5 else "medium"
     minutes = max(1, len(rows) - 1)
-    used_mb = int(gpu.get("memory_used_mb") or 0)
     return {
         "confidence": confidence,
         "low_util_samples": len(low_util),

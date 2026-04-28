@@ -104,6 +104,8 @@ SENSITIVE_NAME_RE = re.compile(r"(?i)(^|[_\-.])(TOKEN|KEY|SECRET|PASSWORD|PASSWD
 
 def probe_host(host: SSHHost, *, timeout: int = 8) -> dict[str, Any]:
     started = time.monotonic()
+    connect_timeout = max(1, min(int(timeout), 5))
+    command_timeout = max(int(timeout) + 16, 24)
     try:
         result = subprocess.run(
             [
@@ -111,7 +113,9 @@ def probe_host(host: SSHHost, *, timeout: int = 8) -> dict[str, Any]:
                 "-o",
                 "BatchMode=yes",
                 "-o",
-                f"ConnectTimeout={timeout}",
+                f"ConnectTimeout={connect_timeout}",
+                "-o",
+                "ConnectionAttempts=1",
                 "-q",
                 host.alias,
                 "sh",
@@ -121,12 +125,32 @@ def probe_host(host: SSHHost, *, timeout: int = 8) -> dict[str, Any]:
             capture_output=True,
             input=build_remote_script(host.disk_paths),
             text=True,
-            timeout=max(timeout + 4, 6),
+            timeout=command_timeout,
         )
     except subprocess.TimeoutExpired:
-        return _base(host, online=False, error="ssh probe timed out", elapsed=time.monotonic() - started)
+        if ssh_reachable(host, timeout=connect_timeout):
+            payload = _base(
+                host,
+                online=True,
+                error="GPU refresh timed out; SSH is reachable.",
+                elapsed=time.monotonic() - started,
+            )
+            payload["mode"] = "stale"
+            payload["probe_status"] = "probe_timeout"
+            payload["probe_incomplete"] = True
+            return payload
+        return _base(host, online=False, error="ssh connection timed out", elapsed=time.monotonic() - started)
     except OSError as exc:
         return _base(host, online=False, error=str(exc), elapsed=time.monotonic() - started)
+
+    if result.returncode != 0:
+        error = result.stderr.strip() or "GPU refresh failed; SSH is reachable."
+        if ssh_reachable(host, timeout=connect_timeout):
+            payload = _base(host, online=True, error=error, elapsed=time.monotonic() - started)
+            payload["mode"] = "stale"
+            payload["probe_status"] = "probe_failed"
+            payload["probe_incomplete"] = True
+            return payload
 
     payload = parse_probe_output(result.stdout)
     payload.update(
@@ -141,6 +165,31 @@ def probe_host(host: SSHHost, *, timeout: int = 8) -> dict[str, Any]:
     if not payload.get("online"):
         payload["mode"] = "offline"
     return payload
+
+
+def ssh_reachable(host: SSHHost, *, timeout: int = 5) -> bool:
+    try:
+        result = subprocess.run(
+            [
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                f"ConnectTimeout={max(1, min(int(timeout), 5))}",
+                "-o",
+                "ConnectionAttempts=1",
+                "-q",
+                host.alias,
+                "true",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=max(timeout + 2, 4),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
 
 
 def parse_probe_output(output: str) -> dict[str, Any]:

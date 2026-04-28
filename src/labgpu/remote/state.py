@@ -210,6 +210,15 @@ def alerts_for_server(host: dict[str, Any]) -> list[dict[str, Any]]:
     if not host.get("online"):
         alerts.append({"server": alias, "type": "offline", "severity": "error", "message": host.get("error") or "SSH probe failed."})
         return alerts
+    if host.get("probe_incomplete") or host.get("probe_status") == "probe_timeout":
+        alerts.append(
+            {
+                "server": alias,
+                "type": "probe_timeout",
+                "severity": "warning",
+                "message": host.get("error") or "GPU refresh timed out; SSH is reachable.",
+            }
+        )
     for disk in host.get("disks") or []:
         if not isinstance(disk, dict):
             continue
