@@ -212,6 +212,11 @@ The inventory is written to:
 
 LabGPU Home includes Chinese/English and light/dark mode toggles in the top navigation and remembers those preferences in the browser.
 
+LabGPU Home opens pages from local snapshots by default, then refreshes stale
+server data in the background. Moving between Overview, Train Now, My Training,
+Servers, Alerts, and Settings should not block on SSH probes. Use `Refresh now`
+when you explicitly want the page to wait for a live probe.
+
 If a saved server cannot be reached, LabGPU keeps it visible as
 `offline · cached` when a previous successful probe exists. If SSH is reachable
 but the live GPU/process refresh times out, LabGPU treats it as an incomplete

@@ -2,9 +2,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from labgpu.core.config import LabGPUConfig, ServerEntry, write_config
 from labgpu.remote.dashboard import (
+    collect_servers,
     filter_available_gpu_items,
     filter_gpu_items,
     format_memory,
@@ -20,6 +22,7 @@ from labgpu.remote.dashboard import (
     render_settings_page,
     server_health,
 )
+from labgpu.remote.cache import write_server_cache
 from labgpu.remote.state import annotate_server, build_overview
 
 
@@ -157,6 +160,31 @@ class DashboardPagesTest(unittest.TestCase):
             self.assertIn("alpha_liu", html)
             self.assertIn("value='alpha_liu' checked", html)
             self.assertIn("Save selected hosts", html)
+
+    def test_cached_ui_collection_does_not_probe_before_rendering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_home = os.environ.get("LABGPU_HOME")
+            os.environ["LABGPU_HOME"] = tmp
+            config = LabGPUConfig()
+            config.servers["alpha_liu"] = ServerEntry(name="alpha_liu", alias="alpha_liu", enabled=True, tags=["A100"])
+            write_config(config)
+            cached = sample_data()["hosts"][0]
+            cached["probed_at"] = "2026-04-28T12:00:00+00:00"
+            write_server_cache(cached)
+            try:
+                with patch("labgpu.remote.dashboard.probe_host", side_effect=AssertionError("should not probe")):
+                    data = collect_servers(use_cache=True, background_refresh=False)
+            finally:
+                if old_home is None:
+                    os.environ.pop("LABGPU_HOME", None)
+                else:
+                    os.environ["LABGPU_HOME"] = old_home
+        self.assertEqual(data["hosts"][0]["alias"], "alpha_liu")
+        self.assertTrue(data["hosts"][0]["from_cache"])
+        self.assertEqual(data["cache_mode"], "snapshot")
+        html = render_index(data)
+        self.assertIn("Cached page", html)
+        self.assertIn("Refresh now", html)
 
     def test_summary_cards_and_empty_gpu_state(self):
         data = sample_data()

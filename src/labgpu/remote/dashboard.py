@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import json
 import secrets
+import threading
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -23,6 +24,10 @@ from labgpu.remote import ranking
 from labgpu.remote.ssh_config import SSHHost, parse_ssh_config, resolve_ssh_host
 from labgpu.remote.state import alerts_for_server, annotate_server, build_overview, human_duration
 from labgpu.remote.workspace import failure_inbox_items, training_items
+
+CACHE_TTL_SECONDS = 30
+_REFRESH_LOCK = threading.Lock()
+_REFRESHING_ALIASES: set[str] = set()
 
 
 def serve(
@@ -66,6 +71,8 @@ def collect_servers(
     pattern: str | None = None,
     timeout: int = 8,
     fake_lab: bool = False,
+    use_cache: bool = False,
+    background_refresh: bool = False,
 ) -> dict[str, object]:
     if fake_lab:
         data = fake_lab_data()
@@ -89,24 +96,13 @@ def collect_servers(
         return {"hosts": [], "count": 0, "error": "no SSH hosts selected"}
     hosts = [resolve_ssh_host(host) for host in hosts]
     host_order = {host.alias: index for index, host in enumerate(hosts)}
-    results = []
-    with ThreadPoolExecutor(max_workers=min(16, len(hosts))) as executor:
-        futures = {executor.submit(probe_host, host, timeout=timeout): host for host in hosts}
-        for future in as_completed(futures):
-            result = future.result()
-            result = annotate_server(result)
-            alias = str(result.get("alias") or futures[future].alias)
-            result = apply_history_evidence(result, read_history(alias))
-            result["alerts"] = alerts_for_server(result)
-            if result.get("online") and not result.get("probe_incomplete"):
-                write_server_cache(result)
-                append_history(result)
-            else:
-                cached = read_server_cache(alias)
-                if cached:
-                    result["cached"] = cached
-                    result["last_seen"] = cached.get("probed_at")
-            results.append(result)
+    if use_cache:
+        results, refresh_hosts = collect_cached_results(hosts)
+        if background_refresh and refresh_hosts:
+            schedule_background_refresh(refresh_hosts, timeout=timeout)
+    else:
+        results = collect_live_results(hosts, timeout=timeout)
+        refresh_hosts = []
     results.sort(key=lambda item: host_order.get(str(item.get("alias") or ""), len(host_order)))
     overview = build_overview(results)
     scoped_servers = {str(item.get("alias") or "") for item in results if isinstance(item, dict) and item.get("alias")}
@@ -117,13 +113,127 @@ def collect_servers(
     overview["alerts"] = len(active_alerts)
     overview["critical_alerts"] = sum(1 for item in active_alerts if item.get("severity") == "error")
     overview["warning_alerts"] = sum(1 for item in active_alerts if item.get("severity") == "warning")
-    return {
+    payload: dict[str, object] = {
         "hosts": results,
         "count": len(results),
         "overview": overview,
         "error": None,
         "inventory_mode": "saved" if using_saved_inventory else "ssh_config",
     }
+    if use_cache:
+        payload["cache_mode"] = "snapshot"
+        payload["cache_ttl_seconds"] = CACHE_TTL_SECONDS
+        payload["refreshing_hosts"] = [host.alias for host in refresh_hosts]
+        payload["oldest_cache_age_seconds"] = max((int(item.get("cache_age_seconds") or 0) for item in results), default=0)
+    return payload
+
+
+def collect_live_results(hosts: list[SSHHost], *, timeout: int) -> list[dict[str, object]]:
+    results: list[dict[str, object]] = []
+    with ThreadPoolExecutor(max_workers=min(16, len(hosts))) as executor:
+        futures = {executor.submit(probe_host, host, timeout=timeout): host for host in hosts}
+        for future in as_completed(futures):
+            host = futures[future]
+            result = prepare_probe_result(future.result(), alias=host.alias)
+            if result.get("online") and not result.get("probe_incomplete"):
+                write_server_cache(result)
+                append_history(result)
+            else:
+                cached = read_server_cache(host.alias)
+                if cached:
+                    result["cached"] = cached
+                    result["last_seen"] = cached.get("probed_at")
+            results.append(result)
+    return results
+
+
+def collect_cached_results(hosts: list[SSHHost]) -> tuple[list[dict[str, object]], list[SSHHost]]:
+    results: list[dict[str, object]] = []
+    refresh_hosts: list[SSHHost] = []
+    for host in hosts:
+        cached = read_server_cache(host.alias)
+        if cached:
+            result = dict(cached)
+            result.update(host_identity(host))
+            result["from_cache"] = True
+            result["cache_snapshot_at"] = cached.get("probed_at")
+            age = cache_age_seconds(cached.get("probed_at"))
+            if age is not None:
+                result["cache_age_seconds"] = age
+            result = prepare_probe_result(result, alias=host.alias)
+            if age is None or age > CACHE_TTL_SECONDS:
+                refresh_hosts.append(host)
+            results.append(result)
+            continue
+        result = {
+            **host_identity(host),
+            "online": False,
+            "mode": "cache_miss",
+            "from_cache": True,
+            "cache_miss": True,
+            "error": "No cached probe yet. Refreshing in background.",
+            "gpus": [],
+            "processes": [],
+            "disks": [],
+        }
+        result = prepare_probe_result(result, alias=host.alias)
+        refresh_hosts.append(host)
+        results.append(result)
+    return results, refresh_hosts
+
+
+def prepare_probe_result(result: dict[str, object], *, alias: str) -> dict[str, object]:
+    result = annotate_server(result)
+    result = apply_history_evidence(result, read_history(alias))
+    result["alerts"] = alerts_for_server(result)
+    return result
+
+
+def host_identity(host: SSHHost) -> dict[str, object]:
+    return {
+        "alias": host.alias,
+        "hostname": host.hostname,
+        "user": host.user,
+        "port": host.port,
+        "proxyjump": host.proxyjump,
+        "tags": host.tags,
+        "disk_paths": host.disk_paths,
+        "shared_account": host.shared_account,
+        "allow_stop_own_process": host.allow_stop_own_process,
+    }
+
+
+def schedule_background_refresh(hosts: list[SSHHost], *, timeout: int) -> None:
+    with _REFRESH_LOCK:
+        pending = [host for host in hosts if host.alias not in _REFRESHING_ALIASES]
+        for host in pending:
+            _REFRESHING_ALIASES.add(host.alias)
+    if not pending:
+        return
+    thread = threading.Thread(target=background_refresh_worker, args=(pending, timeout), daemon=True)
+    thread.start()
+
+
+def background_refresh_worker(hosts: list[SSHHost], timeout: int) -> None:
+    try:
+        collect_live_results(hosts, timeout=timeout)
+    finally:
+        with _REFRESH_LOCK:
+            for host in hosts:
+                _REFRESHING_ALIASES.discard(host.alias)
+
+
+def cache_age_seconds(value: object) -> int | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        timestamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return max(0, int((datetime.now(timezone.utc) - timestamp.astimezone(timezone.utc)).total_seconds()))
 
 
 class ServerHandler(BaseHTTPRequestHandler):
@@ -155,10 +265,10 @@ class ServerHandler(BaseHTTPRequestHandler):
             self._json(self._data(parsed.query))
         elif parsed.path.startswith("/servers/"):
             alias = unquote(parsed.path.removeprefix("/servers/")).strip("/")
-            self._html(render_detail(self._data_for_alias(alias)))
+            self._html(render_detail(self._data_for_alias(alias, parsed.query)))
         elif parsed.path.startswith("/api/servers/"):
             alias = unquote(parsed.path.removeprefix("/api/servers/")).strip("/")
-            self._json(self._data_for_alias(alias))
+            self._json(self._data_for_alias(alias, parsed.query))
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -195,12 +305,15 @@ class ServerHandler(BaseHTTPRequestHandler):
         if params.get("hosts"):
             names = split_hosts(params["hosts"][0])
         pattern = params.get("pattern", [self.pattern])[0]
+        refresh = truthy(params.get("refresh", ["0"])[0])
         data = collect_servers(
             ssh_config=self.ssh_config,
             names=names,
             pattern=pattern,
             timeout=self.timeout,
             fake_lab=self.fake_lab,
+            use_cache=not refresh,
+            background_refresh=not refresh,
         )
         data["ui"] = {
             "q": params.get("q", [""])[0].strip(),
@@ -220,13 +333,17 @@ class ServerHandler(BaseHTTPRequestHandler):
         }
         return data
 
-    def _data_for_alias(self, alias: str) -> dict[str, object]:
+    def _data_for_alias(self, alias: str, query: str = "") -> dict[str, object]:
+        params = parse_qs(query)
+        refresh = truthy(params.get("refresh", ["0"])[0])
         return collect_servers(
             ssh_config=self.ssh_config,
             names=[alias],
             pattern=None,
             timeout=self.timeout,
             fake_lab=self.fake_lab,
+            use_cache=not refresh,
+            background_refresh=not refresh,
         )
 
     def _stop_process(self, alias: str, pid: int, *, force: bool) -> None:
@@ -356,6 +473,7 @@ def render_index(data: dict[str, object]) -> str:
             <a class="button" href="/api/servers">JSON</a>
           </div>
         </section>
+        {render_data_status(data)}
         {render_overview(overview)}
         {render_train_now(overview, limit=4)}
         {render_my_training(training_items(hosts, overview), limit=8, view_all='/me')}
@@ -379,6 +497,7 @@ def render_gpus_page(data: dict[str, object]) -> str:
           </div>
           <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/">Overview</a></div>
         </section>
+        {render_data_status(data)}
         {render_filters(ui, kind='gpus')}
         {render_gpu_watch_panel(ui)}
         {render_gpu_finder(overview, ui)}
@@ -400,6 +519,7 @@ def render_me_page(data: dict[str, object]) -> str:
           </div>
           <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/">Overview</a></div>
         </section>
+        {render_data_status(data)}
         {render_process_filters(ui)}
         {render_my_training(training_items(hosts, overview), ui=ui)}
         {render_my_processes(overview.get('my_process_items') if isinstance(overview, dict) else [], ui=ui, title='Agentless Own GPU Processes')}
@@ -422,6 +542,7 @@ def render_servers_page(data: dict[str, object]) -> str:
           </div>
           <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/settings">Settings</a></div>
         </section>
+        {render_data_status(data)}
         {render_server_filters(ui)}
         <section class="grid">{cards}</section>
         """,
@@ -441,6 +562,7 @@ def render_alerts_page(data: dict[str, object]) -> str:
           </div>
           <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/">Overview</a></div>
         </section>
+        {render_data_status(data)}
         {render_alert_filters(ui)}
         {render_alerts(overview.get('all_alert_items') if isinstance(overview, dict) else [], ui=ui, title='All Alerts')}
         """,
@@ -508,6 +630,31 @@ def render_overview(overview: dict[str, object]) -> str:
       <div class="summary-card {alert_class}"><strong>{esc(overview.get('alerts', 0))}</strong><span>alerts · {esc(critical)} critical / {esc(warnings)} warning</span></div>
     </section>
     """
+
+
+def render_data_status(data: dict[str, object]) -> str:
+    if data.get("cache_mode") != "snapshot":
+        return ""
+    hosts = data.get("hosts") if isinstance(data.get("hosts"), list) else []
+    missing = sum(1 for host in hosts if isinstance(host, dict) and host.get("cache_miss"))
+    refreshing = data.get("refreshing_hosts") if isinstance(data.get("refreshing_hosts"), list) else []
+    oldest = int(data.get("oldest_cache_age_seconds") or 0)
+    age = human_duration(oldest) if oldest else "just now"
+    if missing and refreshing:
+        message = f"{missing} server has no cached snapshot yet. Background refresh is running."
+    elif refreshing:
+        message = f"Opening from local cache. Background refresh is running for {len(refreshing)} server(s). Oldest snapshot: {age}."
+    else:
+        message = f"Opening from local cache. Oldest snapshot: {age}."
+    return (
+        "<section class='panel'>"
+        "<div class='meta'>"
+        "<span class='badge'>Cached page</span>"
+        f"<span>{esc(message)}</span>"
+        "<button class='button' id='refresh-now' type='button'>Refresh now</button>"
+        "</div>"
+        "</section>"
+    )
 
 
 def render_filters(ui: dict[str, object], *, kind: str = "all") -> str:
@@ -1003,6 +1150,7 @@ def render_detail(data: dict[str, object]) -> str:
             <a class="button" href="/api/servers/{esc(host.get('alias'))}">JSON</a>
           </div>
         </section>
+        {render_data_status(data)}
         {render_cache_notice(host)}
         {render_health(host)}
         {render_labgpu_runs(host)}
@@ -1059,6 +1207,8 @@ def render_host_card(host: object, *, compact: bool = False) -> str:
       </table>
     """
     alerts = host.get("alerts") or []
+    probe_label = "refreshing" if host.get("cache_miss") else "cached" if host.get("from_cache") else f"probe {format_latency(host.get('elapsed_ms'))}"
+    probe_class = "" if host.get("from_cache") else "warn-text" if probe_seconds(host.get("elapsed_ms")) >= 5 else ""
     return f"""
     <article class="card">
       <div class="card-head">
@@ -1073,7 +1223,7 @@ def render_host_card(host: object, *, compact: bool = False) -> str:
         <span>port {esc(host.get('port') or '22')}</span>
         <span>{esc(mode)}</span>
         <span>{esc(join_values(host.get('tags') or []))}</span>
-        <span class="{esc('warn-text' if probe_seconds(host.get('elapsed_ms')) >= 5 else '')}">probe {esc(format_latency(host.get('elapsed_ms')))}</span>
+        <span class="{esc(probe_class)}">{esc(probe_label)}</span>
       </div>
       <div class="meta">
         <span>{esc(cache_prefix)}{esc(summary['total'])} GPUs</span>
@@ -1493,6 +1643,8 @@ const translations = {{
   "JSON": "JSON",
   "Pause refresh": "暂停刷新",
   "Resume refresh": "继续刷新",
+  "Refresh now": "立即刷新",
+  "Cached page": "缓存页面",
   "Dark": "深色",
   "Light": "浅色",
   "LabGPU Home": "LabGPU 主页",
@@ -1668,6 +1820,14 @@ if (btn) {{
   btn.addEventListener("click", () => {{
     paused = !paused;
     btn.textContent = translateText(paused ? "Resume refresh" : "Pause refresh", currentLanguage());
+  }});
+}}
+const refreshNow = document.getElementById("refresh-now");
+if (refreshNow) {{
+  refreshNow.addEventListener("click", () => {{
+    const url = new URL(window.location.href);
+    url.searchParams.set("refresh", "1");
+    window.location.href = url.toString();
   }});
 }}
 setInterval(() => {{
