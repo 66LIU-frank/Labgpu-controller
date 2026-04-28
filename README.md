@@ -91,7 +91,38 @@ That host can then show tracked/adopted/untracked experiments, run names, recent
 
 ## Quick Start
 
-Install from source:
+One-command install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/66LIU-frank/Labgpu-controller/main/install.sh | sh
+```
+
+Then start the local dashboard:
+
+```bash
+labgpu ui
+```
+
+For a specific server from your `~/.ssh/config`:
+
+```bash
+labgpu ui --hosts alpha_liu
+```
+
+For multiple servers:
+
+```bash
+labgpu ui --hosts alpha_liu,song_1,gpu4090
+```
+
+Save the server list once, then just run `labgpu ui` later:
+
+```bash
+labgpu servers import-ssh --hosts alpha_liu,song_1,gpu4090 --tags lab
+labgpu ui
+```
+
+Install from source for development:
 
 ```bash
 git clone git@github.com:66LIU-frank/Labgpu-controller.git labgpu
@@ -126,6 +157,8 @@ The inventory is written to:
 ```text
 ~/.labgpu/config.toml
 ```
+
+LabGPU Home includes a light/dark mode toggle in the top navigation and remembers the preference in the browser.
 
 Example:
 

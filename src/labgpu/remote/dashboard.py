@@ -894,48 +894,108 @@ def page(title: str, body: str) -> str:
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{esc(title)}</title>
+<script>
+(function() {{
+  try {{
+    const saved = localStorage.getItem("labgpu-theme") || "system";
+    const dark = saved === "dark" || (saved === "system" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.dataset.theme = dark ? "dark" : "light";
+  }} catch (error) {{
+    document.documentElement.dataset.theme = "light";
+  }}
+}})();
+</script>
 <style>
-body{{font:14px/1.45 system-ui,sans-serif;margin:0;background:#f7f7f4;color:#1f2328}}
+:root{{
+  color-scheme: light;
+  --bg:#f7f7f4;
+  --surface:#fff;
+  --surface-soft:#fcfcfa;
+  --border:#d8d8d0;
+  --border-soft:#ecece6;
+  --text:#1f2328;
+  --muted:#667085;
+  --link:#344054;
+  --code:#1f2328;
+  --button:#fff;
+  --row:#eee;
+  --badge:#eef2f6;
+}}
+html[data-theme="dark"]{{
+  color-scheme: dark;
+  --bg:#0f1419;
+  --surface:#161b22;
+  --surface-soft:#111820;
+  --border:#2b3440;
+  --border-soft:#25303b;
+  --text:#e6edf3;
+  --muted:#9aa7b7;
+  --link:#d5dee9;
+  --code:#d8e2ef;
+  --button:#1d2630;
+  --row:#27313d;
+  --badge:#243244;
+}}
+body{{font:14px/1.45 system-ui,sans-serif;margin:0;background:var(--bg);color:var(--text)}}
 main{{width:min(1280px,calc(100vw - 32px));margin:0 auto;padding:22px 0 36px}}
-h1,h2,h3,p{{margin:0}} h1{{font-size:28px}} h2{{font-size:18px}} h3{{font-size:15px}} p,.muted{{color:#667085}}
-a{{color:inherit}} code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}}
+h1,h2,h3,p{{margin:0}} h1{{font-size:28px}} h2{{font-size:18px}} h3{{font-size:15px}} p,.muted{{color:var(--muted)}}
+a{{color:inherit}} code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--code)}}
 .topnav{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:18px}}
-.topnav a{{border:1px solid #d8d8d0;background:#fff;border-radius:999px;padding:6px 10px;text-decoration:none;color:#344054}}
+.topnav a,.topnav button{{border:1px solid var(--border);background:var(--button);border-radius:999px;padding:6px 10px;text-decoration:none;color:var(--link);font:inherit;cursor:pointer}}
 .toolbar{{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:18px}}
 .actions{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
-.button{{border:1px solid #d0d5dd;background:#fff;border-radius:6px;padding:7px 10px;color:#1f2328;text-decoration:none;cursor:pointer}}
-.filters{{display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:#fff;border:1px solid #d8d8d0;border-radius:8px;padding:12px;margin-bottom:14px}}
-.filters label{{display:flex;flex-direction:column;gap:4px;color:#667085;font-size:12px}}
-.filters input,.filters select{{border:1px solid #d0d5dd;border-radius:6px;padding:7px 8px;min-width:150px;background:#fff}}
+.button{{border:1px solid var(--border);background:var(--button);border-radius:6px;padding:7px 10px;color:var(--text);text-decoration:none;cursor:pointer}}
+.filters{{display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px}}
+.filters label{{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}}
+.filters input,.filters select{{border:1px solid var(--border);border-radius:6px;padding:7px 8px;min-width:150px;background:var(--button);color:var(--text)}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}}
 .grid.compact{{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}}
 .split{{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px;align-items:start}}
-.card{{background:#fff;border:1px solid #d8d8d0;border-radius:8px;padding:14px;overflow:hidden}}
+.card{{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;overflow:hidden}}
 .card-head{{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}}
-.meta{{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0;color:#667085;font-size:13px}}
+.meta{{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0;color:var(--muted);font-size:13px}}
 .pill{{border-radius:999px;padding:2px 9px;font-size:12px;background:#eee}}
 .pill.online{{color:#067647;background:#ecfdf3}} .pill.offline{{color:#b42318;background:#fef3f2}}
-.badge{{border-radius:999px;padding:2px 7px;font-size:12px;background:#eef2f6;color:#364152}}
+.badge{{border-radius:999px;padding:2px 7px;font-size:12px;background:var(--badge);color:var(--link)}}
 .badge.ok{{background:#ecfdf3;color:#067647}} .badge.warning{{background:#fffaeb;color:#b54708}} .badge.error{{background:#fef3f2;color:#b42318}}
 .error{{color:#b42318;margin:8px 0}}
-.small{{border:1px solid #d0d5dd;border-radius:5px;background:#fff;padding:3px 7px;font-size:12px;cursor:pointer}}
+.small{{border:1px solid var(--border);border-radius:5px;background:var(--button);color:var(--text);padding:3px 7px;font-size:12px;cursor:pointer}}
 .danger{{color:#b42318;border-color:#fda29b}} .danger-strong{{color:#fff;background:#b42318;border-color:#b42318}}
-.panel{{background:#fff;border:1px solid #d8d8d0;border-radius:8px;padding:14px;margin:14px 0;overflow:hidden}}
+.panel{{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin:14px 0;overflow:hidden}}
 .section-head{{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:4px}}
-.section-head a{{font-size:13px;color:#344054}}
+.section-head a{{font-size:13px;color:var(--link)}}
 .health{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}}
-.health>div{{background:#fff;border:1px solid #d8d8d0;border-radius:8px;padding:12px}}
-.health strong{{display:block;font-size:18px}} .health span{{color:#667085;font-size:12px}}
+.health>div{{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px}}
+.health strong{{display:block;font-size:18px}} .health span{{color:var(--muted);font-size:12px}}
 .gpu-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px;margin-top:10px}}
-.gpu-card{{border:1px solid #ecece6;border-radius:8px;padding:12px;background:#fcfcfa;overflow:hidden}}
-.gpu-card h3 span{{color:#667085;font-weight:500}}
+.gpu-card{{border:1px solid var(--border-soft);border-radius:8px;padding:12px;background:var(--surface-soft);overflow:hidden}}
+.gpu-card h3 span{{color:var(--muted);font-weight:500}}
 table{{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}}
-th,td{{border-top:1px solid #eee;padding:7px;text-align:left;vertical-align:top}} th{{color:#667085}}
+th,td{{border-top:1px solid var(--row);padding:7px;text-align:left;vertical-align:top}} th{{color:var(--muted)}}
+html[data-theme="dark"] .pill.online{{color:#86efac;background:#143421}} html[data-theme="dark"] .pill.offline{{color:#fca5a5;background:#3a1717}}
+html[data-theme="dark"] .badge.ok{{background:#143421;color:#86efac}} html[data-theme="dark"] .badge.warning{{background:#3b2a0a;color:#facc15}} html[data-theme="dark"] .badge.error{{background:#3a1717;color:#fca5a5}}
+html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
 @media(max-width:640px){{main{{width:calc(100vw - 20px)}}.grid,.split{{grid-template-columns:1fr}}.toolbar{{align-items:flex-start;flex-direction:column}}}}
 </style></head><body><main>{render_nav()}{body}</main>
 <script>
 let paused = false;
 const actionToken = "{esc(ServerHandler.action_token)}";
+const themeButton = document.getElementById("theme-toggle");
+function applyTheme(theme) {{
+  const dark = theme === "dark" || (theme === "system" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+  if (themeButton) themeButton.textContent = dark ? "Light mode" : "Dark mode";
+}}
+try {{
+  applyTheme(localStorage.getItem("labgpu-theme") || "system");
+  if (themeButton) {{
+    themeButton.addEventListener("click", () => {{
+      const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      localStorage.setItem("labgpu-theme", next);
+      applyTheme(next);
+    }});
+  }}
+}} catch (error) {{}}
 const btn = document.getElementById("pause-refresh");
 if (btn) {{
   btn.addEventListener("click", () => {{
@@ -990,6 +1050,7 @@ def render_nav() -> str:
       <a href="/servers">Servers</a>
       <a href="/alerts">Alerts</a>
       <a href="/settings">Settings</a>
+      <button id="theme-toggle" type="button">Dark mode</button>
     </nav>
     """
 

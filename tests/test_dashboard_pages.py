@@ -94,6 +94,7 @@ class DashboardPagesTest(unittest.TestCase):
         data = sample_data()
         html = render_gpus_page(data)
         self.assertIn("Find GPUs", html)
+        self.assertIn("theme-toggle", html)
         self.assertIn("CUDA_VISIBLE_DEVICES=0", html)
         filtered = filter_available_gpu_items(data["overview"]["available_gpu_items"], {"min_mem_gb": "80", "model": "A100"})
         self.assertEqual(filtered[0]["server"], "alpha_liu")
