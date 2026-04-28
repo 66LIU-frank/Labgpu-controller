@@ -20,3 +20,11 @@ For demos or development machines without NVIDIA GPUs:
 labgpu status --fake
 labgpu web --fake
 ```
+
+To view several SSH-configured servers from your laptop:
+
+```bash
+labgpu servers --hosts alpha_liu,Song-1
+```
+
+Then open `http://127.0.0.1:8787`.

@@ -50,3 +50,26 @@ export LABGPU_HOME=$HOME/.labgpu
 ```
 
 For shared lab mode, ask an admin to create a writable shared directory with appropriate group permissions.
+
+## `ssh alpha_liu` Fails on the Remote Server
+
+SSH aliases such as `alpha_liu` live in your laptop's `~/.ssh/config`. After you log into `alpha_liu`, that remote server usually does not know the alias.
+
+Run remote commands from your laptop:
+
+```bash
+ssh alpha_liu 'cd /tmp/labgpu && PYTHONPATH=src python3 -m labgpu status'
+```
+
+Or, once already logged into the remote server:
+
+```bash
+cd /tmp/labgpu
+PYTHONPATH=src python3 -m labgpu status
+```
+
+For a local overview of many SSH-configured servers, use:
+
+```bash
+labgpu servers --hosts alpha_liu,Song-1
+```

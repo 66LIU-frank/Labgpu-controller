@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from labgpu import __version__
-from labgpu.cli import adopt, context as context_cmd, diagnose, doctor, kill, list as list_cmd, logs, refresh, report, run as run_cmd, status, web
+from labgpu.cli import adopt, context as context_cmd, diagnose, doctor, kill, list as list_cmd, logs, refresh, report, run as run_cmd, servers, status, web
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -107,6 +107,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--fake", action="store_true")
     p.set_defaults(handler=web.run)
+
+    p = sub.add_parser("servers", help="start local SSH dashboard for configured servers")
+    p.add_argument("--hosts", help="comma-separated SSH aliases, for example alpha_liu,Song-1")
+    p.add_argument("--pattern", help="filter SSH aliases by substring")
+    p.add_argument("--config", help="SSH config path, default ~/.ssh/config")
+    p.add_argument("--bind", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8787)
+    p.add_argument("--timeout", type=int, default=8)
+    p.add_argument("--json", action="store_true", help="probe once and print JSON instead of starting web")
+    p.set_defaults(handler=servers.run)
 
     return parser
 

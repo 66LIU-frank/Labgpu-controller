@@ -119,7 +119,30 @@ labgpu report RUN
 labgpu context RUN [--format markdown|json]
 labgpu adopt PID --name NAME [--log train.log]
 labgpu web [--host 127.0.0.1] [--port 8765]
+labgpu servers [--hosts alpha_liu,Song-1] [--pattern Sui]
 ```
+
+## SSH Servers Dashboard
+
+`labgpu servers` runs on your local machine, reads your local `~/.ssh/config`, and probes configured servers over SSH. It does not require LabGPU to be installed on the remote servers.
+
+```bash
+labgpu servers --hosts alpha_liu,Song-1
+```
+
+Open:
+
+```text
+http://127.0.0.1:8787
+```
+
+For one-shot JSON:
+
+```bash
+labgpu servers --hosts alpha_liu --json
+```
+
+This is different from `labgpu web`: `web` shows the current machine's LabGPU runs, while `servers` is a local SSH overview page for many machines.
 
 ## Alpha Limitations
 
