@@ -1,102 +1,154 @@
 # LabGPU
 
+[![CI](https://github.com/66LIU-frank/Labgpu-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/66LIU-frank/Labgpu-controller/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Status](https://img.shields.io/badge/status-v0.1.0--alpha-orange)
+
 Personal GPU workspace for students using shared SSH servers.
 
 Find a free GPU. Launch training. Track your runs. Diagnose failures.
-
 No daemon. No root. No Slurm. No Kubernetes.
-
-```console
-$ labgpu ui
-```
 
 ![LabGPU Home demo preview](docs/assets/labgpu-home-demo.svg)
 
-## Quick Demo
-
-```console
-$ labgpu demo
-$ labgpu ui --fake-lab
-$ labgpu pick --fake-lab
-```
-
-LabGPU is a personal remote GPU training workspace for students and individual researchers who use several shared SSH GPU servers without admin privileges. It reads your existing `~/.ssh/config`, probes servers over SSH, recommends a GPU, tracks your own runs, saves logs and reproducibility context, diagnoses common failures, and helps you safely stop your own processes.
-
-The basic workflow does not require a remote daemon, root access, Slurm, Kubernetes, Docker, or a tracking server.
-
-```bash
-labgpu init
-labgpu ui
-labgpu pick --min-vram 24G --prefer A100
-labgpu run --name sft --gpu auto --min-vram 24G -- python train.py --config configs/sft.yaml
-labgpu where
-```
-
-Open the browser or CLI and answer the questions that matter before and after a training run:
-
-- Which SSH host has a GPU with enough free VRAM?
-- What command should I copy to start training there?
-- Where are my runs and untracked GPU processes?
-- What failed overnight: OOM, traceback, NCCL, disk full, or something else?
-- What context should I paste into an AI assistant or send to a teammate?
-- Can I safely stop my own process without touching anyone else's work?
-
-LabGPU is not trying to replace Slurm, Kubernetes, W&B, MLflow, ClearML, or a real scheduler. It is a personal workspace for the reality many students already live in: SSH aliases, tmux, `nvidia-smi`, scattered logs, full disks, and training runs that need to be found and understood after they fail.
-
-## What LabGPU Is Not
-
-LabGPU is not:
-
-- a scheduler
-- a reservation calendar
-- a quota system
-- an admin panel
-- a replacement for Slurm or Kubernetes
-- a replacement for W&B, MLflow, or ClearML
-- a tool for managing other people's jobs
-
-By default, LabGPU is personal. It helps you find GPUs, track your own training, export debug context, and only take safe actions on your own processes.
-
-## What You Get
-
-```text
-LabGPU Home - Personal Training Workspace
-
-Train Now / Recommended GPUs
-  Recommended  alpha_liu  GPU 0  A100 80GB      80GB free  copy ssh / CUDA / launch
-  OK           song_1     GPU 0  RTX 4090       23GB free  copy ssh / CUDA / launch
-
-My Runs
-  alpha_liu  sft_retry      running   GPU 0  PID 24988  tail log / diagnose / context
-  song_1     old_baseline   adopted   GPU 1  PID 19920  copy command / stop process
-
-Failed or Suspicious Runs
-  alpha_liu  pretrain_0428  failed    CUDA out of memory
-  song_1     PID 19920      warning   suspected idle
-
-Servers
-  alpha_liu  online  8 x A100      2 free / 8  resource details
-  song_1     online  4 x RTX 4090  1 free / 4  healthy
-```
-
-LabGPU turns raw GPU process monitoring into a personal training workflow:
+LabGPU is for the everyday student workflow: SSH into a few shared GPU boxes, find a usable card, run training in `tmux`, remember where it is, diagnose the failure, and copy one debug context for AI or a teammate.
 
 ```text
 find GPU -> run/adopt -> observe -> diagnose -> context/report -> safe action
 ```
 
-## Why It Exists
+## Start Fast
 
-Students often use several shared GPU servers without the power to install cluster software. They SSH into machines, run training in `tmux` or `nohup`, check `nvidia-smi`, forget where logs went, and discover OOMs the next morning.
+Try the fake multi-server demo on any laptop:
 
-LabGPU focuses on that exact gap:
+```bash
+pipx install git+https://github.com/66LIU-frank/Labgpu-controller.git
+labgpu demo
+labgpu pick --fake-lab
+```
 
-- **One personal page for many SSH servers**: use the SSH config you already have.
-- **Agentless first**: basic server/GPU/process visibility without remote install.
-- **Experiment-aware when possible**: if LabGPU exists remotely, show your runs, status, diagnosis, and context.
-- **Zero-SDK run capsules**: no training-code changes required.
-- **Local failure diagnosis**: OOM, NaN, traceback, NCCL, disk full, missing packages.
-- **Safe personal actions**: copy commands, adopt your processes, and stop only your own work.
+Use your real SSH GPU servers:
+
+```bash
+labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
+labgpu ui
+labgpu pick --min-vram 24G --prefer A100
+```
+
+On the chosen GPU server, launch a tracked training run:
+
+```bash
+labgpu run --name sft --gpu auto --min-vram 24G -- python train.py --config configs/sft.yaml
+labgpu where
+```
+
+## Why Students Use It
+
+| Problem | LabGPU gives you |
+| --- | --- |
+| "Which machine has a GPU I can use?" | `Train Now` and `labgpu pick` rank GPUs across SSH hosts. |
+| "What do I copy before running training?" | SSH command, `CUDA_VISIBLE_DEVICES`, and launch snippet. |
+| "Where did my job go?" | `My Runs` and `labgpu where` show tracked, adopted, and own GPU processes. |
+| "Why did it fail overnight?" | Failure Inbox, `diagnose`, traceback/OOM/NCCL/disk-full detection. |
+| "What should I paste into ChatGPT?" | `labgpu context --copy` exports command, git, config, env summary, GPU info, diagnosis, traceback, and logs. |
+| "Can I stop it safely?" | Stop actions are limited to your own processes, with conservative checks. |
+
+## What You See
+
+LabGPU Home is organized around training, not server inventory:
+
+```text
+Train Now
+  Recommended GPUs ranked by free VRAM, model, server load, disk health, alerts, and tags.
+  Copy SSH, CUDA_VISIBLE_DEVICES, or a launch snippet.
+
+My Runs
+  LabGPU runs, adopted runs, and own untracked GPU processes.
+  Tail logs, diagnose, copy context, copy command, or stop process safely.
+
+Failed or Suspicious Runs
+  OOM, traceback, NCCL, disk full, killed, NaN, suspected idle, and stale logs.
+
+Problems
+  Offline/cached servers, disk warnings, probe timeouts, and process health warnings.
+
+Servers
+  Resource details live at the bottom, not as the main workflow.
+```
+
+## Install
+
+Recommended:
+
+```bash
+pipx install git+https://github.com/66LIU-frank/Labgpu-controller.git
+```
+
+Convenience installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/66LIU-frank/Labgpu-controller/main/install.sh | sh
+```
+
+From source:
+
+```bash
+git clone git@github.com:66LIU-frank/Labgpu-controller.git labgpu
+cd labgpu
+python3 -m pip install -e .
+```
+
+## Daily Commands
+
+```bash
+# First run: choose which SSH hosts appear on the home page.
+labgpu init
+labgpu ui
+
+# Find a GPU across your SSH hosts.
+labgpu pick --min-vram 24G --prefer A100 --tag training --explain
+labgpu pick --min-vram 24G --prefer 4090 --cmd "python train.py --config configs/sft.yaml"
+
+# On a GPU server: launch or adopt training.
+labgpu run --name baseline --gpu auto --min-vram 24G -- python train.py
+labgpu adopt 23891 --name old_baseline --log ./train.log
+
+# Find, diagnose, and export context.
+labgpu where
+labgpu logs baseline --tail 100
+labgpu diagnose baseline
+labgpu context baseline --copy
+```
+
+## Server Setup
+
+`labgpu init` reads your `~/.ssh/config` and saves the hosts you want on your LabGPU Home page:
+
+```bash
+labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
+labgpu ui
+```
+
+This keeps the home page focused and fast. Servers that are not selected stay in your SSH config, but they are not probed on every refresh. You can also choose the same list from **Settings -> Save selected hosts**.
+
+If a saved server cannot be reached, LabGPU keeps it visible as `offline · cached` when a previous successful probe exists. If SSH is reachable but GPU refresh times out, LabGPU can show the last cached GPU snapshot as `online · cached`. Cached data is labeled so a timeout does not make a server disappear or look fresher than it is.
+
+Example config:
+
+```toml
+[ui]
+refresh_interval_seconds = 15
+safe_mode = true
+
+[servers.alpha_liu]
+enabled = true
+alias = "alpha_liu"
+tags = ["A100", "training"]
+disk_paths = ["/", "/home", "/data", "/scratch", "/mnt", "/nvme"]
+shared_account = false
+allow_stop_own_process = true
+```
 
 ## Two Modes
 
@@ -125,73 +177,21 @@ labgpu list --json
 
 That host can then show tracked/adopted/untracked experiments, run names, recent failures, diagnosis, and debug context. If this fails, the UI falls back to Agentless Mode.
 
-## Quick Start
+## What LabGPU Is Not
 
-Recommended install with `pipx`:
+LabGPU is not:
 
-```bash
-pipx install git+https://github.com/66LIU-frank/Labgpu-controller.git
-```
+- a scheduler
+- a reservation calendar
+- a quota system
+- an admin panel
+- a replacement for Slurm or Kubernetes
+- a replacement for W&B, MLflow, or ClearML
+- a tool for managing other people's jobs
 
-Convenience installer:
+By default, LabGPU is personal. It helps you find GPUs, track your own training, export debug context, and only take safe actions on your own processes.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/66LIU-frank/Labgpu-controller/main/install.sh | sh
-```
-
-Then start your personal training workspace:
-
-```bash
-labgpu init
-labgpu ui
-```
-
-From the terminal, ask LabGPU where to train:
-
-```bash
-labgpu pick --min-vram 24G --prefer A100 --tag training
-labgpu pick --min-vram 24G --prefer 4090 --cmd "python train.py --config configs/sft.yaml"
-```
-
-For a specific server from your `~/.ssh/config`:
-
-```bash
-labgpu ui --hosts alpha_liu
-```
-
-For multiple servers:
-
-```bash
-labgpu ui --hosts alpha_liu,song_1,gpu4090
-```
-
-Save the server list once, then just run `labgpu ui` later:
-
-```bash
-labgpu init --hosts alpha_liu,song_1,gpu4090 --tags lab
-labgpu ui
-```
-
-This saved list becomes the default LabGPU Home probe set. Use it to keep the
-home page focused and fast:
-
-```bash
-labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
-labgpu ui
-```
-
-You can also choose the same list from **Settings -> Save selected hosts** in
-LabGPU Home. Servers that are not selected stay available in your SSH config,
-but they are not probed on every home-page refresh.
-
-Install from source for development:
-
-```bash
-git clone git@github.com:66LIU-frank/Labgpu-controller.git labgpu
-cd labgpu
-python3 -m pip install -e .
-labgpu ui
-```
+## Development
 
 For development without installing:
 
@@ -206,34 +206,7 @@ Run against specific SSH aliases:
 PYTHONPATH=src python3 -m labgpu ui --hosts alpha_liu,Song-1
 ```
 
-Save a server inventory once:
-
-```bash
-labgpu servers list
-labgpu init --hosts alpha_liu,Song-1 --tags A100,training
-labgpu ui
-```
-
-The inventory is written to:
-
-```text
-~/.labgpu/config.toml
-```
-
-LabGPU Home includes Chinese/English and light/dark mode toggles in the top navigation and remembers those preferences in the browser.
-
-LabGPU Home opens pages from local snapshots by default, then refreshes stale
-server data in the background. Moving between Overview, Train Now, My Training,
-Servers, Alerts, and Settings should not block on SSH probes. Use `Refresh now`
-when you explicitly want the page to wait for a live probe.
-
-If a saved server cannot be reached, LabGPU keeps it visible as
-`offline · cached` when a previous successful probe exists. If SSH is reachable
-but the live GPU/process refresh times out, LabGPU treats it as an incomplete
-refresh instead of a dead server and can show the cached GPU snapshot as
-`online · cached`. Either way, cached GPU, disk, load, and process counts are
-labeled as cached so a timeout does not make a server disappear or look fresher
-than it is.
+LabGPU Home includes Chinese/English and light/dark mode toggles in the top navigation and remembers those preferences in the browser. It opens pages from local snapshots by default, then refreshes stale server data in the background. Moving between Overview, Train Now, My Training, Servers, Alerts, and Settings should not block on SSH probes. Use `Refresh now` when you explicitly want the page to wait for a live probe.
 
 The Train Now page (`/gpus`) ranks GPUs as `Recommended`, `OK`, `Busy`, or `Not recommended` using free VRAM, model, server load, disk health, alerts, and tags. Each GPU card includes copy buttons for the SSH command, `CUDA_VISIBLE_DEVICES`, and a launch snippet.
 
@@ -242,22 +215,6 @@ The same recommendation model is available from the terminal:
 ```bash
 labgpu pick --prefer A100 --min-vram 40G
 labgpu pick --fake-lab
-```
-
-Example:
-
-```toml
-[ui]
-refresh_interval_seconds = 15
-safe_mode = true
-
-[servers.alpha_liu]
-enabled = true
-alias = "alpha_liu"
-tags = ["A100", "training"]
-disk_paths = ["/", "/home", "/data", "/scratch", "/mnt", "/nvme"]
-shared_account = false
-allow_stop_own_process = true
 ```
 
 ## No-GPU Demo
