@@ -52,4 +52,10 @@
     <text x="0" y="30" fill="#facc15" font-family="Inter,Arial,sans-serif" font-size="14">alpha_liu disk / is 93% used</text>
     <text x="0" y="56" fill="#facc15" font-family="Inter,Arial,sans-serif" font-size="14">GPU util &lt; 3% while 58.6GB VRAM is occupied</text>
   </g>
+
+  <g transform="translate(570 510)">
+    <text x="0" y="0" fill="#e6edf3" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="700">Context</text>
+    <text x="0" y="30" fill="#bfdbfe" font-family="Inter,Arial,sans-serif" font-size="14">copy AI/debug context with command, git, env, GPU, logs</text>
+    <text x="0" y="56" fill="#bfdbfe" font-family="Inter,Arial,sans-serif" font-size="14">safe actions stay scoped to your own processes</text>
+  </g>
 </svg>

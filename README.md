@@ -1,19 +1,24 @@
 # LabGPU
 
-> Personal GPU workspace for students using shared SSH servers.
->
-> Find a free GPU. Launch training. Track your runs. Diagnose failures.
->
-> No daemon. No root. No Slurm. No Kubernetes.
+Personal GPU workspace for students using shared SSH servers.
 
-```bash
-labgpu ui
-labgpu pick --min-vram 24G --prefer A100
-labgpu run --name sft --gpu 0 -- python train.py --config configs/sft.yaml
-labgpu where
+Find a free GPU. Launch training. Track your runs. Diagnose failures.
+
+No daemon. No root. No Slurm. No Kubernetes.
+
+```console
+$ labgpu ui
 ```
 
 ![LabGPU Home demo preview](docs/assets/labgpu-home-demo.svg)
+
+## Quick Demo
+
+```console
+$ labgpu demo
+$ labgpu ui --fake-lab
+$ labgpu pick --fake-lab
+```
 
 LabGPU is a personal remote GPU training workspace for students and individual researchers who use several shared SSH GPU servers without admin privileges. It reads your existing `~/.ssh/config`, probes servers over SSH, recommends a GPU, tracks your own runs, saves logs and reproducibility context, diagnoses common failures, and helps you safely stop your own processes.
 
@@ -21,12 +26,9 @@ The basic workflow does not require a remote daemon, root access, Slurm, Kuberne
 
 ```bash
 labgpu ui
-```
-
-No GPU servers handy? Launch the built-in multi-server demo:
-
-```bash
-labgpu demo
+labgpu pick --min-vram 24G --prefer A100
+labgpu run --name sft --gpu 0 -- python train.py --config configs/sft.yaml
+labgpu where
 ```
 
 Open the browser or CLI and answer the questions that matter before and after a training run:

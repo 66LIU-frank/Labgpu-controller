@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "labgpu"
 version = "0.1.0"
-description = "Lightweight experiment observability for shared GPU servers."
+description = "Personal GPU workspace for students using shared SSH GPU servers."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
   { name = "LabGPU contributors" }
 ]
-keywords = ["gpu", "experiments", "research", "nvidia-smi", "tmux", "mlops"]
+keywords = ["gpu", "nvidia-smi", "ssh", "deep-learning", "tmux", "mlops", "gpu-monitoring", "research-tools"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
@@ -31,6 +31,7 @@ dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/66LIU-frank/Labgpu-controller"
+Demo = "https://github.com/66LIU-frank/Labgpu-controller#quick-demo"
 Issues = "https://github.com/66LIU-frank/Labgpu-controller/issues"
 
 [project.scripts]
