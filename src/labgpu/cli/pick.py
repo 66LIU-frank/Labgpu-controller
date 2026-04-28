@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from labgpu.remote.dashboard import collect_servers, split_hosts
-from labgpu.remote.ranking import filter_gpu_items, format_memory, gpu_recommendation, launch_snippet
+from labgpu.remote.ranking import filter_gpu_items, format_memory, gpu_recommendation, gpu_recommendation_reasons, launch_snippet
 
 
 def run(args) -> int:
@@ -23,7 +23,8 @@ def run(args) -> int:
         "availability": "all" if args.all else "available",
     }
     items = filter_gpu_items(overview.get("gpu_items") or [], ui)
-    rows = [pick_row(item) for item in items[: args.limit]]
+    prefer = getattr(args, "prefer", None) or getattr(args, "model", None) or ""
+    rows = [pick_row(item, prefer=prefer) for item in items[: args.limit]]
     if getattr(args, "cmd", False):
         if not rows:
             return 1
@@ -49,16 +50,21 @@ def run(args) -> int:
             f"{row['score']:<6} {row['label']:<15} {row['server']:<18} {row['gpu_index']:<5} "
             f"{str(row['model'])[:27]:<28} {row['free_memory']:<10} {row['ssh_command']} ; CUDA_VISIBLE_DEVICES={row['cuda_visible_devices']}"
         )
+        if getattr(args, "explain", False):
+            print("       why:")
+            for reason in row["reasons"]:
+                print(f"       - {reason}")
         print(f"       launch: {row['launch_snippet']}")
     return 0
 
 
-def pick_row(item: dict[str, object]) -> dict[str, object]:
-    recommendation = gpu_recommendation(item)
+def pick_row(item: dict[str, object], *, prefer: object = None) -> dict[str, object]:
+    recommendation = gpu_recommendation(item, prefer=prefer)
     return {
         "score": recommendation["score"],
         "label": recommendation["label"],
         "reason": recommendation["reason"],
+        "reasons": gpu_recommendation_reasons(item, recommendation, prefer=prefer),
         "server": item.get("server"),
         "gpu_index": item.get("index"),
         "model": item.get("name"),

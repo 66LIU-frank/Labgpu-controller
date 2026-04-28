@@ -1,7 +1,5 @@
 # Quickstart
 
-# Quickstart
-
 Use LabGPU as a personal GPU training workspace from your laptop and from SSH GPU servers.
 
 ## 1. Open Your Workspace

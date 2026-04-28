@@ -52,6 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-free-gb", type=float, default=0, help=argparse.SUPPRESS)
     p.add_argument("--limit", type=int, default=5)
     p.add_argument("--all", action="store_true", help="include busy and not-recommended GPUs")
+    p.add_argument("--explain", action="store_true", help="print why each GPU was recommended or rejected")
     p.add_argument("--json", action="store_true")
     p.add_argument("--cmd", action="store_true", help="print copyable launch snippets only")
     p.add_argument("--fake-lab", action="store_true", help="use built-in multi-server demo data")

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
+from datetime import timezone
 from pathlib import Path
 from typing import Any
 
 from labgpu.core.paths import cache_dir
 from labgpu.remote.cache import safe_alias
-from labgpu.utils.time import now_utc
+from labgpu.utils.time import now_utc, parse_time
 
 MIN_IDLE_OCCUPIED_MB = 1024
 
@@ -115,7 +116,9 @@ def index_gpu_history(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, An
     for row in rows:
         for gpu in row.get("gpus") or []:
             if isinstance(gpu, dict) and gpu.get("uuid"):
-                indexed.setdefault(str(gpu["uuid"]), []).append(gpu)
+                item = dict(gpu)
+                item["_time"] = row.get("time")
+                indexed.setdefault(str(gpu["uuid"]), []).append(item)
     return indexed
 
 
@@ -139,15 +142,44 @@ def gpu_idle_evidence(gpu: dict[str, Any], rows: list[dict[str, Any]]) -> dict[s
     if len(low_util) < 2 or len(occupied) < 2:
         return None
     confidence = "high" if len(low_util) >= 5 and len(occupied) >= 5 else "medium"
-    minutes = max(1, len(rows) - 1)
+    elapsed_seconds = history_elapsed_seconds(rows)
+    span = format_elapsed(elapsed_seconds) if elapsed_seconds is not None else f"{len(rows)} samples"
+    sample_note = f"based on {len(rows)} samples"
     return {
         "confidence": confidence,
         "low_util_samples": len(low_util),
         "occupied_samples": len(occupied),
         "vram_occupied_mb": used_mb,
-        "minutes": minutes,
-        "summary": f"GPU util < 3% for {minutes}+ samples while {used_mb} MB VRAM is occupied.",
+        "sample_count": len(rows),
+        "elapsed_seconds": elapsed_seconds,
+        "summary": f"GPU util < 3% over {span} ({sample_note}) while {used_mb} MB VRAM is occupied.",
     }
+
+
+def history_elapsed_seconds(rows: list[dict[str, Any]]) -> int | None:
+    timestamps = [parse_time(str(row.get("_time") or "")) for row in rows]
+    timestamps = [timestamp for timestamp in timestamps if timestamp is not None]
+    if len(timestamps) < 2:
+        return None
+    timestamps = [timestamp if timestamp.tzinfo is not None else timestamp.replace(tzinfo=timezone.utc) for timestamp in timestamps]
+    first = min(timestamps)
+    last = max(timestamps)
+    return max(0, int((last - first).total_seconds()))
+
+
+def format_elapsed(seconds: int | None) -> str:
+    if seconds is None:
+        return "unknown time"
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, sec = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m{sec:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h{minutes:02d}m"
+    days, hours = divmod(hours, 24)
+    return f"{days}d{hours:02d}h"
 
 
 def find_gpu(server: dict[str, Any], uuid: object) -> dict[str, Any] | None:

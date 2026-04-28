@@ -67,7 +67,7 @@ Train Now / Recommended GPUs
 
 My Runs
   alpha_liu  sft_retry      running   GPU 0  PID 24988  tail log / diagnose / context
-  song_1     old_baseline   adopted   GPU 1  PID 19920  copy command / stop safely
+  song_1     old_baseline   adopted   GPU 1  PID 19920  copy command / stop process
 
 Failed or Suspicious Runs
   alpha_liu  pretrain_0428  failed    CUDA out of memory
@@ -126,7 +126,13 @@ That host can then show tracked/adopted/untracked experiments, run names, recent
 
 ## Quick Start
 
-One-command install:
+Recommended install with `pipx`:
+
+```bash
+pipx install git+https://github.com/66LIU-frank/Labgpu-controller.git
+```
+
+Convenience installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/66LIU-frank/Labgpu-controller/main/install.sh | sh
@@ -334,19 +340,21 @@ Stop actions:
 - require a local action token
 - re-probe the PID before acting
 - verify user, start time, and command hash to reduce PID-reuse risk
-- send SIGTERM by default
+- stop the selected PID with SIGTERM by default
 - only use SIGKILL through an explicit force action
 - are disabled when binding outside loopback unless `--allow-actions` is explicitly set
 - write an audit record to `~/.labgpu/audit/actions.jsonl`
 
 LabGPU does not provide scheduling, reservations, quotas, admin panels, or kill-other-users actions.
 
+See [docs/compatibility.md](docs/compatibility.md) for NVIDIA, MIG, Docker, MPS, Slurm, shared-account, and AMD/ROCm notes.
+
 ## Commands
 
 ```text
 labgpu doctor
 labgpu status [--json] [--fake] [--watch]
-labgpu pick [--min-vram 24G] [--prefer A100] [--tag training] [--cmd] [--json]
+labgpu pick [--min-vram 24G] [--prefer A100] [--tag training] [--explain] [--cmd] [--json]
 labgpu where [--json]
 labgpu refresh
 labgpu run --name NAME --gpu 0 -- COMMAND ...
@@ -369,10 +377,11 @@ labgpu servers probe alpha_liu
 labgpu servers probe --all --json
 labgpu servers import-ssh --hosts alpha_liu,Song-1 --tags A100,training
 
+# Legacy single-machine UI:
 labgpu web [--host 127.0.0.1] [--port 8765]
 ```
 
-`labgpu ui` is the personal multi-server SSH workspace. `labgpu web` is the older single-machine dashboard for the current machine's LabGPU runs.
+`labgpu ui` is the main product: the personal multi-server SSH workspace. `labgpu web` is a legacy single-machine dashboard for the current machine's LabGPU runs.
 
 ## Privacy
 

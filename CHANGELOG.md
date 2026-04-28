@@ -10,3 +10,4 @@ First alpha release of LabGPU as a personal GPU workspace for students using sha
 - `labgpu pick`, `labgpu where`, `labgpu diagnose`, `labgpu context --copy`, and fake-lab demo flows.
 - Cached-first UI pages so navigation does not block on slow SSH probes.
 - Chinese/English and light/dark browser toggles.
+- CI, issue templates, compatibility notes, and security policy for first external validation.

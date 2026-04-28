@@ -27,6 +27,7 @@ class PickAndHistoryTest(unittest.TestCase):
             all=False,
             limit=3,
             json=True,
+            explain=False,
         )
         output = io.StringIO()
         with redirect_stdout(output):
@@ -37,6 +38,32 @@ class PickAndHistoryTest(unittest.TestCase):
         self.assertEqual(rows[0]["label"], "OK")
         self.assertEqual(rows[0]["server"], "alpha_liu")
         self.assertEqual(rows[0]["cuda_visible_devices"], "0")
+        self.assertIn("reasons", rows[0])
+
+    def test_pick_explain_prints_reasons(self):
+        args = Namespace(
+            config=None,
+            hosts=None,
+            pattern=None,
+            timeout=1,
+            fake_lab=True,
+            model="A100",
+            tag="training",
+            min_vram="24G",
+            min_free_gb=0,
+            all=False,
+            limit=1,
+            json=False,
+            cmd=False,
+            explain=True,
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = pick.run(args)
+        self.assertEqual(code, 0)
+        text = output.getvalue()
+        self.assertIn("why:", text)
+        self.assertIn("free", text)
 
     def test_gpu_recommendation_uses_score_and_busy_label(self):
         data = collect_servers(fake_lab=True)
@@ -76,6 +103,29 @@ class PickAndHistoryTest(unittest.TestCase):
         self.assertEqual(idle["availability"], "idle_but_occupied")
         self.assertEqual(idle["confidence"], "high")
         self.assertIn("VRAM", owner_message(enriched["processes"][0], server_alias="hist"))
+
+    def test_history_idle_evidence_uses_elapsed_time(self):
+        server = fake_lab_hosts()[0]
+        gpu = server["gpus"][1]
+        rows = []
+        for minute in (0, 4, 8, 12, 18):
+            rows.append(
+                {
+                    "time": f"2026-04-28T12:{minute:02d}:00+00:00",
+                    "gpus": [
+                        {
+                            "uuid": gpu["uuid"],
+                            "utilization_gpu": 0,
+                            "memory_used_mb": gpu["memory_used_mb"],
+                        }
+                    ],
+                    "processes": [],
+                }
+            )
+        enriched = apply_history_evidence(server, rows)
+        evidence = enriched["gpus"][1]["idle_evidence"]
+        self.assertEqual(evidence["elapsed_seconds"], 18 * 60)
+        self.assertIn("18m00s", evidence["summary"])
 
     def test_history_does_not_mark_currently_free_gpu_idle(self):
         with tempfile.TemporaryDirectory() as tmp:

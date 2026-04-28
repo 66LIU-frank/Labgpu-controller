@@ -66,7 +66,7 @@ def recommendation_from_item(item: dict[str, object], *, command: str = "python 
         alerts=[alert for alert in alerts if isinstance(alert, dict)],
         rank=labels.get(rec["label"], "ok"),
         score=float(rec["score"]),
-        reasons=[rec["reason"]],
+        reasons=gpu_recommendation_reasons(item, rec, prefer=prefer),
         ssh_command=str(item.get("ssh_command") or f"ssh {item.get('server')}"),
         cuda_command=f"CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES={gpu}",
         launch_snippet=launch_snippet(item, command=command),
@@ -201,6 +201,42 @@ def gpu_recommendation(item: dict[str, object], *, prefer: object = None) -> dic
     if free_mb >= 40 * 1024:
         return {"label": "Recommended", "class": "recommended", "severity": "ok", "reason": "High free memory and no major server warning.", "score": str(score)}
     return {"label": "OK", "class": "ok-choice", "severity": "ok", "reason": "Free GPU with no major warning.", "score": str(score)}
+
+
+def gpu_recommendation_reasons(item: dict[str, object], recommendation: dict[str, str] | None = None, *, prefer: object = None) -> list[str]:
+    rec = recommendation or gpu_recommendation(item, prefer=prefer)
+    reasons = [rec["reason"]]
+    free = int(item.get("memory_free_mb") or 0)
+    total = item.get("memory_total_mb")
+    if total is not None:
+        reasons.append(f"{format_memory(free)} free of {format_memory(total)} VRAM")
+    else:
+        reasons.append(f"{format_memory(free)} free VRAM")
+    name = str(item.get("name") or "")
+    preferred = [part.strip() for part in str(prefer or "").replace("/", ",").split(",") if part.strip()]
+    if preferred:
+        if any(part.lower() in name.lower() for part in preferred):
+            reasons.append(f"matches preferred model: {', '.join(preferred)}")
+        else:
+            reasons.append(f"does not match preferred model: {', '.join(preferred)}")
+    disk = str(item.get("disk_health") or "unknown")
+    reasons.append(f"disk {disk}")
+    load = load_value(item.get("load"))
+    if load != "-":
+        reasons.append(f"server load {load}")
+    tags = item.get("tags") or item.get("server_tags") or []
+    if isinstance(tags, list) and tags:
+        reasons.append(f"tags: {join_values(tags)}")
+    availability = str(item.get("availability") or item.get("status") or "unknown")
+    if availability not in {"free", "probably_available"}:
+        reasons.append(f"availability: {availability}")
+    alerts = item.get("server_alerts")
+    if isinstance(alerts, list) and alerts:
+        critical = sum(1 for alert in alerts if isinstance(alert, dict) and alert.get("severity") == "error")
+        warnings = sum(1 for alert in alerts if isinstance(alert, dict) and alert.get("severity") == "warning")
+        if critical or warnings:
+            reasons.append(f"server alerts: {critical} critical, {warnings} warning")
+    return reasons
 
 
 def recommendation_score(item: dict[str, object], *, prefer: object = None) -> int:

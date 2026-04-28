@@ -929,6 +929,8 @@ def render_gpu_finder(overview: dict[str, object], ui: dict[str, object]) -> str
 
 def render_gpu_recommendation_card(item: dict[str, object]) -> str:
     rec = gpu_recommendation(item)
+    reasons = ranking.gpu_recommendation_reasons(item, rec)
+    reason_items = "".join(f"<li>{esc(reason)}</li>" for reason in reasons)
     memory_free = format_memory(item.get("memory_free_mb"))
     memory_total = format_memory(item.get("memory_total_mb"))
     ssh_command = str(item.get("ssh_command") or ("ssh " + str(item.get("server") or "")))
@@ -960,7 +962,10 @@ def render_gpu_recommendation_card(item: dict[str, object]) -> str:
         <button class="small" type="button" data-copy="CUDA_VISIBLE_DEVICES={esc(cuda)}">Copy CUDA_VISIBLE_DEVICES</button>
         <button class="small" type="button" data-copy="{esc(snippet)}">Copy launch snippet</button>
       </div>
-      <p class="muted">{esc(rec['reason'])}</p>
+      <details>
+        <summary>Why recommended</summary>
+        <ul>{reason_items}</ul>
+      </details>
     </article>
     """
 
@@ -1440,14 +1445,13 @@ def render_process_action(proc: dict[str, object], *, server_alias: object | Non
             f"data-runtime='{esc(proc.get('runtime') or human_duration(proc.get('runtime_seconds')))}' "
             f"data-memory='{esc(format_memory(proc.get('used_memory_mb')))}' "
             f"data-user='{esc(proc.get('user') or '')}' data-start='{esc(proc.get('start_time') or '')}' "
-            f"data-hash='{esc(proc.get('command_hash') or '')}' data-command='{esc(short(proc.get('command') or '', 180))}'>Stop</button>"
+            f"data-hash='{esc(proc.get('command_hash') or '')}' data-command='{esc(short(proc.get('command') or '', 180))}'>Stop process</button>"
         )
     if proc.get("is_current_user") and not action_allowed:
         return f"{view}{context}<span class='muted'>actions disabled</span>"
-    adopt = process_adopt_command(proc)
     owner = owner_message(proc, server_alias=server_alias)
     return (
-        f"{view}<button class='small' type='button' data-copy='{esc(adopt)}'>Copy adopt</button> "
+        f"{view}{context}"
         f"<button class='small' type='button' data-copy='{esc(owner)}'>Copy owner message</button>"
     )
 
@@ -1501,8 +1505,13 @@ def process_evidence_text(proc: dict[str, object]) -> str:
     if not isinstance(evidence, dict):
         return ""
     parts = []
-    if evidence.get("low_util_samples") is not None:
-        parts.append(f"GPU util < 3% for {evidence.get('low_util_samples')} samples")
+    elapsed = evidence.get("elapsed_seconds")
+    if elapsed is not None:
+        parts.append(f"GPU util < 3% over {human_duration(int(elapsed))}")
+    elif evidence.get("low_util_samples") is not None:
+        parts.append(f"GPU util < 3% in {evidence.get('low_util_samples')} samples")
+    if evidence.get("sample_count") is not None:
+        parts.append(f"based on {evidence.get('sample_count')} samples")
     if evidence.get("vram_occupied_mb") is not None:
         parts.append(f"VRAM occupied {format_memory(evidence.get('vram_occupied_mb'))}")
     if proc.get("cpu_low_samples") is not None:
@@ -1609,8 +1618,8 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
 @media(max-width:640px){{main{{width:calc(100vw - 20px)}}.grid,.split{{grid-template-columns:1fr}}.toolbar{{align-items:flex-start;flex-direction:column}}}}
 </style></head><body><main>{render_nav()}{body}</main>
 <dialog id="stop-modal">
-  <h2>Stop this process?</h2>
-  <p class="muted">This sends SIGTERM first. Force Kill is only offered if the process is still alive.</p>
+  <h2>Stop process?</h2>
+  <p class="muted">This stops the single PID shown below. Child processes may continue unless this is a LabGPU-tracked run.</p>
   <table>
     <tr><th>Server</th><td id="modal-server"></td></tr>
     <tr><th>GPU</th><td id="modal-gpu"></td></tr>
@@ -1623,8 +1632,8 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
   <p id="modal-result" class="muted"></p>
   <div class="modal-actions">
     <button class="button" id="modal-cancel" type="button">Cancel</button>
-    <button class="button danger" id="modal-stop" type="button">Stop safely</button>
-    <button class="button danger-strong" id="modal-force" type="button" hidden>Force Kill</button>
+    <button class="button danger" id="modal-stop" type="button">Stop process</button>
+    <button class="button danger-strong" id="modal-force" type="button" hidden>Force process kill</button>
   </div>
 </dialog>
 <script>
@@ -1682,6 +1691,7 @@ const translations = {{
   "Tag": "标签",
   "Sort": "排序",
   "Recommended": "推荐",
+  "Why recommended": "推荐原因",
   "Free memory": "空闲显存",
   "Server load": "服务器负载",
   "Filter": "过滤",
@@ -1745,11 +1755,11 @@ const translations = {{
   "Context": "上下文",
   "View": "查看",
   "Stop": "停止",
-  "Stop safely": "安全停止",
-  "Force Kill": "强制终止",
+  "Stop process": "停止进程",
+  "Force process kill": "强制终止进程",
   "Cancel": "取消",
-  "Stop this process?": "停止这个进程？",
-  "This sends SIGTERM first. Force Kill is only offered if the process is still alive.": "会先发送 SIGTERM；只有进程仍存活时才提供强制终止。",
+  "Stop process?": "停止进程？",
+  "This stops the single PID shown below. Child processes may continue unless this is a LabGPU-tracked run.": "这只会停止下面这个 PID。除非这是 LabGPU 跟踪的任务，否则子进程可能继续运行。",
   "actions disabled": "操作已禁用",
   "shared account": "共享账号",
   "No LabGPU run or own GPU process found yet.": "还没有发现 LabGPU 任务或自己的 GPU 进程。",
@@ -1839,7 +1849,7 @@ document.querySelectorAll("[data-stop]").forEach((button) => {{
     fillStopModal(button);
     const dialog = document.getElementById("stop-modal");
     if (dialog && dialog.showModal) dialog.showModal();
-    else if (window.confirm("Stop this process?")) runStop(false);
+    else if (window.confirm("Stop process?")) runStop(false);
   }});
 }});
 document.querySelectorAll("[data-copy]").forEach((button) => {{

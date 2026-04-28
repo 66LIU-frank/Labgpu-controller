@@ -26,6 +26,10 @@ user. Before sending a signal, LabGPU re-probes the remote server and verifies:
 This reduces PID-reuse mistakes. The default action sends `SIGTERM`; `SIGKILL`
 is only used after an explicit force action.
 
+For raw agentless processes, LabGPU stops the selected PID only. Child
+processes may continue unless the process is part of a LabGPU-tracked run where
+the local run manager can apply richer run semantics.
+
 All stop attempts are written to:
 
 ```text
@@ -85,7 +89,7 @@ harder to reason about.
 
 For other users' processes, LabGPU favors non-destructive workflows:
 
-- copy an adopt command for the owner
+- copy process info
 - copy a polite owner message with server/GPU/PID/runtime/memory
 - show possible-idle evidence without claiming certainty
 
