@@ -5,14 +5,14 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Status](https://img.shields.io/badge/status-v0.1.0--alpha-orange)
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Personal GPU workspace for students using shared SSH servers.
 
 Find a free GPU. Launch training. Track your runs. Diagnose failures.
 No daemon. No root. No Slurm. No Kubernetes.
 
 ![LabGPU Home demo preview](docs/assets/labgpu-home-demo.svg)
-
-LabGPU is for the everyday student workflow: SSH into a few shared GPU boxes, find a usable card, run training in `tmux`, remember where it is, diagnose the failure, and copy one debug context for AI or a teammate.
 
 ```text
 find GPU -> run/adopt -> observe -> diagnose -> context/report -> safe action
@@ -36,36 +36,86 @@ labgpu ui
 labgpu pick --min-vram 24G --prefer A100
 ```
 
-On the chosen GPU server, launch a tracked training run:
+On the chosen GPU server:
 
 ```bash
 labgpu run --name sft --gpu auto --min-vram 24G -- python train.py --config configs/sft.yaml
 labgpu where
 ```
 
-## Why Students Use It
+## What It Does
 
-| Problem | LabGPU gives you |
+| Need | LabGPU gives you |
 | --- | --- |
-| "Which machine has a GPU I can use?" | `Train Now` and `labgpu pick` rank GPUs across SSH hosts. |
-| "What do I copy before running training?" | SSH command, `CUDA_VISIBLE_DEVICES`, and launch snippet. |
-| "Where did my job go?" | `My Runs` and `labgpu where` show tracked, adopted, and own GPU processes. |
-| "Why did it fail overnight?" | Failure Inbox, `diagnose`, traceback/OOM/NCCL/disk-full detection. |
-| "What should I paste into ChatGPT?" | `labgpu context --copy` exports command, git, config, env summary, GPU info, diagnosis, traceback, and logs. |
-| "Can I stop it safely?" | Stop actions are limited to your own processes, with conservative checks. |
+| Find a usable GPU | `Train Now` and `labgpu pick` rank GPUs across SSH hosts. |
+| Start training quickly | Copy SSH, `CUDA_VISIBLE_DEVICES`, or launch snippets. |
+| Find your own jobs | `My Runs` and `labgpu where` show tracked, adopted, and own GPU processes. |
+| Recover experiment context | Run capsules save command, log, git, config, env summary, and GPU info. |
+| Debug failures | `diagnose` and Failure Inbox catch OOM, traceback, NCCL, disk full, killed, NaN, and suspected idle. |
+| Ask AI or teammates for help | `labgpu context --copy` exports one redacted Markdown debug context. |
+| Stop safely | UI actions only target your own process, with conservative checks. |
 
-## What You See
+## Daily Workflow
 
-LabGPU Home is organized around training, not server inventory:
+Install:
+
+```bash
+pipx install git+https://github.com/66LIU-frank/Labgpu-controller.git
+```
+
+Or:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/66LIU-frank/Labgpu-controller/main/install.sh | sh
+```
+
+Choose the SSH hosts shown on your homepage:
+
+```bash
+labgpu init
+labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
+```
+
+Open the workspace:
+
+```bash
+labgpu ui
+```
+
+Find a GPU:
+
+```bash
+labgpu pick --min-vram 24G --prefer A100 --tag training --explain
+labgpu pick --min-vram 24G --prefer 4090 --cmd "python train.py --config configs/sft.yaml"
+```
+
+Launch or adopt training on a GPU server:
+
+```bash
+labgpu run --name baseline --gpu auto --min-vram 24G -- python train.py
+labgpu adopt 23891 --name old_baseline --log ./train.log
+```
+
+Find and debug your work:
+
+```bash
+labgpu where
+labgpu logs baseline --tail 100
+labgpu diagnose baseline
+labgpu context baseline --copy
+labgpu report baseline
+```
+
+## UI Layout
+
+LabGPU Home is training-first:
 
 ```text
 Train Now
-  Recommended GPUs ranked by free VRAM, model, server load, disk health, alerts, and tags.
-  Copy SSH, CUDA_VISIBLE_DEVICES, or a launch snippet.
+  Recommended GPUs ranked by free VRAM, model, load, disk health, alerts, and tags.
 
 My Runs
   LabGPU runs, adopted runs, and own untracked GPU processes.
-  Tail logs, diagnose, copy context, copy command, or stop process safely.
 
 Failed or Suspicious Runs
   OOM, traceback, NCCL, disk full, killed, NaN, suspected idle, and stale logs.
@@ -74,358 +124,95 @@ Problems
   Offline/cached servers, disk warnings, probe timeouts, and process health warnings.
 
 Servers
-  Resource details live at the bottom, not as the main workflow.
+  Resource details stay below the main workflow.
 ```
 
-## Install
+The UI supports Chinese/English and light/dark mode. Pages load from local snapshots first, then refresh stale SSH data in the background, so moving between pages does not wait on slow SSH probes.
 
-Recommended:
+## Run Capsule
 
-```bash
-pipx install git+https://github.com/66LIU-frank/Labgpu-controller.git
+Each tracked or adopted run gets a directory under `~/.labgpu/runs/`:
+
+```text
+meta.json
+events.jsonl
+stdout.log
+command.sh
+env.json
+git.json
+config/
+git.patch
+diagnosis.json
 ```
 
-Convenience installer:
+This records the useful debugging surface: command, cwd, user, host, GPU, PID, logs, git commit/patch, selected configs, Python/Conda/venv summary, exit code, diagnosis, and Markdown context.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/66LIU-frank/Labgpu-controller/main/install.sh | sh
-```
+## Modes
 
-From source:
+Agentless SSH Mode is the default. LabGPU runs on your laptop, reads `~/.ssh/config`, and probes servers over SSH. No remote install is needed for GPU/process visibility.
 
-```bash
-git clone git@github.com:66LIU-frank/Labgpu-controller.git labgpu
-cd labgpu
-python3 -m pip install -e .
-```
-
-## Daily Commands
-
-```bash
-# First run: choose which SSH hosts appear on the home page.
-labgpu init
-labgpu ui
-
-# Find a GPU across your SSH hosts.
-labgpu pick --min-vram 24G --prefer A100 --tag training --explain
-labgpu pick --min-vram 24G --prefer 4090 --cmd "python train.py --config configs/sft.yaml"
-
-# On a GPU server: launch or adopt training.
-labgpu run --name baseline --gpu auto --min-vram 24G -- python train.py
-labgpu adopt 23891 --name old_baseline --log ./train.log
-
-# Find, diagnose, and export context.
-labgpu where
-labgpu logs baseline --tail 100
-labgpu diagnose baseline
-labgpu context baseline --copy
-```
-
-## Server Setup
-
-`labgpu init` reads your `~/.ssh/config` and saves the hosts you want on your LabGPU Home page:
-
-```bash
-labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
-labgpu ui
-```
-
-This keeps the home page focused and fast. Servers that are not selected stay in your SSH config, but they are not probed on every refresh. You can also choose the same list from **Settings -> Save selected hosts**.
-
-If a saved server cannot be reached, LabGPU keeps it visible as `offline · cached` when a previous successful probe exists. If SSH is reachable but GPU refresh times out, LabGPU can show the last cached GPU snapshot as `online · cached`. Cached data is labeled so a timeout does not make a server disappear or look fresher than it is.
-
-Example config:
-
-```toml
-[ui]
-refresh_interval_seconds = 15
-safe_mode = true
-
-[servers.alpha_liu]
-enabled = true
-alias = "alpha_liu"
-tags = ["A100", "training"]
-disk_paths = ["/", "/home", "/data", "/scratch", "/mnt", "/nvme"]
-shared_account = false
-allow_stop_own_process = true
-```
-
-## Two Modes
-
-### Agentless SSH Mode
-
-This is the default mode. LabGPU runs on your laptop and probes servers over SSH.
-
-It collects:
-
-- hostname, uptime, load, CPU cores
-- memory, swap, disk usage for common paths
-- GPU model, memory, utilization, temperature
-- GPU compute processes
-- PID, user, runtime, process state, CPU/memory usage, redacted command
-
-No remote LabGPU installation is required.
-
-### Enhanced Mode
-
-If a remote server also has `labgpu` on `PATH`, LabGPU Home tries to fetch:
+Enhanced Mode is optional. If the remote server has `labgpu` on `PATH`, LabGPU Home also reads:
 
 ```bash
 labgpu status --json
 labgpu list --json
 ```
 
-That host can then show tracked/adopted/untracked experiments, run names, recent failures, diagnosis, and debug context. If this fails, the UI falls back to Agentless Mode.
+That enables richer tracked/adopted run details. If it fails, the UI falls back to Agentless Mode.
 
-## What LabGPU Is Not
+## Safety
 
-LabGPU is not:
+LabGPU is personal-first. It is not a scheduler, reservation system, quota system, admin panel, Slurm/Kubernetes replacement, or a tool for managing other people's jobs.
 
-- a scheduler
-- a reservation calendar
-- a quota system
-- an admin panel
-- a replacement for Slurm or Kubernetes
-- a replacement for W&B, MLflow, or ClearML
-- a tool for managing other people's jobs
+Safe stop actions:
 
-By default, LabGPU is personal. It helps you find GPUs, track your own training, export debug context, and only take safe actions on your own processes.
+- only show for processes owned by the current SSH user
+- are disabled for shared Linux accounts unless configured otherwise
+- re-probe PID/user/start time/command hash before acting
+- send SIGTERM by default
+- require explicit force for SIGKILL
+- are disabled outside loopback unless `--allow-actions` is set
 
-## Development
-
-For development without installing:
-
-```bash
-cd labgpu
-PYTHONPATH=src python3 -m labgpu ui --no-open
-```
-
-Run against specific SSH aliases:
-
-```bash
-PYTHONPATH=src python3 -m labgpu ui --hosts alpha_liu,Song-1
-```
-
-LabGPU Home includes Chinese/English and light/dark mode toggles in the top navigation and remembers those preferences in the browser. It opens pages from local snapshots by default, then refreshes stale server data in the background. Moving between Overview, Train Now, My Training, Servers, Alerts, and Settings should not block on SSH probes. Use `Refresh now` when you explicitly want the page to wait for a live probe.
-
-The Train Now page (`/gpus`) ranks GPUs as `Recommended`, `OK`, `Busy`, or `Not recommended` using free VRAM, model, server load, disk health, alerts, and tags. Each GPU card includes copy buttons for the SSH command, `CUDA_VISIBLE_DEVICES`, and a launch snippet.
-
-The same recommendation model is available from the terminal:
-
-```bash
-labgpu pick --prefer A100 --min-vram 40G
-labgpu pick --fake-lab
-```
-
-## No-GPU Demo
-
-You can still test the local CLI, fake GPU collector, and multi-server Home UI on a laptop:
-
-```bash
-labgpu doctor
-labgpu status --fake
-labgpu status --fake --json
-labgpu demo
-labgpu ui --fake-lab
-labgpu pick --fake-lab
-```
-
-## Experiment CLI
-
-LabGPU Home is the daily entry point, but the CLI still gives you a reproducible experiment workflow.
-
-Launch an experiment in `tmux`:
-
-```bash
-labgpu run --name bert_baseline --gpu auto --min-vram 24G --config configs/bert.yaml \
-  -- python train.py --config configs/bert.yaml
-```
-
-Then inspect it:
-
-```bash
-labgpu list
-labgpu where
-labgpu logs bert_baseline --tail 100
-labgpu diagnose bert_baseline
-labgpu context bert_baseline --tail 200 --copy
-labgpu report bert_baseline
-```
-
-Adopt an already-running process:
-
-```bash
-labgpu adopt 23891 --name old_baseline --log ./train.log
-```
-
-## Run Capsule
-
-LabGPU treats the run directory as the source of truth:
-
-```text
-~/.labgpu/runs/<run_id>/
-  meta.json
-  events.jsonl
-  stdout.log
-  command.sh
-  env.json
-  git.json
-  config/
-  git.patch
-  diagnosis.json
-```
-
-Each run can record:
-
-- command, working directory, user, host
-- requested GPUs and process metadata
-- git commit, branch, dirty state, patch
-- selected config files
-- Python/Conda/virtualenv details
-- stdout/stderr log
-- exit code and failure diagnosis
-- Markdown report and AI-friendly debug context
-
-Most users should keep the default personal `~/.labgpu`. Shared `LABGPU_HOME` is advanced and can expose metadata to other users; if a group explicitly wants it, use a group-owned directory rather than a world-writable directory. See `docs/security.md` and `docs/lab_setup.md`.
-
-## Safe Stop Actions
-
-LabGPU Home can stop your own remote GPU processes from the UI, but the safety model is deliberately conservative.
-
-Stop actions:
-
-- are only shown for processes owned by the current SSH user
-- are disabled for servers marked `shared_account = true` in Agentless Mode
-- require a local action token
-- re-probe the PID before acting
-- verify user, start time, and command hash to reduce PID-reuse risk
-- stop the selected PID with SIGTERM by default
-- only use SIGKILL through an explicit force action
-- are disabled when binding outside loopback unless `--allow-actions` is explicitly set
-- write an audit record to `~/.labgpu/audit/actions.jsonl`
-
-LabGPU does not provide scheduling, reservations, quotas, admin panels, or kill-other-users actions.
-
-See [docs/compatibility.md](docs/compatibility.md) for NVIDIA, MIG, Docker, MPS, Slurm, shared-account, and AMD/ROCm notes.
+Commands and debug context are redacted by default. Shared `LABGPU_HOME` is advanced because it can expose metadata to other users; see [docs/security.md](docs/security.md) and [docs/lab_setup.md](docs/lab_setup.md).
 
 ## Commands
 
 ```text
-labgpu doctor
-labgpu status [--json] [--fake] [--watch]
-labgpu init [--hosts alpha_liu,Song-1] [--tags A100,training]
+labgpu init [--hosts alpha_liu,alpha_shi] [--tags A100,training]
+labgpu ui [--hosts alpha_liu,alpha_shi] [--fake-lab]
 labgpu pick [--min-vram 24G] [--prefer A100] [--tag training] [--explain] [--cmd "COMMAND"] [--json]
 labgpu where [--json]
-labgpu refresh
+
 labgpu run --name NAME --gpu 0|auto [--min-vram 24G] -- COMMAND ...
-labgpu list [--all] [--user USER] [--status failed] [--json]
-labgpu logs RUN [--tail 100] [--follow]
-labgpu kill RUN [--force]
-labgpu diagnose RUN
-labgpu report RUN [--json]
-labgpu context RUN [--format markdown|json] [--tail 200] [--copy]
 labgpu adopt PID --name NAME [--log train.log]
+labgpu list [--all] [--json]
+labgpu logs RUN [--tail 100] [--follow]
+labgpu diagnose RUN
+labgpu context RUN [--copy] [--format markdown|json]
+labgpu report RUN [--json]
+labgpu kill RUN [--force]
 
-labgpu ui [--hosts alpha_liu,Song-1] [--pattern Sui]
-labgpu ui --fake-lab
+labgpu status [--json] [--fake] [--watch]
+labgpu servers list
+labgpu servers probe alpha_liu
 labgpu demo
-labgpu ui --host 0.0.0.0 --allow-actions   # only if you explicitly accept the risk
-
-labgpu servers [--hosts alpha_liu,Song-1] [--pattern Sui]
-labgpu servers list
-labgpu servers probe alpha_liu
-labgpu servers probe --all --json
-labgpu servers import-ssh --hosts alpha_liu,Song-1 --tags A100,training
-
-# Legacy single-machine UI:
-labgpu web [--host 127.0.0.1] [--port 8765]
 ```
 
-`labgpu ui` is the main product: the personal multi-server SSH workspace. `labgpu web` is a legacy single-machine dashboard for the current machine's LabGPU runs.
+## Status
 
-## Privacy
+LabGPU is alpha. It currently targets NVIDIA servers via `nvidia-smi`, SSH aliases, tmux-based local run launch, run capsules, GPU ranking, Failure Inbox, debug context export, and safe own-process actions.
 
-LabGPU is designed for personal use on shared SSH servers, so it avoids exposing sensitive data by default.
+Known boundaries:
 
-- Commands are truncated and redacted in LabGPU Home.
-- Sensitive-looking arguments containing `TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `PASSWD`, `OPENAI_API_KEY`, `WANDB_API_KEY`, `HF_TOKEN`, `GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, and similar terms are redacted.
-- Full environment variables are not shown in the UI.
-- `labgpu context` uses a safe environment subset by default.
-- `--include-env` still applies redaction unless `--no-redact` is explicitly used.
-- Web servers bind to `127.0.0.1` by default.
+- no scheduler, queue, reservation, quota, or admin panel
+- no full authentication layer for public-facing web use
+- shared Linux accounts should disable stop actions or use Enhanced Mode
+- MIG, Docker, MPS, Slurm, and ROCm details are documented in [docs/compatibility.md](docs/compatibility.md)
 
-Keep `labgpu web` behind SSH tunneling unless you add your own access control.
-Read `docs/security.md` before enabling shared `LABGPU_HOME`, shared-account
-servers, or remote-facing UI binds.
+Useful docs:
 
-## Real-Server Validation
-
-On your laptop:
-
-```bash
-labgpu servers list
-labgpu servers probe alpha_liu
-labgpu ui --hosts alpha_liu
-```
-
-On a GPU server:
-
-```bash
-labgpu doctor
-labgpu status
-labgpu run --name smoke_success --gpu auto -- bash -lc 'echo start; sleep 1; echo done'
-sleep 2
-labgpu refresh
-labgpu list --all
-labgpu logs smoke_success --tail 20
-labgpu context smoke_success --tail 20
-```
-
-For a fuller Alpha check from source:
-
-```bash
-LABGPU_BIN="python3 -m labgpu" PYTHONPATH=src scripts/alpha_smoke_test.sh
-```
-
-## Current Status
-
-This repository is an Alpha. The current focus is fast personal training workflow on shared SSH servers, not admin feature breadth.
-
-Implemented areas include:
-
-- fake and real NVIDIA GPU status collection
-- file-backed run metadata
-- tmux-based experiment launch
-- log capture and tailing
-- run refresh/reconciliation
-- safe kill for LabGPU runs
-- rule-based diagnosis
-- Markdown reports and debug context
-- `adopt` for existing PIDs
-- single-machine `labgpu web`
-- personal multi-server `labgpu ui` workspace
-- SSH inventory import, cache, alerts, available GPU view, my-process view, and safe stop-own-process actions
-- GPU recommendation model and `labgpu pick`
-- `labgpu where` for finding your training quickly
-- fake multi-server demo via `labgpu demo` / `labgpu ui --fake-lab`
-
-Known limitations:
-
-- No scheduler, queue, preemption, quota, reservation system, or admin panel.
-- Real GPU status currently targets NVIDIA via `nvidia-smi`.
-- Process health labels are conservative. `possible_idle` means the probe saw occupied GPU memory with low utilization; it is not a definitive stuck-process diagnosis.
-- Agentless Mode can only infer ownership from the SSH user and Linux process owner. For shared Linux accounts, disable stop actions or use Enhanced Mode with LabGPU-tracked runs.
-- The Web UI has no full authentication layer in Alpha; keep it local.
-
-## Roadmap
-
-- v0.1: `doctor`, `status`, fake GPU collector.
-- v0.2: file-backed run metadata, `list`.
-- v0.3: `run` with tmux, log capture, exit code.
-- v0.4: `logs`, `kill`, status-to-run mapping.
-- v0.5: rule-based diagnosis.
-- v0.6: Web dashboard.
-- v0.7: `adopt`, Markdown reports, debug context, shared `LABGPU_HOME`.
-- next: harden the personal workspace, improve failure inbox and process-health history, polish onboarding, and validate with student users.
-
-LabGPU will stay intentionally small until the basic student loop is boringly reliable: find a GPU, start or adopt training, find your work later, diagnose failures, export context, and avoid hurting anyone else's process.
+- [Quickstart](docs/quickstart.md)
+- [Security](docs/security.md)
+- [Compatibility](docs/compatibility.md)
+- [Lab setup](docs/lab_setup.md)
+- [Changelog](CHANGELOG.md)
