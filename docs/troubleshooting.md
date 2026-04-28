@@ -82,3 +82,7 @@ For debugging SSH discovery:
 labgpu servers list
 labgpu servers probe alpha_liu
 ```
+
+## Stop buttons are missing
+
+LabGPU Home only shows Stop buttons for GPU processes owned by the current SSH user. Actions are enabled by default on `127.0.0.1`; if you bind the UI to `0.0.0.0`, actions stay disabled unless you explicitly pass `--allow-actions`.

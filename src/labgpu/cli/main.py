@@ -116,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--timeout", type=int, default=8)
     p.add_argument("--no-open", action="store_true", help="do not open the browser automatically")
+    p.add_argument("--allow-actions", action="store_true", help="allow stop actions even when not bound to loopback")
     p.set_defaults(handler=ui.run)
 
     p = sub.add_parser("servers", help="start local SSH dashboard for configured servers")
@@ -126,6 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8787)
     p.add_argument("--timeout", type=int, default=8)
     p.add_argument("--json", action="store_true", help="probe once and print JSON instead of starting web")
+    p.add_argument("--allow-actions", action="store_true", help="allow stop actions even when not bound to loopback")
     p.set_defaults(handler=servers.run_dashboard)
     servers_sub = p.add_subparsers(dest="servers_command")
 

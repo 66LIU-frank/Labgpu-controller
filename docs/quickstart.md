@@ -29,6 +29,8 @@ labgpu ui --hosts alpha_liu,Song-1
 
 Then open `http://127.0.0.1:8765`. This uses your local `~/.ssh/config`; do not run it from inside the remote server shell.
 
+The home page shows server cards, available GPUs, your own GPU processes, and alerts. Stop buttons are only shown for processes owned by the current SSH user and are guarded by a re-probe before any signal is sent.
+
 For CLI debugging:
 
 ```bash

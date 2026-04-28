@@ -121,6 +121,7 @@ labgpu context RUN [--format markdown|json]
 labgpu adopt PID --name NAME [--log train.log]
 labgpu web [--host 127.0.0.1] [--port 8765]
 labgpu ui [--hosts alpha_liu,Song-1] [--pattern Sui]
+labgpu ui --host 0.0.0.0 --allow-actions   # only if you explicitly accept the risk
 labgpu servers [--hosts alpha_liu,Song-1] [--pattern Sui]
 labgpu servers list
 labgpu servers probe alpha_liu
@@ -140,7 +141,16 @@ Open:
 http://127.0.0.1:8765
 ```
 
-This is Agentless Mode: SSH is enough to show hostname, uptime, CPU load, memory, swap, disk mounts, GPUs, GPU processes, users, and redacted commands. If `labgpu` is also available on the remote server PATH, LabGPU Home switches that host to Enhanced Mode and attempts to show remote LabGPU status and runs.
+This is Agentless Mode: SSH is enough to show hostname, uptime, CPU load, memory, swap, disk mounts, GPUs, GPU processes, process runtime/state, users, available GPUs, your own GPU processes, alerts, and redacted commands. If `labgpu` is also available on the remote server PATH, LabGPU Home switches that host to Enhanced Mode and attempts to show remote LabGPU status and runs.
+
+LabGPU Home can safely stop your own remote GPU processes from the UI. Stop actions:
+
+- are only shown for processes owned by the current SSH user
+- require a local action token
+- re-probe the PID and verify user, start time, and command hash before sending a signal
+- send SIGTERM by default; Force sends SIGKILL
+- are disabled when binding outside loopback unless `--allow-actions` is explicitly set
+- are recorded in `~/.labgpu/audit/actions.jsonl`
 
 For lower-level server debugging:
 
@@ -160,12 +170,13 @@ This is different from `labgpu web`: `web` shows the current machine's LabGPU ru
 - Running-state reconciliation is best effort. Use `labgpu refresh` if a server reboot or wrapper crash leaves stale runs.
 - `kill` refuses ambiguous names; use the full `run_id` when multiple runs match.
 - The Web dashboard has no authentication in Alpha and binds to `127.0.0.1` by default.
+- Process health labels are conservative. `possible_idle` means the current probe saw occupied GPU memory with low GPU utilization; it is not a definitive stuck-process diagnosis.
 
 ## Privacy
 
 `labgpu context` is designed for sharing with AI assistants or teammates, so it uses a safe environment subset by default. Sensitive environment names containing `TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `WANDB`, `HF`, `OPENAI`, `GITHUB`, `AWS`, and similar terms are redacted when full env output is requested with `--include-env`.
 
-Web/API output does not expose full environment files by default. LabGPU Home also redacts sensitive-looking command arguments such as tokens, keys, secrets, and passwords. Keep `labgpu web` behind SSH tunneling unless you add your own access control.
+Web/API output does not expose full environment files by default. LabGPU Home also redacts sensitive-looking command arguments such as tokens, keys, secrets, and passwords. Keep `labgpu web` behind SSH tunneling unless you add your own access control. Do not enable UI actions on `0.0.0.0` unless you understand the exposure.
 
 ## Real-Server Validation
 

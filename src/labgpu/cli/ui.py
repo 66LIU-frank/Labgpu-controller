@@ -12,5 +12,6 @@ def run(args) -> int:
         pattern=args.pattern,
         timeout=args.timeout,
         open_browser=not args.no_open,
+        allow_actions=args.allow_actions,
     )
     return 0

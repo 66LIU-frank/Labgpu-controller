@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import secrets
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from http import HTTPStatus
@@ -9,9 +10,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from labgpu.remote.actions import stop_process
 from labgpu.remote.cache import read_server_cache, write_server_cache
 from labgpu.remote.probe import probe_host
 from labgpu.remote.ssh_config import SSHHost, parse_ssh_config, resolve_ssh_host, select_hosts
+from labgpu.remote.state import annotate_server, build_overview, human_duration
 
 
 def serve(
@@ -23,13 +26,18 @@ def serve(
     pattern: str | None = None,
     timeout: int = 8,
     open_browser: bool = False,
+    allow_actions: bool = False,
 ) -> None:
     ServerHandler.ssh_config = ssh_config
     ServerHandler.names = names
     ServerHandler.pattern = pattern
     ServerHandler.timeout = timeout
+    ServerHandler.action_allowed = is_loopback(host) or allow_actions
+    ServerHandler.action_token = secrets.token_urlsafe(24)
     if host == "0.0.0.0":
         print("Warning: LabGPU servers dashboard has no authentication in this version.")
+    if not ServerHandler.action_allowed:
+        print("LabGPU Home actions are disabled for this bind address.")
     server = ThreadingHTTPServer((host, port), ServerHandler)
     url = f"http://{host}:{port}"
     print(f"LabGPU Home: {url}")
@@ -57,6 +65,7 @@ def collect_servers(
         futures = {executor.submit(probe_host, host, timeout=timeout): host for host in hosts}
         for future in as_completed(futures):
             result = future.result()
+            result = annotate_server(result)
             if result.get("online"):
                 write_server_cache(result)
             else:
@@ -66,7 +75,7 @@ def collect_servers(
                     result["last_seen"] = cached.get("probed_at")
             results.append(result)
     results.sort(key=lambda item: str(item.get("alias")))
-    return {"hosts": results, "count": len(results), "error": None}
+    return {"hosts": results, "count": len(results), "overview": build_overview(results), "error": None}
 
 
 class ServerHandler(BaseHTTPRequestHandler):
@@ -74,6 +83,8 @@ class ServerHandler(BaseHTTPRequestHandler):
     names: list[str] | None = None
     pattern: str | None = None
     timeout: int = 8
+    action_allowed: bool = False
+    action_token: str = ""
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -89,6 +100,24 @@ class ServerHandler(BaseHTTPRequestHandler):
             self._json(self._data_for_alias(alias))
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
+
+    def do_POST(self) -> None:  # noqa: N802
+        parsed = urlparse(self.path)
+        parts = [part for part in parsed.path.split("/") if part]
+        if (
+            len(parts) == 6
+            and parts[:2] == ["api", "servers"]
+            and parts[3] == "processes"
+            and parts[5] in {"stop", "force-stop"}
+        ):
+            try:
+                pid = int(parts[4])
+            except ValueError:
+                self.send_error(HTTPStatus.BAD_REQUEST, "invalid pid")
+                return
+            self._stop_process(unquote(parts[2]), pid, force=parts[5] == "force-stop")
+            return
+        self.send_error(HTTPStatus.NOT_FOUND)
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -114,14 +143,39 @@ class ServerHandler(BaseHTTPRequestHandler):
             timeout=self.timeout,
         )
 
+    def _stop_process(self, alias: str, pid: int, *, force: bool) -> None:
+        if not self.action_allowed:
+            self.send_error(HTTPStatus.FORBIDDEN, "actions disabled")
+            return
+        if self.headers.get("X-LabGPU-Action-Token") != self.action_token:
+            self.send_error(HTTPStatus.FORBIDDEN, "invalid action token")
+            return
+        try:
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0") or "0"))
+            payload = json.loads(body.decode("utf-8") or "{}")
+        except (ValueError, OSError):
+            self.send_error(HTTPStatus.BAD_REQUEST, "invalid JSON")
+            return
+        host = resolve_ssh_host(select_hosts(parse_ssh_config(self.ssh_config), names=[alias])[0])
+        result = stop_process(
+            host,
+            pid=pid,
+            expected_user=str(payload.get("expected_user") or ""),
+            expected_start_time=payload.get("expected_start_time"),
+            expected_command_hash=payload.get("expected_command_hash"),
+            force=force,
+            timeout=self.timeout,
+        )
+        self._json(result, status=HTTPStatus.OK if result.get("ok") else HTTPStatus.CONFLICT)
+
     def _html(self, body: str) -> None:
         self._send("text/html; charset=utf-8", body.encode("utf-8"))
 
-    def _json(self, value: object) -> None:
-        self._send("application/json; charset=utf-8", json.dumps(value, indent=2, ensure_ascii=False).encode("utf-8"))
+    def _json(self, value: object, *, status: HTTPStatus = HTTPStatus.OK) -> None:
+        self._send("application/json; charset=utf-8", json.dumps(value, indent=2, ensure_ascii=False).encode("utf-8"), status=status)
 
-    def _send(self, content_type: str, body: bytes) -> None:
-        self.send_response(HTTPStatus.OK)
+    def _send(self, content_type: str, body: bytes, *, status: HTTPStatus = HTTPStatus.OK) -> None:
+        self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -130,6 +184,7 @@ class ServerHandler(BaseHTTPRequestHandler):
 
 def render_index(data: dict[str, object]) -> str:
     hosts = data.get("hosts") or []
+    overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
     cards = "".join(render_host_card(host) for host in hosts)
     if not cards:
         cards = f"<p class='muted'>{esc(data.get('error') or 'No hosts found.')}</p>"
@@ -146,9 +201,63 @@ def render_index(data: dict[str, object]) -> str:
             <a class="button" href="/api/servers">JSON</a>
           </div>
         </section>
+        {render_overview(overview)}
+        {render_available_gpus(overview.get('available_gpu_items') if isinstance(overview, dict) else [])}
+        {render_my_processes(overview.get('my_process_items') if isinstance(overview, dict) else [])}
+        {render_alerts(overview.get('alert_items') if isinstance(overview, dict) else [])}
         <section class="grid">{cards}</section>
         """,
     )
+
+
+def render_overview(overview: dict[str, object]) -> str:
+    return f"""
+    <section class="health">
+      <div><strong>{esc(overview.get('online_servers', 0))}/{esc(overview.get('total_servers', 0))}</strong><span>online servers</span></div>
+      <div><strong>{esc(overview.get('available_gpus', 0))}/{esc(overview.get('total_gpus', 0))}</strong><span>available GPUs</span></div>
+      <div><strong>{esc(overview.get('my_processes', 0))}</strong><span>my GPU processes</span></div>
+      <div><strong>{esc(overview.get('alerts', 0))}</strong><span>alerts</span></div>
+    </section>
+    """
+
+
+def render_available_gpus(items: object) -> str:
+    if not isinstance(items, list) or not items:
+        return "<section class='panel'><h2>Available GPUs</h2><p class='muted'>No clearly free GPU found.</p></section>"
+    rows = "".join(
+        f"<tr><td>{esc(item.get('server'))}</td><td>GPU {esc(item.get('gpu_index'))}</td><td>{esc(short(item.get('name') or '', 34))}</td><td>{esc(item.get('memory_free_mb'))} MB</td><td>{esc(item.get('utilization_gpu'))}%</td><td><code>CUDA_VISIBLE_DEVICES={esc(item.get('cuda_visible_devices'))}</code></td></tr>"
+        for item in items
+        if isinstance(item, dict)
+    )
+    return f"<section class='panel'><h2>Available GPUs</h2><table><tr><th>Server</th><th>GPU</th><th>Model</th><th>Free memory</th><th>Util</th><th>Copy</th></tr>{rows}</table></section>"
+
+
+def render_my_processes(items: object) -> str:
+    if not isinstance(items, list) or not items:
+        return "<section class='panel'><h2>My Processes</h2><p class='muted'>No GPU process owned by the SSH user.</p></section>"
+    rows = "".join(
+        render_process_row(
+            item,
+            include_gpu=True,
+            server_alias=item.get("server"),
+            show_server=True,
+            action_allowed=ServerHandler.action_allowed,
+        )
+        for item in items
+        if isinstance(item, dict)
+    )
+    return f"<section class='panel'><h2>My Processes</h2><table><tr><th>Server</th><th>GPU</th><th>User</th><th>PID</th><th>Runtime</th><th>State</th><th>Memory</th><th>Health</th><th>Command</th><th>Action</th></tr>{rows}</table></section>"
+
+
+def render_alerts(items: object) -> str:
+    if not isinstance(items, list) or not items:
+        return "<section class='panel'><h2>Alerts</h2><p class='muted'>No current alerts.</p></section>"
+    rows = "".join(
+        f"<tr><td>{esc(item.get('server'))}</td><td><span class='badge {esc(item.get('severity'))}'>{esc(item.get('severity'))}</span></td><td>{esc(item.get('message'))}</td></tr>"
+        for item in items
+        if isinstance(item, dict)
+    )
+    return f"<section class='panel'><h2>Alerts</h2><table><tr><th>Server</th><th>Severity</th><th>Message</th></tr>{rows}</table></section>"
 
 
 def render_detail(data: dict[str, object]) -> str:
@@ -175,8 +284,8 @@ def render_detail(data: dict[str, object]) -> str:
         {render_health(host)}
         {render_labgpu_runs(host)}
         <section class="panel"><h2>Disks</h2>{render_disk_table(host.get('disks') or [])}</section>
-        <section class="panel"><h2>GPUs</h2><div class="gpu-grid">{''.join(render_gpu_card(gpu) for gpu in host.get('gpus') or [])}</div></section>
-        <section class="panel"><h2>Processes</h2>{render_process_table(host.get('processes') or [])}</section>
+        <section class="panel"><h2>GPUs</h2><div class="gpu-grid">{''.join(render_gpu_card(gpu, server_alias=host.get('alias')) for gpu in host.get('gpus') or [])}</div></section>
+        <section class="panel"><h2>Processes</h2>{render_process_table(host.get('processes') or [], server_alias=host.get('alias'))}</section>
         """
     return page("LabGPU Server", content)
 
@@ -307,13 +416,13 @@ def render_labgpu_runs(host: dict[str, object]) -> str:
     return f"<section class='panel'><h2>LabGPU Runs</h2><table><tr><th>Name</th><th>Status</th><th>User</th><th>GPU</th><th>Reason</th></tr>{rows}</table></section>"
 
 
-def render_gpu_card(gpu: object) -> str:
+def render_gpu_card(gpu: object, *, server_alias: object | None = None) -> str:
     if not isinstance(gpu, dict):
         return ""
     processes = gpu.get("processes") or []
-    rows = "".join(render_process_row(proc, include_gpu=False) for proc in processes if isinstance(proc, dict))
+    rows = "".join(render_process_row(proc, include_gpu=False, server_alias=server_alias, action_allowed=ServerHandler.action_allowed) for proc in processes if isinstance(proc, dict))
     if not rows:
-        rows = "<tr><td colspan='4' class='muted'>free</td></tr>"
+        rows = "<tr><td colspan='7' class='muted'>free</td></tr>"
     return f"""
     <article class="gpu-card">
       <h3>GPU {esc(gpu.get('index'))} <span>{esc(short(gpu.get('name') or '', 32))}</span></h3>
@@ -322,27 +431,55 @@ def render_gpu_card(gpu: object) -> str:
         <span>{esc(gpu.get('utilization_gpu'))}% util</span>
         <span>{esc(gpu.get('temperature'))} C</span>
       </div>
-      <table><tr><th>User</th><th>PID</th><th>Memory</th><th>Command</th></tr>{rows}</table>
+      <table><tr><th>User</th><th>PID</th><th>Runtime</th><th>Memory</th><th>Health</th><th>Command</th><th>Action</th></tr>{rows}</table>
     </article>
     """
 
 
-def render_process_table(processes: object) -> str:
+def render_process_table(processes: object, *, server_alias: object | None = None) -> str:
     if not isinstance(processes, list) or not processes:
         return "<p class='muted'>No GPU compute processes.</p>"
-    rows = "".join(render_process_row(proc, include_gpu=True) for proc in processes if isinstance(proc, dict))
-    return f"<table><tr><th>GPU UUID</th><th>User</th><th>PID</th><th>Memory</th><th>Command</th><th>Hint</th></tr>{rows}</table>"
-
-
-def render_process_row(proc: dict[str, object], *, include_gpu: bool) -> str:
-    command = short(proc.get("command") or "", 140)
-    hint = f"labgpu adopt {esc(proc.get('pid'))} --name NAME"
-    gpu = f"<td>{esc(short(proc.get('gpu_uuid') or '', 14))}</td>" if include_gpu else ""
-    hint_cell = f"<td><code>{hint}</code></td>" if include_gpu else ""
-    return (
-        f"<tr>{gpu}<td>{esc(proc.get('user') or '?')}</td><td>{esc(proc.get('pid'))}</td>"
-        f"<td>{esc(proc.get('used_memory_mb'))} MB</td><td><code>{esc(command)}</code></td>{hint_cell}</tr>"
+    rows = "".join(
+        render_process_row(proc, include_gpu=True, server_alias=server_alias, action_allowed=ServerHandler.action_allowed)
+        for proc in processes
+        if isinstance(proc, dict)
     )
+    return f"<table><tr><th>GPU</th><th>User</th><th>PID</th><th>Runtime</th><th>State</th><th>Memory</th><th>Health</th><th>Command</th><th>Action</th></tr>{rows}</table>"
+
+
+def render_process_row(
+    proc: dict[str, object],
+    *,
+    include_gpu: bool,
+    server_alias: object | None = None,
+    show_server: bool = False,
+    action_allowed: bool = False,
+) -> str:
+    command = short(proc.get("command") or "", 140)
+    gpu_value = proc.get("gpu_index") if proc.get("gpu_index") is not None else short(proc.get("gpu_uuid") or "", 14)
+    gpu = f"<td>{esc(gpu_value)}</td>" if include_gpu else ""
+    server = f"<td>{esc(server_alias)}</td>" if show_server and server_alias is not None else ""
+    state = f"<td>{esc(proc.get('state') or '-')}</td>" if include_gpu else ""
+    health = f"<span class='badge {esc(proc.get('health_status') or 'unknown')}'>{esc(proc.get('health_status') or 'unknown')}</span>"
+    action = render_process_action(proc, server_alias=server_alias, action_allowed=action_allowed)
+    return (
+        f"<tr>{server}{gpu}<td>{esc(proc.get('user') or '?')}</td><td>{esc(proc.get('pid'))}</td>"
+        f"<td>{esc(proc.get('runtime') or human_duration(proc.get('runtime_seconds')))}</td>{state}"
+        f"<td>{esc(proc.get('used_memory_mb'))} MB</td><td title='{esc(proc.get('health_reason') or '')}'>{health}</td>"
+        f"<td><code>{esc(command)}</code></td><td>{action}</td></tr>"
+    )
+
+
+def render_process_action(proc: dict[str, object], *, server_alias: object | None, action_allowed: bool) -> str:
+    if proc.get("is_current_user") and action_allowed and server_alias:
+        return (
+            f"<button class='small danger' data-stop='term' data-server='{esc(server_alias)}' data-pid='{esc(proc.get('pid'))}' "
+            f"data-user='{esc(proc.get('user') or '')}' data-start='{esc(proc.get('start_time') or '')}' "
+            f"data-hash='{esc(proc.get('command_hash') or '')}' data-command='{esc(short(proc.get('command') or '', 180))}'>Stop</button>"
+        )
+    if proc.get("is_current_user") and not action_allowed:
+        return "<span class='muted'>actions disabled</span>"
+    return f"<code>labgpu adopt {esc(proc.get('pid'))} --name NAME</code>"
 
 
 def page(title: str, body: str) -> str:
@@ -363,7 +500,11 @@ a{{color:inherit}} code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace
 .meta{{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0;color:#667085;font-size:13px}}
 .pill{{border-radius:999px;padding:2px 9px;font-size:12px;background:#eee}}
 .pill.online{{color:#067647;background:#ecfdf3}} .pill.offline{{color:#b42318;background:#fef3f2}}
+.badge{{border-radius:999px;padding:2px 7px;font-size:12px;background:#eef2f6;color:#364152}}
+.badge.ok{{background:#ecfdf3;color:#067647}} .badge.warning{{background:#fffaeb;color:#b54708}} .badge.error{{background:#fef3f2;color:#b42318}}
 .error{{color:#b42318;margin:8px 0}}
+.small{{border:1px solid #d0d5dd;border-radius:5px;background:#fff;padding:3px 7px;font-size:12px;cursor:pointer}}
+.danger{{color:#b42318;border-color:#fda29b}} .danger-strong{{color:#fff;background:#b42318;border-color:#b42318}}
 .panel{{background:#fff;border:1px solid #d8d8d0;border-radius:8px;padding:14px;margin:14px 0;overflow:hidden}}
 .health{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}}
 .health>div{{background:#fff;border:1px solid #d8d8d0;border-radius:8px;padding:12px}}
@@ -377,6 +518,7 @@ th,td{{border-top:1px solid #eee;padding:7px;text-align:left;vertical-align:top}
 </style></head><body><main>{body}</main>
 <script>
 let paused = false;
+const actionToken = "{esc(ServerHandler.action_token)}";
 const btn = document.getElementById("pause-refresh");
 if (btn) {{
   btn.addEventListener("click", () => {{
@@ -387,6 +529,31 @@ if (btn) {{
 setInterval(() => {{
   if (!paused) window.location.reload();
 }}, 15000);
+document.querySelectorAll("[data-stop]").forEach((button) => {{
+  button.addEventListener("click", async () => {{
+    const msg = `Stop this process?\\n\\nServer: ${{button.dataset.server}}\\nPID: ${{button.dataset.pid}}\\nUser: ${{button.dataset.user}}\\nCommand: ${{button.dataset.command || "-"}}\\n\\nThis sends SIGTERM first.`;
+    if (!window.confirm(msg)) return;
+    let payload = await stopProcess(button, false);
+    if (!payload.ok && payload.result === "alive" && window.confirm("Process is still alive. Force kill with SIGKILL?")) {{
+      payload = await stopProcess(button, true);
+    }}
+    window.alert(payload.message || payload.result || "done");
+    if (payload.ok) window.location.reload();
+  }});
+}});
+async function stopProcess(button, force) {{
+    const path = `/api/servers/${{encodeURIComponent(button.dataset.server)}}/processes/${{button.dataset.pid}}/${{force ? "force-stop" : "stop"}}`;
+    const response = await fetch(path, {{
+      method: "POST",
+      headers: {{"Content-Type": "application/json", "X-LabGPU-Action-Token": actionToken}},
+      body: JSON.stringify({{
+        expected_user: button.dataset.user,
+        expected_start_time: button.dataset.start,
+        expected_command_hash: button.dataset.hash
+      }})
+    }});
+    return await response.json().catch(() => ({{ok: false, message: "request failed"}}));
+}}
 </script>
 </body></html>"""
 
@@ -445,3 +612,7 @@ def join_values(values: object) -> str:
     if not isinstance(values, list):
         return "-"
     return ",".join(str(value) for value in values) or "-"
+
+
+def is_loopback(host: str) -> bool:
+    return host in {"127.0.0.1", "localhost", "::1"}

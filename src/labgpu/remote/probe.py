@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import re
 import subprocess
@@ -16,6 +17,8 @@ REMOTE_SCRIPT = r"""
 set +e
 echo "__LABGPU_SECTION__ host"
 hostname 2>/dev/null
+echo "__LABGPU_SECTION__ current_user"
+(whoami 2>/dev/null || id -un 2>/dev/null)
 echo "__LABGPU_SECTION__ uptime"
 (uptime -p 2>/dev/null || uptime 2>/dev/null)
 echo "__LABGPU_SECTION__ load"
@@ -45,8 +48,16 @@ if command -v nvidia-smi >/dev/null 2>&1; then
     mem="$(printf "%s" "$mem" | xargs)"
     [ -z "$pid" ] && continue
     user="$(ps -o user= -p "$pid" 2>/dev/null | xargs)"
+    ppid="$(ps -o ppid= -p "$pid" 2>/dev/null | xargs)"
+    pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | xargs)"
+    etimes="$(ps -o etimes= -p "$pid" 2>/dev/null | xargs)"
+    lstart="$(ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^ *//;s/ *$//')"
+    stat="$(ps -o stat= -p "$pid" 2>/dev/null | xargs)"
+    pcpu="$(ps -o pcpu= -p "$pid" 2>/dev/null | xargs)"
+    pmem="$(ps -o pmem= -p "$pid" 2>/dev/null | xargs)"
+    cwd="$(readlink "/proc/$pid/cwd" 2>/dev/null || true)"
     cmd="$(ps -o command= -p "$pid" 2>/dev/null | tr '\t' ' ' | xargs)"
-    printf "%s\t%s\t%s\t%s\t%s\n" "$pid" "$uuid" "$mem" "$user" "$cmd"
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$pid" "$uuid" "$mem" "$user" "$ppid" "$pgid" "$etimes" "$lstart" "$stat" "$pcpu" "$pmem" "$cwd" "$cmd"
   done
 fi
 echo "__LABGPU_SECTION__ labgpu"
@@ -83,6 +94,8 @@ SENSITIVE_WORDS = (
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
 )
+
+SENSITIVE_NAME_RE = re.compile(r"(?i)(^|[_\-.])(TOKEN|KEY|SECRET|PASSWORD|PASSWD)([_\-.]|$)")
 
 
 def probe_host(host: SSHHost, *, timeout: int = 8) -> dict[str, Any]:
@@ -138,11 +151,13 @@ def parse_probe_output(output: str) -> dict[str, Any]:
             sections[current].append(line)
 
     gpus = parse_gpus("\n".join(sections.get("gpus", [])))
-    processes = parse_processes("\n".join(sections.get("processes", [])))
+    current_user = first_line(sections.get("current_user", []))
+    processes = parse_processes("\n".join(sections.get("processes", [])), current_user=current_user)
     by_uuid = {gpu.get("uuid"): gpu for gpu in gpus}
     for proc in processes:
         gpu = by_uuid.get(proc.get("gpu_uuid"))
         if gpu is not None:
+            proc["gpu_index"] = gpu.get("index")
             gpu.setdefault("processes", []).append(proc)
     for gpu in gpus:
         gpu.setdefault("processes", [])
@@ -150,6 +165,7 @@ def parse_probe_output(output: str) -> dict[str, Any]:
     labgpu = parse_labgpu("\n".join(sections.get("labgpu", [])))
     return {
         "remote_hostname": first_line(sections.get("host", [])),
+        "current_user": current_user,
         "uptime": first_line(sections.get("uptime", [])),
         "load": first_line(sections.get("load", [])),
         "load_avg": parse_load(first_line(sections.get("load", []))),
@@ -173,14 +189,17 @@ def parse_gpus(output: str) -> list[dict[str, Any]]:
         row = [cell.strip() for cell in row]
         if len(row) < 8:
             continue
+        total = to_int(row[4])
+        used = to_int(row[5])
         gpus.append(
             {
                 "index": to_int(row[0]),
                 "uuid": row[1],
                 "name": row[2],
                 "pci_bus_id": row[3],
-                "memory_total_mb": to_int(row[4]),
-                "memory_used_mb": to_int(row[5]),
+                "memory_total_mb": total,
+                "memory_used_mb": used,
+                "memory_free_mb": (total - used) if total is not None and used is not None else None,
                 "utilization_gpu": to_int(row[6]),
                 "temperature": to_int(row[7]),
                 "processes": [],
@@ -189,21 +208,32 @@ def parse_gpus(output: str) -> list[dict[str, Any]]:
     return gpus
 
 
-def parse_processes(output: str) -> list[dict[str, Any]]:
+def parse_processes(output: str, *, current_user: str | None = None) -> list[dict[str, Any]]:
     processes: list[dict[str, Any]] = []
     for line in output.splitlines():
-        parts = line.split("\t", 4)
-        if len(parts) < 5:
+        parts = line.split("\t", 12)
+        if len(parts) < 13:
             continue
-        pid, gpu_uuid, memory, user, command = parts
+        pid, gpu_uuid, memory, user, ppid, pgid, etimes, lstart, stat, pcpu, pmem, cwd, command = parts
+        redacted = redact_command(command) if command else None
         processes.append(
             {
                 "pid": to_int(pid),
                 "gpu_uuid": gpu_uuid,
                 "used_memory_mb": to_int(memory),
                 "user": user or None,
-                "command": redact_command(command) if command else None,
-                "command_redacted": command != redact_command(command) if command else False,
+                "ppid": to_int(ppid),
+                "pgid": to_int(pgid),
+                "runtime_seconds": to_int(etimes),
+                "start_time": lstart or None,
+                "state": stat or None,
+                "cpu_percent": to_float(pcpu),
+                "memory_percent": to_float(pmem),
+                "cwd": cwd or None,
+                "command": redacted,
+                "command_redacted": command != redacted if command else False,
+                "command_hash": process_hash(user, lstart, command),
+                "is_current_user": bool(current_user and user == current_user),
             }
         )
     return processes
@@ -314,6 +344,16 @@ def to_int(value: str) -> int | None:
         return None
 
 
+def to_float(value: str) -> float | None:
+    value = value.strip()
+    if value in {"", "N/A", "[Not Supported]"}:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
 def percent(used: int | None, total: int | None) -> int | None:
     if used is None or not total:
         return None
@@ -322,17 +362,36 @@ def percent(used: int | None, total: int | None) -> int | None:
 
 def redact_command(command: str) -> str:
     text = command
-    env_pattern = re.compile(
-        r"(?i)\b([A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD)[A-Z0-9_]*)=([^\s]+)"
-    )
-    flag_pattern = re.compile(
-        r"(?i)(--?[A-Z0-9_.-]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD)[A-Z0-9_.-]*)(=|\s+)([^\s]+)"
-    )
-    text = env_pattern.sub(r"\1=<redacted>", text)
-    text = flag_pattern.sub(r"\1\2<redacted>", text)
+    env_pattern = re.compile(r"\b([A-Za-z0-9_.-]+)=([^\s]+)")
+    flag_pattern = re.compile(r"(--?[A-Za-z0-9_.-]+)(=|\s+)([^\s]+)")
+
+    def redact_env(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if is_sensitive_name(name):
+            return f"{name}=<redacted>"
+        return match.group(0)
+
+    def redact_flag(match: re.Match[str]) -> str:
+        name = match.group(1).lstrip("-")
+        if is_sensitive_name(name):
+            return f"{match.group(1)}{match.group(2)}<redacted>"
+        return match.group(0)
+
+    text = env_pattern.sub(redact_env, text)
+    text = flag_pattern.sub(redact_flag, text)
     for word in SENSITIVE_WORDS:
         text = re.sub(fr"(?i)\b{re.escape(word)}\b\s*=\s*[^\s]+", f"{word}=<redacted>", text)
     return text
+
+
+def is_sensitive_name(name: str) -> bool:
+    upper = name.upper()
+    return upper in SENSITIVE_WORDS or bool(SENSITIVE_NAME_RE.search(upper))
+
+
+def process_hash(user: str | None, start_time: str | None, command: str | None) -> str:
+    raw = "\n".join([user or "", start_time or "", command or ""])
+    return hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:16]
 
 
 def _base(host: SSHHost, *, online: bool, error: str | None, elapsed: float) -> dict[str, Any]:

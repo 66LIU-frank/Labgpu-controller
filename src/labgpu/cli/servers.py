@@ -25,6 +25,7 @@ def run_dashboard(args) -> int:
         pattern=args.pattern,
         timeout=args.timeout,
         open_browser=getattr(args, "open", False),
+        allow_actions=getattr(args, "allow_actions", False),
     )
     return 0
 
