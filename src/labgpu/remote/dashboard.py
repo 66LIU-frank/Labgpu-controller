@@ -10,11 +10,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+from labgpu.core.config import load_config
 from labgpu.remote.actions import stop_process
 from labgpu.remote.cache import read_server_cache, write_server_cache
 from labgpu.remote.inventory import load_inventory
 from labgpu.remote.probe import probe_host
-from labgpu.remote.ssh_config import SSHHost, resolve_ssh_host
+from labgpu.remote.ssh_config import SSHHost, parse_ssh_config, resolve_ssh_host
 from labgpu.remote.state import annotate_server, build_overview, human_duration
 
 
@@ -91,6 +92,18 @@ class ServerHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/":
             self._html(render_index(self._data(parsed.query)))
+        elif parsed.path == "/gpus":
+            self._html(render_gpus_page(self._data(parsed.query)))
+        elif parsed.path == "/me":
+            self._html(render_me_page(self._data(parsed.query)))
+        elif parsed.path == "/servers":
+            self._html(render_servers_page(self._data(parsed.query)))
+        elif parsed.path == "/alerts":
+            self._html(render_alerts_page(self._data(parsed.query)))
+        elif parsed.path == "/settings":
+            self._html(render_settings_page(ssh_config=self.ssh_config))
+        elif parsed.path == "/api/overview":
+            self._json(self._data(parsed.query))
         elif parsed.path == "/api/servers":
             self._json(self._data(parsed.query))
         elif parsed.path.startswith("/servers/"):
@@ -139,6 +152,15 @@ class ServerHandler(BaseHTTPRequestHandler):
             "q": params.get("q", [""])[0].strip(),
             "min_mem_gb": params.get("min_mem_gb", [""])[0].strip(),
             "model": params.get("model", [""])[0].strip(),
+            "tag": params.get("tag", [""])[0].strip(),
+            "server": params.get("server", [""])[0].strip(),
+            "health": params.get("health", [""])[0].strip(),
+            "severity": params.get("severity", [""])[0].strip(),
+            "online": params.get("online", [""])[0].strip(),
+            "free": params.get("free", [""])[0].strip(),
+            "alerts": params.get("alerts", [""])[0].strip(),
+            "mine": params.get("mine", [""])[0].strip(),
+            "sort": params.get("sort", [""])[0].strip(),
         }
         return data
 
@@ -192,7 +214,7 @@ class ServerHandler(BaseHTTPRequestHandler):
 def render_index(data: dict[str, object]) -> str:
     hosts = data.get("hosts") or []
     overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
-    cards = "".join(render_host_card(host) for host in hosts)
+    cards = "".join(render_host_card(host, compact=True) for host in preview_list(hosts, 6))
     if not cards:
         cards = f"<p class='muted'>{esc(data.get('error') or 'No hosts found.')}</p>"
     return page(
@@ -208,12 +230,127 @@ def render_index(data: dict[str, object]) -> str:
             <a class="button" href="/api/servers">JSON</a>
           </div>
         </section>
-        {render_filters(data.get('ui') if isinstance(data.get('ui'), dict) else {})}
         {render_overview(overview)}
-        {render_available_gpus(overview.get('available_gpu_items') if isinstance(overview, dict) else [], data.get('ui') if isinstance(data.get('ui'), dict) else {})}
-        {render_my_processes(overview.get('my_process_items') if isinstance(overview, dict) else [])}
-        {render_alerts(overview.get('alert_items') if isinstance(overview, dict) else [])}
+        <div class="split">
+          {render_available_gpus(overview.get('available_gpu_items') if isinstance(overview, dict) else [], {}, limit=6, title='Available GPUs', view_all='/gpus')}
+          {render_my_processes(overview.get('my_process_items') if isinstance(overview, dict) else [], limit=6, view_all='/me')}
+        </div>
+        <div class="split">
+          {render_alerts(overview.get('alert_items') if isinstance(overview, dict) else [], limit=8, view_all='/alerts')}
+          <section class="panel"><div class="section-head"><h2>Servers</h2><a href="/servers">View all</a></div><div class="grid compact">{cards}</div></section>
+        </div>
+        """,
+    )
+
+
+def render_gpus_page(data: dict[str, object]) -> str:
+    overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
+    ui = data.get("ui") if isinstance(data.get("ui"), dict) else {}
+    return page(
+        "Find GPUs",
+        f"""
+        <section class="toolbar">
+          <div>
+            <h1>Find GPUs</h1>
+            <p>Find the best free GPU across your SSH servers.</p>
+          </div>
+          <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/">Overview</a></div>
+        </section>
+        {render_filters(ui, kind='gpus')}
+        {render_available_gpus(overview.get('available_gpu_items') if isinstance(overview, dict) else [], ui, title='Available GPUs')}
+        """,
+    )
+
+
+def render_me_page(data: dict[str, object]) -> str:
+    overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
+    ui = data.get("ui") if isinstance(data.get("ui"), dict) else {}
+    return page(
+        "My Processes",
+        f"""
+        <section class="toolbar">
+          <div>
+            <h1>My Processes</h1>
+            <p>Your GPU processes across all configured servers.</p>
+          </div>
+          <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/">Overview</a></div>
+        </section>
+        {render_process_filters(ui)}
+        {render_my_processes(overview.get('my_process_items') if isinstance(overview, dict) else [], ui=ui, title='My GPU Processes')}
+        """,
+    )
+
+
+def render_servers_page(data: dict[str, object]) -> str:
+    hosts = data.get("hosts") or []
+    ui = data.get("ui") if isinstance(data.get("ui"), dict) else {}
+    filtered = filter_hosts(hosts, ui)
+    cards = "".join(render_host_card(host) for host in filtered) or "<p class='muted'>No server matched the current filters.</p>"
+    return page(
+        "Servers",
+        f"""
+        <section class="toolbar">
+          <div>
+            <h1>Servers</h1>
+            <p>Configured SSH GPU servers, health, disks, and free/busy GPUs.</p>
+          </div>
+          <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/settings">Settings</a></div>
+        </section>
+        {render_server_filters(ui)}
         <section class="grid">{cards}</section>
+        """,
+    )
+
+
+def render_alerts_page(data: dict[str, object]) -> str:
+    overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
+    ui = data.get("ui") if isinstance(data.get("ui"), dict) else {}
+    return page(
+        "Alerts",
+        f"""
+        <section class="toolbar">
+          <div>
+            <h1>Alerts</h1>
+            <p>Disk, SSH, GPU, and process conditions that need attention.</p>
+          </div>
+          <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/">Overview</a></div>
+        </section>
+        {render_alert_filters(ui)}
+        {render_alerts(overview.get('alert_items') if isinstance(overview, dict) else [], ui=ui, title='All Alerts')}
+        """,
+    )
+
+
+def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
+    config = load_config()
+    ssh_hosts = parse_ssh_config(ssh_config)
+    host_rows = "".join(
+        f"<tr><td><code>{esc(host.alias)}</code></td><td>{esc(host.hostname or '-')}</td><td>{esc(host.user or '-')}</td><td>{esc(host.port or 22)}</td><td><code>labgpu servers import-ssh --hosts {esc(host.alias)}</code></td></tr>"
+        for host in ssh_hosts
+    ) or "<tr><td colspan='5' class='muted'>No SSH hosts found.</td></tr>"
+    server_rows = "".join(
+        f"<tr><td><code>{esc(entry.alias)}</code></td><td>{esc(entry.enabled)}</td><td>{esc(join_values(entry.tags))}</td><td>{esc(join_values(entry.disk_paths))}</td><td>{esc(entry.shared_account)}</td><td>{esc(entry.allow_stop_own_process)}</td></tr>"
+        for entry in config.servers.values()
+    ) or "<tr><td colspan='6' class='muted'>No saved LabGPU server inventory yet.</td></tr>"
+    return page(
+        "Settings",
+        f"""
+        <section class="toolbar">
+          <div>
+            <h1>Settings</h1>
+            <p>Import SSH hosts and manage the server inventory stored in <code>~/.labgpu/config.toml</code>.</p>
+          </div>
+          <div class="actions"><a class="button" href="/">Overview</a><a class="button" href="/servers">Servers</a></div>
+        </section>
+        <section class="panel">
+          <h2>Saved Servers</h2>
+          <table><tr><th>Alias</th><th>Enabled</th><th>Tags</th><th>Disk paths</th><th>Shared account</th><th>Stop own process</th></tr>{server_rows}</table>
+        </section>
+        <section class="panel">
+          <h2>Import From SSH Config</h2>
+          <p class="muted">Alpha settings are intentionally simple: choose aliases here, then use the import command. Full in-page editing can be added after the server model settles.</p>
+          <table><tr><th>Alias</th><th>HostName</th><th>User</th><th>Port</th><th>Import command</th></tr>{host_rows}</table>
+        </section>
         """,
     )
 
@@ -229,31 +366,116 @@ def render_overview(overview: dict[str, object]) -> str:
     """
 
 
-def render_filters(ui: dict[str, object]) -> str:
+def render_filters(ui: dict[str, object], *, kind: str = "all") -> str:
     q = str(ui.get("q") or "")
     model = str(ui.get("model") or "")
     min_mem = str(ui.get("min_mem_gb") or "")
+    tag = str(ui.get("tag") or "")
+    sort = str(ui.get("sort") or "")
     return f"""
     <form class="filters" method="get">
       <label>Search <input name="q" value="{esc(q)}" placeholder="alpha, A100, lsg"></label>
       <label>Model <input name="model" value="{esc(model)}" placeholder="A100 / 4090 / H800"></label>
       <label>Min free GB <input name="min_mem_gb" value="{esc(min_mem)}" placeholder="24"></label>
+      <label>Tag <input name="tag" value="{esc(tag)}" placeholder="training"></label>
+      <label>Sort
+        <select name="sort">
+          {option('', 'Recommended', sort)}
+          {option('memory', 'Free memory', sort)}
+          {option('load', 'Server load', sort)}
+          {option('model', 'Model', sort)}
+        </select>
+      </label>
       <button class="button" type="submit">Filter</button>
-      <a class="button" href="/">Clear</a>
+      <a class="button" href="/{esc(kind if kind != 'all' else '')}">Clear</a>
     </form>
     """
 
 
-def render_available_gpus(items: object, ui: dict[str, object] | None = None) -> str:
+def render_process_filters(ui: dict[str, object]) -> str:
+    q = str(ui.get("q") or "")
+    server = str(ui.get("server") or "")
+    health = str(ui.get("health") or "")
+    return f"""
+    <form class="filters" method="get">
+      <label>Search <input name="q" value="{esc(q)}" placeholder="command, PID, user"></label>
+      <label>Server <input name="server" value="{esc(server)}" placeholder="alpha_liu"></label>
+      <label>Health
+        <select name="health">
+          {option('', 'Any', health)}
+          {option('healthy', 'Healthy', health)}
+          {option('suspected_idle', 'Suspected idle', health)}
+          {option('io_wait', 'IO wait', health)}
+          {option('zombie', 'Zombie', health)}
+        </select>
+      </label>
+      <button class="button" type="submit">Filter</button>
+      <a class="button" href="/me">Clear</a>
+    </form>
+    """
+
+
+def render_server_filters(ui: dict[str, object]) -> str:
+    q = str(ui.get("q") or "")
+    tag = str(ui.get("tag") or "")
+    online = str(ui.get("online") or "")
+    free = str(ui.get("free") or "")
+    alerts = str(ui.get("alerts") or "")
+    mine = str(ui.get("mine") or "")
+    return f"""
+    <form class="filters" method="get">
+      <label>Search <input name="q" value="{esc(q)}" placeholder="alias, model, user"></label>
+      <label>Tag <input name="tag" value="{esc(tag)}" placeholder="A100"></label>
+      <label><input type="checkbox" name="online" value="1" {checked(online)}> Online only</label>
+      <label><input type="checkbox" name="free" value="1" {checked(free)}> Has free GPU</label>
+      <label><input type="checkbox" name="alerts" value="1" {checked(alerts)}> Has alerts</label>
+      <label><input type="checkbox" name="mine" value="1" {checked(mine)}> Has my processes</label>
+      <button class="button" type="submit">Filter</button>
+      <a class="button" href="/servers">Clear</a>
+    </form>
+    """
+
+
+def render_alert_filters(ui: dict[str, object]) -> str:
+    severity = str(ui.get("severity") or "")
+    q = str(ui.get("q") or "")
+    return f"""
+    <form class="filters" method="get">
+      <label>Search <input name="q" value="{esc(q)}" placeholder="server, message"></label>
+      <label>Severity
+        <select name="severity">
+          {option('', 'Any', severity)}
+          {option('error', 'Critical', severity)}
+          {option('warning', 'Warning', severity)}
+          {option('info', 'Info', severity)}
+        </select>
+      </label>
+      <button class="button" type="submit">Filter</button>
+      <a class="button" href="/alerts">Clear</a>
+    </form>
+    """
+
+
+def render_available_gpus(
+    items: object,
+    ui: dict[str, object] | None = None,
+    *,
+    title: str = "Available GPUs",
+    limit: int | None = None,
+    view_all: str | None = None,
+) -> str:
     items = filter_available_gpu_items(items, ui or {})
+    if limit is not None:
+        items = items[:limit]
+    head = section_head(title, view_all)
     if not isinstance(items, list) or not items:
-        return "<section class='panel'><h2>Available GPUs</h2><p class='muted'>No clearly free GPU found.</p></section>"
+        return f"<section class='panel'>{head}<p class='muted'>No clearly free GPU found.</p></section>"
     rows = "".join(
-        f"<tr><td>{esc(item.get('server'))}</td><td>GPU {esc(item.get('gpu_index'))}</td><td>{esc(short(item.get('name') or '', 34))}</td><td>{esc(item.get('memory_free_mb'))} MB</td><td>{esc(item.get('utilization_gpu'))}%</td><td><code>CUDA_VISIBLE_DEVICES={esc(item.get('cuda_visible_devices'))}</code></td></tr>"
+        f"<tr><td><a href='/servers/{esc(item.get('server'))}'>{esc(item.get('server'))}</a></td><td>GPU {esc(item.get('gpu_index'))}</td><td>{esc(short(item.get('name') or '', 34))}</td><td>{esc(item.get('memory_free_mb'))} MB</td><td>{esc(item.get('utilization_gpu'))}%</td><td>{esc(item.get('temperature'))} C</td><td>{esc(item.get('disk_health'))}</td><td><code>{esc(item.get('ssh_command'))}</code><br><code>CUDA_VISIBLE_DEVICES={esc(item.get('cuda_visible_devices'))}</code></td></tr>"
         for item in items
         if isinstance(item, dict)
     )
-    return f"<section class='panel'><h2>Available GPUs</h2><table><tr><th>Server</th><th>GPU</th><th>Model</th><th>Free memory</th><th>Util</th><th>Copy</th></tr>{rows}</table></section>"
+    return f"<section class='panel'>{head}<table><tr><th>Server</th><th>GPU</th><th>Model</th><th>Free memory</th><th>Util</th><th>Temp</th><th>Disk</th><th>Copy</th></tr>{rows}</table></section>"
 
 
 def filter_available_gpu_items(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
@@ -261,6 +483,8 @@ def filter_available_gpu_items(items: object, ui: dict[str, object]) -> list[dic
         return []
     q = str(ui.get("q") or "").lower()
     model = str(ui.get("model") or "").lower()
+    tag = str(ui.get("tag") or "").lower()
+    sort = str(ui.get("sort") or "")
     min_mem_raw = str(ui.get("min_mem_gb") or "").strip()
     min_mem_mb = None
     if min_mem_raw:
@@ -283,15 +507,122 @@ def filter_available_gpu_items(items: object, ui: dict[str, object]) -> list[dic
             continue
         if model and model not in str(item.get("name") or "").lower():
             continue
+        if tag and tag not in join_values(item.get("tags") or []).lower():
+            continue
         if min_mem_mb is not None and (item.get("memory_free_mb") or 0) < min_mem_mb:
             continue
         filtered.append(item)
+    if sort == "model":
+        filtered.sort(key=lambda item: (str(item.get("name") or ""), str(item.get("server") or "")))
+    elif sort == "load":
+        filtered.sort(key=lambda item: load_sort_key(item.get("load")))
+    else:
+        filtered.sort(key=lambda item: int(item.get("memory_free_mb") or 0), reverse=True)
     return filtered
 
 
-def render_my_processes(items: object) -> str:
+def filter_process_items(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
+    if not isinstance(items, list):
+        return []
+    q = str(ui.get("q") or "").lower()
+    server = str(ui.get("server") or "").lower()
+    health = str(ui.get("health") or "").lower()
+    filtered: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        haystack = " ".join(
+            [
+                str(item.get("server") or ""),
+                str(item.get("user") or ""),
+                str(item.get("pid") or ""),
+                str(item.get("command") or ""),
+                str(item.get("health_status") or ""),
+            ]
+        ).lower()
+        if q and q not in haystack:
+            continue
+        if server and server not in str(item.get("server") or "").lower():
+            continue
+        if health and health != str(item.get("health_status") or "").lower():
+            continue
+        filtered.append(item)
+    filtered.sort(key=lambda item: int(item.get("runtime_seconds") or 0), reverse=True)
+    return filtered
+
+
+def filter_alert_items(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
+    if not isinstance(items, list):
+        return []
+    q = str(ui.get("q") or "").lower()
+    severity = str(ui.get("severity") or "").lower()
+    filtered: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        haystack = " ".join([str(item.get("server") or ""), str(item.get("type") or ""), str(item.get("message") or "")]).lower()
+        if q and q not in haystack:
+            continue
+        if severity and severity != str(item.get("severity") or "").lower():
+            continue
+        filtered.append(item)
+    filtered.sort(key=lambda item: (alert_rank(item.get("severity")), str(item.get("server") or "")))
+    return filtered
+
+
+def filter_hosts(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
+    if not isinstance(items, list):
+        return []
+    q = str(ui.get("q") or "").lower()
+    tag = str(ui.get("tag") or "").lower()
+    online_only = bool(ui.get("online"))
+    has_free = bool(ui.get("free"))
+    has_alerts = bool(ui.get("alerts"))
+    has_mine = bool(ui.get("mine"))
+    filtered: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        haystack = " ".join(
+            [
+                str(item.get("alias") or ""),
+                str(item.get("remote_hostname") or ""),
+                join_values(item.get("tags") or []),
+                " ".join(str(gpu.get("name") or "") for gpu in item.get("gpus") or [] if isinstance(gpu, dict)),
+                top_users(item.get("processes") or []),
+            ]
+        ).lower()
+        if q and q not in haystack:
+            continue
+        if tag and tag not in join_values(item.get("tags") or []).lower():
+            continue
+        if online_only and not item.get("online"):
+            continue
+        if has_free and not item.get("available_gpus"):
+            continue
+        if has_alerts and not item.get("alerts"):
+            continue
+        if has_mine and not item.get("my_processes"):
+            continue
+        filtered.append(item)
+    filtered.sort(key=lambda item: (not bool(item.get("online")), str(item.get("alias") or "")))
+    return filtered
+
+
+def render_my_processes(
+    items: object,
+    *,
+    ui: dict[str, object] | None = None,
+    title: str = "My Processes",
+    limit: int | None = None,
+    view_all: str | None = None,
+) -> str:
+    items = filter_process_items(items, ui or {})
+    if limit is not None:
+        items = items[:limit]
+    head = section_head(title, view_all)
     if not isinstance(items, list) or not items:
-        return "<section class='panel'><h2>My Processes</h2><p class='muted'>No GPU process owned by the SSH user.</p></section>"
+        return f"<section class='panel'>{head}<p class='muted'>No GPU process owned by the SSH user.</p></section>"
     rows = "".join(
         render_process_row(
             item,
@@ -303,18 +634,29 @@ def render_my_processes(items: object) -> str:
         for item in items
         if isinstance(item, dict)
     )
-    return f"<section class='panel'><h2>My Processes</h2><table><tr><th>Server</th><th>GPU</th><th>User</th><th>PID</th><th>Runtime</th><th>State</th><th>Memory</th><th>Health</th><th>Command</th><th>Action</th></tr>{rows}</table></section>"
+    return f"<section class='panel'>{head}<table><tr><th>Server</th><th>GPU</th><th>User</th><th>PID</th><th>Runtime</th><th>State</th><th>Memory</th><th>Health</th><th>Command</th><th>Action</th></tr>{rows}</table></section>"
 
 
-def render_alerts(items: object) -> str:
+def render_alerts(
+    items: object,
+    *,
+    ui: dict[str, object] | None = None,
+    title: str = "Alerts",
+    limit: int | None = None,
+    view_all: str | None = None,
+) -> str:
+    items = filter_alert_items(items, ui or {})
+    if limit is not None:
+        items = items[:limit]
+    head = section_head(title, view_all)
     if not isinstance(items, list) or not items:
-        return "<section class='panel'><h2>Alerts</h2><p class='muted'>No current alerts.</p></section>"
+        return f"<section class='panel'>{head}<p class='muted'>No current alerts.</p></section>"
     rows = "".join(
-        f"<tr><td>{esc(item.get('server'))}</td><td><span class='badge {esc(item.get('severity'))}'>{esc(item.get('severity'))}</span></td><td>{esc(item.get('message'))}</td></tr>"
+        f"<tr><td><a href='/servers/{esc(item.get('server'))}'>{esc(item.get('server'))}</a></td><td>{esc(item.get('type') or '-')}</td><td><span class='badge {esc(item.get('severity'))}'>{esc(item.get('severity'))}</span></td><td>{esc(item.get('message'))}</td><td><button class='small' type='button' disabled>Dismiss</button> <button class='small' type='button' disabled>Snooze</button></td></tr>"
         for item in items
         if isinstance(item, dict)
     )
-    return f"<section class='panel'><h2>Alerts</h2><table><tr><th>Server</th><th>Severity</th><th>Message</th></tr>{rows}</table></section>"
+    return f"<section class='panel'>{head}<table><tr><th>Server</th><th>Type</th><th>Severity</th><th>Message</th><th>Action</th></tr>{rows}</table></section>"
 
 
 def render_detail(data: dict[str, object]) -> str:
@@ -347,7 +689,7 @@ def render_detail(data: dict[str, object]) -> str:
     return page("LabGPU Server", content)
 
 
-def render_host_card(host: object) -> str:
+def render_host_card(host: object, *, compact: bool = False) -> str:
     if not isinstance(host, dict):
         return ""
     online = bool(host.get("online"))
@@ -365,6 +707,13 @@ def render_host_card(host: object) -> str:
     mem = memory.get("mem") if isinstance(memory.get("mem"), dict) else {}
     mode = host.get("mode") or "offline"
     href = f"/servers/{esc(host.get('alias'))}"
+    gpu_table = "" if compact else f"""
+      <table>
+        <tr><th>GPU</th><th>Name</th><th>Memory</th><th>Util</th><th>Processes</th></tr>
+        {gpu_rows}
+      </table>
+    """
+    alerts = host.get("alerts") or []
     return f"""
     <article class="card">
       <div class="card-head">
@@ -391,14 +740,12 @@ def render_host_card(host: object) -> str:
       <div class="meta">
         <span>{esc(host.get('uptime') or '-')}</span>
         <span>top users {esc(top_users(host.get('processes') or []))}</span>
+        <span>alerts {esc(len(alerts) if isinstance(alerts, list) else 0)}</span>
         <span>last probe {esc(host.get('probed_at') or '-')}</span>
       </div>
       {f"<p class='muted'>offline, last seen {esc(host.get('last_seen'))}</p>" if cached and not online else ""}
       {f"<p class='error'>{esc(error)}</p>" if error else ""}
-      <table>
-        <tr><th>GPU</th><th>Name</th><th>Memory</th><th>Util</th><th>Processes</th></tr>
-        {gpu_rows}
-      </table>
+      {gpu_table}
     </article>
     """
 
@@ -518,7 +865,8 @@ def render_process_row(
     gpu = f"<td>{esc(gpu_value)}</td>" if include_gpu else ""
     server = f"<td>{esc(server_alias)}</td>" if show_server and server_alias is not None else ""
     state = f"<td>{esc(proc.get('state') or '-')}</td>" if include_gpu else ""
-    health = f"<span class='badge {esc(proc.get('health_status') or 'unknown')}'>{esc(proc.get('health_status') or 'unknown')}</span>"
+    health_class = proc.get("health_severity") or proc.get("health_status") or "unknown"
+    health = f"<span class='badge {esc(health_class)}'>{esc(proc.get('health_status') or 'unknown')}</span>"
     action = render_process_action(proc, server_alias=server_alias, action_allowed=action_allowed)
     return (
         f"<tr>{server}{gpu}<td>{esc(proc.get('user') or '?')}</td><td>{esc(proc.get('pid'))}</td>"
@@ -551,13 +899,17 @@ body{{font:14px/1.45 system-ui,sans-serif;margin:0;background:#f7f7f4;color:#1f2
 main{{width:min(1280px,calc(100vw - 32px));margin:0 auto;padding:22px 0 36px}}
 h1,h2,h3,p{{margin:0}} h1{{font-size:28px}} h2{{font-size:18px}} h3{{font-size:15px}} p,.muted{{color:#667085}}
 a{{color:inherit}} code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}}
+.topnav{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:18px}}
+.topnav a{{border:1px solid #d8d8d0;background:#fff;border-radius:999px;padding:6px 10px;text-decoration:none;color:#344054}}
 .toolbar{{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:18px}}
 .actions{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
 .button{{border:1px solid #d0d5dd;background:#fff;border-radius:6px;padding:7px 10px;color:#1f2328;text-decoration:none;cursor:pointer}}
 .filters{{display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:#fff;border:1px solid #d8d8d0;border-radius:8px;padding:12px;margin-bottom:14px}}
 .filters label{{display:flex;flex-direction:column;gap:4px;color:#667085;font-size:12px}}
-.filters input{{border:1px solid #d0d5dd;border-radius:6px;padding:7px 8px;min-width:150px}}
+.filters input,.filters select{{border:1px solid #d0d5dd;border-radius:6px;padding:7px 8px;min-width:150px;background:#fff}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}}
+.grid.compact{{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}}
+.split{{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px;align-items:start}}
 .card{{background:#fff;border:1px solid #d8d8d0;border-radius:8px;padding:14px;overflow:hidden}}
 .card-head{{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}}
 .meta{{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0;color:#667085;font-size:13px}}
@@ -569,6 +921,8 @@ a{{color:inherit}} code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace
 .small{{border:1px solid #d0d5dd;border-radius:5px;background:#fff;padding:3px 7px;font-size:12px;cursor:pointer}}
 .danger{{color:#b42318;border-color:#fda29b}} .danger-strong{{color:#fff;background:#b42318;border-color:#b42318}}
 .panel{{background:#fff;border:1px solid #d8d8d0;border-radius:8px;padding:14px;margin:14px 0;overflow:hidden}}
+.section-head{{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:4px}}
+.section-head a{{font-size:13px;color:#344054}}
 .health{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}}
 .health>div{{background:#fff;border:1px solid #d8d8d0;border-radius:8px;padding:12px}}
 .health strong{{display:block;font-size:18px}} .health span{{color:#667085;font-size:12px}}
@@ -577,8 +931,8 @@ a{{color:inherit}} code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace
 .gpu-card h3 span{{color:#667085;font-weight:500}}
 table{{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}}
 th,td{{border-top:1px solid #eee;padding:7px;text-align:left;vertical-align:top}} th{{color:#667085}}
-@media(max-width:640px){{main{{width:calc(100vw - 20px)}}.grid{{grid-template-columns:1fr}}.toolbar{{align-items:flex-start;flex-direction:column}}}}
-</style></head><body><main>{body}</main>
+@media(max-width:640px){{main{{width:calc(100vw - 20px)}}.grid,.split{{grid-template-columns:1fr}}.toolbar{{align-items:flex-start;flex-direction:column}}}}
+</style></head><body><main>{render_nav()}{body}</main>
 <script>
 let paused = false;
 const actionToken = "{esc(ServerHandler.action_token)}";
@@ -625,6 +979,52 @@ def split_hosts(value: str | None) -> list[str] | None:
     if not value:
         return None
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def render_nav() -> str:
+    return """
+    <nav class="topnav">
+      <a href="/">Overview</a>
+      <a href="/gpus">Find GPUs</a>
+      <a href="/me">My Processes</a>
+      <a href="/servers">Servers</a>
+      <a href="/alerts">Alerts</a>
+      <a href="/settings">Settings</a>
+    </nav>
+    """
+
+
+def section_head(title: str, view_all: str | None = None) -> str:
+    link = f"<a href='{esc(view_all)}'>View all</a>" if view_all else ""
+    return f"<div class='section-head'><h2>{esc(title)}</h2>{link}</div>"
+
+
+def preview_list(values: object, limit: int) -> list[object]:
+    if not isinstance(values, list):
+        return []
+    return values[:limit]
+
+
+def option(value: str, label: str, selected: str) -> str:
+    return f"<option value='{esc(value)}' {'selected' if value == selected else ''}>{esc(label)}</option>"
+
+
+def checked(value: object) -> str:
+    return "checked" if str(value or "") in {"1", "true", "yes", "on"} else ""
+
+
+def load_sort_key(value: object) -> tuple[float, str]:
+    if isinstance(value, dict):
+        raw = value.get("1m")
+        try:
+            return (float(raw), "")
+        except (TypeError, ValueError):
+            pass
+    return (999999.0, "")
+
+
+def alert_rank(value: object) -> int:
+    return {"error": 0, "warning": 1, "info": 2}.get(str(value), 3)
 
 
 def short(value: object, width: int) -> str:
