@@ -71,5 +71,14 @@ PYTHONPATH=src python3 -m labgpu status
 For a local overview of many SSH-configured servers, use:
 
 ```bash
-labgpu servers --hosts alpha_liu,Song-1
+labgpu ui --hosts alpha_liu,Song-1
+```
+
+Run this from your laptop, not from inside the remote server shell. SSH aliases such as `alpha_liu` are defined in your laptop's `~/.ssh/config`; the remote server usually does not know them.
+
+For debugging SSH discovery:
+
+```bash
+labgpu servers list
+labgpu servers probe alpha_liu
 ```

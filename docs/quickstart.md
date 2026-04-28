@@ -21,10 +21,17 @@ labgpu status --fake
 labgpu web --fake
 ```
 
-To view several SSH-configured servers from your laptop:
+To view several SSH-configured servers from your laptop, use LabGPU Home:
 
 ```bash
-labgpu servers --hosts alpha_liu,Song-1
+labgpu ui --hosts alpha_liu,Song-1
 ```
 
-Then open `http://127.0.0.1:8787`.
+Then open `http://127.0.0.1:8765`. This uses your local `~/.ssh/config`; do not run it from inside the remote server shell.
+
+For CLI debugging:
+
+```bash
+labgpu servers list
+labgpu servers probe alpha_liu
+```

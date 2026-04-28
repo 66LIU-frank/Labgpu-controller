@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from labgpu import __version__
-from labgpu.cli import adopt, context as context_cmd, diagnose, doctor, kill, list as list_cmd, logs, refresh, report, run as run_cmd, servers, status, web
+from labgpu.cli import adopt, context as context_cmd, diagnose, doctor, kill, list as list_cmd, logs, refresh, report, run as run_cmd, servers, status, ui, web
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -108,6 +108,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fake", action="store_true")
     p.set_defaults(handler=web.run)
 
+    p = sub.add_parser("ui", help="start LabGPU Home for SSH-configured servers")
+    p.add_argument("--hosts", help="comma-separated SSH aliases, for example alpha_liu,Song-1")
+    p.add_argument("--pattern", help="filter SSH aliases by substring")
+    p.add_argument("--config", help="SSH config path, default ~/.ssh/config")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--timeout", type=int, default=8)
+    p.add_argument("--no-open", action="store_true", help="do not open the browser automatically")
+    p.set_defaults(handler=ui.run)
+
     p = sub.add_parser("servers", help="start local SSH dashboard for configured servers")
     p.add_argument("--hosts", help="comma-separated SSH aliases, for example alpha_liu,Song-1")
     p.add_argument("--pattern", help="filter SSH aliases by substring")
@@ -116,7 +126,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8787)
     p.add_argument("--timeout", type=int, default=8)
     p.add_argument("--json", action="store_true", help="probe once and print JSON instead of starting web")
-    p.set_defaults(handler=servers.run)
+    p.set_defaults(handler=servers.run_dashboard)
+    servers_sub = p.add_subparsers(dest="servers_command")
+
+    p_list = servers_sub.add_parser("list", help="list SSH hosts from config")
+    p_list.add_argument("--hosts", help="comma-separated SSH aliases")
+    p_list.add_argument("--pattern", help="filter SSH aliases by substring")
+    p_list.add_argument("--config", help="SSH config path, default ~/.ssh/config")
+    p_list.add_argument("--json", action="store_true")
+    p_list.set_defaults(handler=servers.run_list)
+
+    p_probe = servers_sub.add_parser("probe", help="probe one SSH host or all selected hosts")
+    p_probe.add_argument("alias", nargs="?")
+    p_probe.add_argument("--all", action="store_true")
+    p_probe.add_argument("--hosts", help="comma-separated SSH aliases")
+    p_probe.add_argument("--pattern", help="filter SSH aliases by substring")
+    p_probe.add_argument("--config", help="SSH config path, default ~/.ssh/config")
+    p_probe.add_argument("--timeout", type=int, default=8)
+    p_probe.add_argument("--json", action="store_true")
+    p_probe.set_defaults(handler=servers.run_probe)
 
     return parser
 

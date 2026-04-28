@@ -11,7 +11,7 @@ It helps students and lab mates answer the boring but important questions:
 - Was it CUDA OOM, NaN, NCCL, disk full, or a missing package?
 - Which git commit and config produced this run?
 
-LabGPU is not another GPU dashboard and not a Slurm, Kubernetes, Docker, W&B, MLflow, or ClearML replacement. It is a small CLI-first tool that connects the workflow many labs already use: SSH, tmux, `nvidia-smi`, git, config files, local logs, failure diagnosis, and reproducible debug context.
+LabGPU is not another GPU dashboard and not a Slurm, Kubernetes, Docker, W&B, MLflow, or ClearML replacement. It is a local-first lab console plus CLI that connects the workflow many labs already use: SSH, tmux, `nvidia-smi`, git, config files, local logs, failure diagnosis, and reproducible debug context.
 
 ## Differentiation
 
@@ -54,6 +54,7 @@ PYTHONPATH=src python3 -m labgpu --help
 labgpu doctor
 labgpu status --fake
 labgpu status --fake --json
+labgpu ui --no-open
 ```
 
 On a GPU server:
@@ -119,30 +120,37 @@ labgpu report RUN
 labgpu context RUN [--format markdown|json]
 labgpu adopt PID --name NAME [--log train.log]
 labgpu web [--host 127.0.0.1] [--port 8765]
+labgpu ui [--hosts alpha_liu,Song-1] [--pattern Sui]
 labgpu servers [--hosts alpha_liu,Song-1] [--pattern Sui]
+labgpu servers list
+labgpu servers probe alpha_liu
 ```
 
-## SSH Servers Dashboard
+## LabGPU Home
 
-`labgpu servers` runs on your local machine, reads your local `~/.ssh/config`, and probes configured servers over SSH. It does not require LabGPU to be installed on the remote servers.
+`labgpu ui` runs on your laptop, reads your local `~/.ssh/config`, and probes configured servers over SSH. It does not require LabGPU to be installed on the remote servers.
 
 ```bash
-labgpu servers --hosts alpha_liu,Song-1
+labgpu ui --hosts alpha_liu,Song-1
 ```
 
 Open:
 
 ```text
-http://127.0.0.1:8787
+http://127.0.0.1:8765
 ```
 
-For one-shot JSON:
+This is Agentless Mode: SSH is enough to show hostname, uptime, CPU load, memory, swap, disk mounts, GPUs, GPU processes, users, and redacted commands. If `labgpu` is also available on the remote server PATH, LabGPU Home switches that host to Enhanced Mode and attempts to show remote LabGPU status and runs.
+
+For lower-level server debugging:
 
 ```bash
+labgpu servers list
+labgpu servers probe alpha_liu
 labgpu servers --hosts alpha_liu --json
 ```
 
-This is different from `labgpu web`: `web` shows the current machine's LabGPU runs, while `servers` is a local SSH overview page for many machines.
+This is different from `labgpu web`: `web` shows the current machine's LabGPU runs, while `ui` / `servers` is a local SSH overview page for many machines.
 
 ## Alpha Limitations
 
@@ -157,7 +165,7 @@ This is different from `labgpu web`: `web` shows the current machine's LabGPU ru
 
 `labgpu context` is designed for sharing with AI assistants or teammates, so it uses a safe environment subset by default. Sensitive environment names containing `TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `WANDB`, `HF`, `OPENAI`, `GITHUB`, `AWS`, and similar terms are redacted when full env output is requested with `--include-env`.
 
-Web/API output does not expose full environment files by default. Keep `labgpu web` behind SSH tunneling unless you add your own access control.
+Web/API output does not expose full environment files by default. LabGPU Home also redacts sensitive-looking command arguments such as tokens, keys, secrets, and passwords. Keep `labgpu web` behind SSH tunneling unless you add your own access control.
 
 ## Real-Server Validation
 
