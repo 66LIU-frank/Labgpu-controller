@@ -53,6 +53,7 @@ labgpu where
 | 保存实验现场 | run capsule 保存命令、日志、git、config、env summary、GPU 信息。 |
 | 诊断失败 | `diagnose` 和 Failure Inbox 识别 OOM、Traceback、NCCL、disk full、killed、NaN、suspected idle。 |
 | 发给 AI/同学求助 | `labgpu context --copy` 复制一份默认脱敏的 Markdown debug context。 |
+| 和工作台对话 | `LabGPU Assistant` 基于当前 GPU/runs/failure 数据回答，并返回可复制计划。 |
 | 安全停止 | UI 只对自己的进程显示 stop action，并做保守校验。 |
 
 ## 日常用法
@@ -120,6 +121,9 @@ My Runs
 Failed or Suspicious Runs
   OOM、Traceback、NCCL、disk full、killed、NaN、suspected idle、日志不更新。
 
+Assistant
+  只读聊天入口，用来推荐 GPU、回答任务在哪、总结失败项、生成可复制启动/debug 计划。
+
 Problems
   离线/缓存服务器、磁盘告警、probe timeout、process health warning。
 
@@ -180,6 +184,7 @@ LabGPU 是个人工具，不是 scheduler、reservation、quota、admin panel，
 ```text
 labgpu init [--hosts alpha_liu,alpha_shi] [--tags A100,training]
 labgpu ui [--hosts alpha_liu,alpha_shi] [--fake-lab]
+# 浏览器里打开 /assistant 可使用 LabGPU Assistant。
 labgpu pick [--min-vram 24G] [--prefer A100] [--tag training] [--explain] [--cmd "COMMAND"] [--json]
 labgpu where [--json]
 

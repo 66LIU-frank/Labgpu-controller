@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from labgpu.core.config import ServerEntry, load_config, write_config
 from labgpu.remote.actions import stop_process
 from labgpu.remote.alerts import all_alert_records, apply_alert_state, set_alert_status
+from labgpu.remote.assistant import assistant_reply
 from labgpu.remote.cache import read_server_cache, write_server_cache
 from labgpu.remote.demo import fake_lab_data
 from labgpu.remote.history import append_history, apply_history_evidence, read_history
@@ -259,6 +260,8 @@ class ServerHandler(BaseHTTPRequestHandler):
             self._html(render_alerts_page(self._data(parsed.query)))
         elif parsed.path == "/settings":
             self._html(render_settings_page(ssh_config=self.ssh_config))
+        elif parsed.path == "/assistant":
+            self._html(render_assistant_page(self._data(parsed.query)))
         elif parsed.path == "/api/overview":
             self._json(self._data(parsed.query))
         elif parsed.path == "/api/servers":
@@ -293,6 +296,9 @@ class ServerHandler(BaseHTTPRequestHandler):
             return
         if parts == ["api", "settings", "import-ssh"]:
             self._settings_import()
+            return
+        if parts == ["api", "assistant", "chat"]:
+            self._assistant_chat()
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -416,6 +422,12 @@ class ServerHandler(BaseHTTPRequestHandler):
             config.servers[entry.name] = entry
         write_config(config)
         self._json({"ok": True, "imported": aliases})
+
+    def _assistant_chat(self) -> None:
+        payload = self._read_body_payload()
+        message = str(payload.get("message") or "")
+        data = self._data("")
+        self._json(assistant_reply(data, message))
 
     def _read_body_payload(self) -> dict[str, object]:
         body = self.rfile.read(int(self.headers.get("Content-Length", "0") or "0"))
@@ -610,6 +622,42 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
             <table><tr><th>Alias</th><th>HostName</th><th>User</th><th>Port</th><th>Probe</th></tr>{host_rows}</table>
           </form>
         </section>
+        """,
+    )
+
+
+def render_assistant_page(data: dict[str, object]) -> str:
+    overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
+    return page(
+        "LabGPU Assistant",
+        f"""
+        <section class="toolbar">
+          <div>
+            <h1>LabGPU Assistant</h1>
+            <p>Chat with your GPU workspace. Read-only and copy-only in this alpha.</p>
+          </div>
+          <div class="actions"><a class="button" href="/">Overview</a><a class="button" href="/gpus">Train Now</a></div>
+        </section>
+        {render_data_status(data)}
+        <section class="panel assistant-panel">
+          <div class="assistant-examples">
+            <button class="small" type="button" data-assistant-example="Find me a 24G A100 for python train.py --config configs/sft.yaml">Find a GPU</button>
+            <button class="small" type="button" data-assistant-example="Where are my training jobs?">Where are my jobs?</button>
+            <button class="small" type="button" data-assistant-example="What failed or looks suspicious?">Explain failures</button>
+            <button class="small" type="button" data-assistant-example="Copy debug context for my run">Debug context</button>
+          </div>
+          <div id="assistant-chat" class="assistant-chat">
+            <div class="assistant-message assistant-message-system">
+              Ask for a GPU recommendation, your current runs, suspicious failures, or a debug context command.
+              I will not execute SSH commands; I only explain and generate copyable plans.
+            </div>
+          </div>
+          <form id="assistant-form" class="assistant-form">
+            <textarea id="assistant-input" name="message" rows="3" placeholder="Example: Find me a 40G A100 for python train.py --config configs/sft.yaml"></textarea>
+            <button class="button" type="submit">Ask LabGPU</button>
+          </form>
+        </section>
+        {render_train_now(overview, limit=3)}
         """,
     )
 
@@ -1596,6 +1644,14 @@ dialog::backdrop{{background:rgba(0,0,0,.45)}}
 .small{{border:1px solid var(--border);border-radius:5px;background:var(--button);color:var(--text);padding:3px 7px;font-size:12px;cursor:pointer}}
 .danger{{color:#b42318;border-color:#fda29b}} .danger-strong{{color:#fff;background:#b42318;border-color:#b42318}}
 .panel{{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;margin:14px 0;overflow:hidden}}
+.assistant-panel{{display:grid;gap:12px}}
+.assistant-examples{{display:flex;gap:8px;flex-wrap:wrap}}
+.assistant-chat{{display:grid;gap:10px;max-height:440px;overflow:auto;border:1px solid var(--border-soft);border-radius:8px;padding:10px;background:var(--surface-soft)}}
+.assistant-message{{white-space:pre-wrap;border:1px solid var(--border-soft);border-radius:8px;padding:10px;background:var(--surface)}}
+.assistant-message-user{{justify-self:end;max-width:min(720px,90%);background:var(--button)}}
+.assistant-message-assistant,.assistant-message-system{{justify-self:start;max-width:min(820px,94%)}}
+.assistant-form{{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end}}
+.assistant-form textarea{{border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--button);color:var(--text);font:inherit;resize:vertical}}
 .section-head{{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:4px}}
 .section-head a{{font-size:13px;color:var(--link)}}
 .health{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}}
@@ -1615,7 +1671,7 @@ th,td{{border-top:1px solid var(--row);padding:7px;text-align:left;vertical-alig
 html[data-theme="dark"] .pill.online{{color:#86efac;background:#143421}} html[data-theme="dark"] .pill.offline{{color:#fca5a5;background:#3a1717}}
 html[data-theme="dark"] .badge.ok{{background:#143421;color:#86efac}} html[data-theme="dark"] .badge.warning{{background:#3b2a0a;color:#facc15}} html[data-theme="dark"] .badge.error{{background:#3a1717;color:#fca5a5}}
 html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
-@media(max-width:640px){{main{{width:calc(100vw - 20px)}}.grid,.split{{grid-template-columns:1fr}}.toolbar{{align-items:flex-start;flex-direction:column}}}}
+@media(max-width:640px){{main{{width:calc(100vw - 20px)}}.grid,.split{{grid-template-columns:1fr}}.toolbar{{align-items:flex-start;flex-direction:column}}.assistant-form{{grid-template-columns:1fr}}}}
 </style></head><body><main>{render_nav()}{body}</main>
 <dialog id="stop-modal">
   <h2>Stop process?</h2>
@@ -1646,6 +1702,7 @@ const translations = {{
   "Overview": "总览",
   "Train Now": "现在开跑",
   "My Training": "我的训练",
+  "Assistant": "助手",
   "Servers": "服务器",
   "Alerts": "告警",
   "Settings": "设置",
@@ -1657,6 +1714,13 @@ const translations = {{
   "Dark": "深色",
   "Light": "浅色",
   "LabGPU Home": "LabGPU 主页",
+  "LabGPU Assistant": "LabGPU 助手",
+  "Ask LabGPU": "询问 LabGPU",
+  "Find a GPU": "找 GPU",
+  "Where are my jobs?": "任务在哪",
+  "Explain failures": "解释失败",
+  "Debug context": "调试上下文",
+  "Chat with your GPU workspace. Read-only and copy-only in this alpha.": "和你的 GPU 工作台对话。Alpha 阶段只读、只生成可复制计划。",
   "Personal GPU workspace for students using shared SSH servers.": "给学生使用共享 SSH GPU 服务器的个人训练工作台。",
   "online servers": "在线服务器",
   "available GPUs": "可用 GPU",
@@ -1852,17 +1916,21 @@ document.querySelectorAll("[data-stop]").forEach((button) => {{
     else if (window.confirm("Stop process?")) runStop(false);
   }});
 }});
-document.querySelectorAll("[data-copy]").forEach((button) => {{
-  button.addEventListener("click", async () => {{
-    try {{
-      await navigator.clipboard.writeText(button.dataset.copy || "");
-      const original = button.textContent || "Copy";
-      button.textContent = currentLanguage() === "zh" ? "已复制" : "Copied";
-      setTimeout(() => button.textContent = original, 1200);
-    }} catch (error) {{
-      window.prompt("Copy command", button.dataset.copy || "");
-    }}
-  }});
+async function copyTextFromButton(button) {{
+  try {{
+    await navigator.clipboard.writeText(button.dataset.copy || "");
+    const original = button.textContent || "Copy";
+    button.textContent = currentLanguage() === "zh" ? "已复制" : "Copied";
+    setTimeout(() => button.textContent = original, 1200);
+  }} catch (error) {{
+    window.prompt("Copy command", button.dataset.copy || "");
+  }}
+}}
+document.addEventListener("click", (event) => {{
+  const target = event.target;
+  const button = target && target.closest ? target.closest("[data-copy]") : null;
+  if (!button) return;
+  copyTextFromButton(button);
 }});
 document.querySelectorAll("[data-alert-action]").forEach((button) => {{
   button.addEventListener("click", async () => {{
@@ -1893,6 +1961,60 @@ if (settingsImport) {{
     }}
   }});
 }}
+const assistantForm = document.getElementById("assistant-form");
+const assistantInput = document.getElementById("assistant-input");
+const assistantChat = document.getElementById("assistant-chat");
+function appendAssistantMessage(kind, text, copy) {{
+  if (!assistantChat) return;
+  const node = document.createElement("div");
+  node.className = `assistant-message assistant-message-${{kind}}`;
+  const textNode = document.createElement("div");
+  textNode.textContent = text || "";
+  node.appendChild(textNode);
+  if (copy) {{
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    actions.style.marginTop = "8px";
+    const button = document.createElement("button");
+    button.className = "small";
+    button.type = "button";
+    button.dataset.copy = copy;
+    button.textContent = currentLanguage() === "zh" ? "复制" : "Copy";
+    actions.appendChild(button);
+    node.appendChild(actions);
+  }}
+  assistantChat.appendChild(node);
+  assistantChat.scrollTop = assistantChat.scrollHeight;
+}}
+async function askAssistant(message) {{
+  appendAssistantMessage("user", message);
+  appendAssistantMessage("assistant", "Thinking...");
+  const pending = assistantChat ? assistantChat.lastElementChild : null;
+  const response = await fetch("/api/assistant/chat", {{
+    method: "POST",
+    headers: {{"Content-Type": "application/json"}},
+    body: JSON.stringify({{message}})
+  }});
+  const payload = await response.json().catch(() => ({{ok: false, reply: "Assistant request failed."}}));
+  if (pending) pending.remove();
+  appendAssistantMessage("assistant", payload.reply || "No answer.", payload.copy || "");
+}}
+if (assistantForm && assistantInput) {{
+  assistantForm.addEventListener("submit", async (event) => {{
+    event.preventDefault();
+    const message = assistantInput.value.trim();
+    if (!message) return;
+    assistantInput.value = "";
+    await askAssistant(message);
+  }});
+}}
+document.querySelectorAll("[data-assistant-example]").forEach((button) => {{
+  button.addEventListener("click", () => {{
+    if (!assistantInput) return;
+    assistantInput.value = button.dataset.assistantExample || "";
+    assistantInput.focus();
+  }});
+}});
 const watchEnable = document.getElementById("watch-enable");
 const watchClear = document.getElementById("watch-clear");
 const watchStatus = document.getElementById("watch-status");
@@ -2009,6 +2131,7 @@ def render_nav() -> str:
       <a href="/">Overview</a>
       <a href="/gpus">Train Now</a>
       <a href="/me">My Training</a>
+      <a href="/assistant">Assistant</a>
       <a href="/servers">Servers</a>
       <a href="/alerts">Alerts</a>
       <a href="/settings">Settings</a>

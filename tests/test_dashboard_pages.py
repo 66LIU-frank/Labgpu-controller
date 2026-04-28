@@ -13,6 +13,7 @@ from labgpu.remote.dashboard import (
     gpu_recommendation,
     process_state_label,
     render_alerts_page,
+    render_assistant_page,
     render_available_gpus,
     render_gpus_page,
     render_host_card,
@@ -139,6 +140,13 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn("All Alerts", alerts_html)
         self.assertIn("disk_warning", alerts_html)
         self.assertIn("Dismiss", alerts_html)
+
+    def test_assistant_page_has_read_only_chat(self):
+        html = render_assistant_page(sample_data())
+        self.assertIn("LabGPU Assistant", html)
+        self.assertIn("/api/assistant/chat", html)
+        self.assertIn("copyable plans", html)
+        self.assertIn("data-assistant-example", html)
 
     def test_settings_page_lists_ssh_hosts(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -53,6 +53,7 @@ labgpu where
 | Recover experiment context | Run capsules save command, log, git, config, env summary, and GPU info. |
 | Debug failures | `diagnose` and Failure Inbox catch OOM, traceback, NCCL, disk full, killed, NaN, and suspected idle. |
 | Ask AI or teammates for help | `labgpu context --copy` exports one redacted Markdown debug context. |
+| Chat with your workspace | `LabGPU Assistant` answers from current GPU/runs/failure data and returns copyable plans. |
 | Stop safely | UI actions only target your own process, with conservative checks. |
 
 ## Daily Workflow
@@ -120,6 +121,9 @@ My Runs
 Failed or Suspicious Runs
   OOM, traceback, NCCL, disk full, killed, NaN, suspected idle, and stale logs.
 
+Assistant
+  Read-only chat for GPU recommendations, where-is-my-run answers, failure summaries, and copyable launch/debug plans.
+
 Problems
   Offline/cached servers, disk warnings, probe timeouts, and process health warnings.
 
@@ -180,6 +184,7 @@ Commands and debug context are redacted by default. Shared `LABGPU_HOME` is adva
 ```text
 labgpu init [--hosts alpha_liu,alpha_shi] [--tags A100,training]
 labgpu ui [--hosts alpha_liu,alpha_shi] [--fake-lab]
+# Browser: /assistant opens LabGPU Assistant.
 labgpu pick [--min-vram 24G] [--prefer A100] [--tag training] [--explain] [--cmd "COMMAND"] [--json]
 labgpu where [--json]
 
