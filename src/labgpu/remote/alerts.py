@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -40,12 +42,17 @@ def load_alert_state(path: str | Path | None = None) -> dict[str, dict[str, Any]
 def write_alert_state(state: dict[str, dict[str, Any]], path: str | Path | None = None) -> None:
     target = Path(path) if path else alerts_state_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(".json.tmp")
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
     tmp.replace(target)
 
 
-def apply_alert_state(alerts: list[dict[str, Any]], *, path: str | Path | None = None) -> list[dict[str, Any]]:
+def apply_alert_state(
+    alerts: list[dict[str, Any]],
+    *,
+    path: str | Path | None = None,
+    scoped_servers: set[str] | None = None,
+) -> list[dict[str, Any]]:
     state = load_alert_state(path)
     now = now_utc()
     current_keys: set[str] = set()
@@ -79,6 +86,8 @@ def apply_alert_state(alerts: list[dict[str, Any]], *, path: str | Path | None =
 
     for key, record in list(state.items()):
         if key in current_keys:
+            continue
+        if scoped_servers is not None and str(record.get("server") or "") not in scoped_servers:
             continue
         if record.get("status") != "resolved":
             record["status"] = "resolved"

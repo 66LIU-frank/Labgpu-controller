@@ -68,7 +68,8 @@ def build_overview(hosts: list[dict[str, Any]]) -> dict[str, Any]:
                 item["server_mode"] = host.get("mode")
                 item["tags"] = host.get("tags") or []
                 item["disk_health"] = disk_health(host.get("disks") or [])
-                item["load"] = host.get("load_avg")
+                item["server_alerts"] = host.get("alerts") or []
+                item["load"] = load_payload(host)
                 item["ssh_command"] = f"ssh {host.get('alias')}"
                 item["cuda_visible_devices"] = str(gpu.get("index"))
                 gpus.append(item)
@@ -115,11 +116,12 @@ def annotate_gpu(gpu: dict[str, Any]) -> dict[str, Any]:
         gpu["health_severity"] = "ok"
         gpu["health_reason"] = "No compute processes."
     elif processes and util is not None and util < IDLE_UTIL_THRESHOLD and (used or 0) > 1024:
-        gpu["status"] = "possible_idle"
-        gpu["availability"] = "idle_but_occupied"
+        gpu["status"] = "busy"
+        gpu["availability"] = "busy"
         gpu["health_status"] = "suspected_idle"
         gpu["health_severity"] = "warning"
-        gpu["health_reason"] = "GPU memory is occupied while current utilization is low."
+        gpu["confidence"] = "low"
+        gpu["health_reason"] = "Current probe saw occupied GPU memory with low utilization; history is needed before calling this possible idle."
     elif processes:
         gpu["status"] = "busy"
         gpu["availability"] = "busy"
@@ -146,10 +148,11 @@ def annotate_process(proc: dict[str, Any], *, gpu: dict[str, Any] | None = None)
         proc["health_status"] = "io_wait"
         proc["health_severity"] = "warning"
         proc["health_reason"] = "Uninterruptible sleep; may be blocked on IO."
-    elif gpu and gpu.get("status") == "possible_idle":
+    elif gpu and gpu.get("health_status") == "suspected_idle":
         proc["health_status"] = "suspected_idle"
         proc["health_severity"] = "warning"
-        proc["health_reason"] = "Possibly idle: GPU memory is occupied but current GPU utilization is low."
+        proc["confidence"] = gpu.get("confidence") or "low"
+        proc["health_reason"] = gpu.get("health_reason") or "Possibly idle: GPU memory is occupied but current GPU utilization is low."
     else:
         proc["health_status"] = "healthy"
         proc["health_severity"] = "ok"
@@ -174,8 +177,9 @@ def available_gpus(host: dict[str, Any]) -> list[dict[str, Any]]:
                 "utilization_gpu": gpu.get("utilization_gpu"),
                 "temperature": gpu.get("temperature"),
                 "availability": gpu.get("availability") or gpu.get("status"),
-                "load": host.get("load_avg"),
+                "load": load_payload(host),
                 "disk_health": disk_health(host.get("disks") or []),
+                "server_alerts": host.get("alerts") or [],
                 "ssh_command": f"ssh {host.get('alias')}",
                 "cuda_visible_devices": str(gpu.get("index")),
                 "tags": host.get("tags") or [],
@@ -233,7 +237,7 @@ def alerts_for_server(host: dict[str, Any]) -> list[dict[str, Any]]:
     for gpu in host.get("gpus") or []:
         if not isinstance(gpu, dict):
             continue
-        if gpu.get("status") == "possible_idle":
+        if gpu.get("status") == "possible_idle" or gpu.get("availability") == "idle_but_occupied":
             alerts.append(
                 {
                     "server": alias,
@@ -297,6 +301,21 @@ def disk_health(disks: object) -> str:
     if worst:
         return "ok"
     return "unknown"
+
+
+def load_payload(host: dict[str, Any]) -> dict[str, Any] | None:
+    load_avg = host.get("load_avg") if isinstance(host.get("load_avg"), dict) else None
+    if not load_avg:
+        return None
+    payload = dict(load_avg)
+    cores = host.get("cpu_cores")
+    one = payload.get("1m")
+    if cores and one is not None and payload.get("ratio") is None:
+        try:
+            payload["ratio"] = float(one) / max(1.0, float(cores))
+        except (TypeError, ValueError):
+            pass
+    return payload
 
 
 def severity_rank(value: object) -> int:

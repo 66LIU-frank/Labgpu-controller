@@ -16,6 +16,7 @@ def run_dashboard(args) -> int:
             names=names,
             pattern=args.pattern,
             timeout=args.timeout,
+            fake_lab=getattr(args, "fake_lab", False),
         )
         print(json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True))
         return 0
@@ -28,6 +29,7 @@ def run_dashboard(args) -> int:
         timeout=args.timeout,
         open_browser=getattr(args, "open", False),
         allow_actions=getattr(args, "allow_actions", False),
+        fake_lab=getattr(args, "fake_lab", False),
     )
     return 0
 
@@ -62,6 +64,7 @@ def run_probe(args) -> int:
         names=names,
         pattern=args.pattern if args.all else None,
         timeout=args.timeout,
+        fake_lab=getattr(args, "fake_lab", False),
     )
     if args.json:
         print(json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True))

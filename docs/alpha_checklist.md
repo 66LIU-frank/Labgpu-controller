@@ -4,6 +4,8 @@ Alpha is intentionally narrow:
 
 - `labgpu doctor`
 - `labgpu status`, `status --json`, `status --fake`, `status --watch`
+- `labgpu pick` for cross-SSH-host GPU recommendation
+- `labgpu where` for finding the user's current training
 - `labgpu refresh` for stale running state
 - GPU collector and fake collector
 - PID to user, command, cwd, create time, and permission-aware process inspection
@@ -15,9 +17,10 @@ Alpha is intentionally narrow:
 - `labgpu diagnose` with local regex rules
 - `labgpu report`
 - `labgpu context` for AI/teammate debug packages
+- `labgpu context --copy`
 - `labgpu web` with local dashboard and JSON APIs
 - no-GPU testability through fake data
 - ambiguous `kill` targets are rejected
 - context/log output is size-limited and redacted by default
 
-Alpha explicitly does not include queues, scheduling, reservations, Docker orchestration, Kubernetes, Slurm integration, multi-host aggregation, Web login, Web run, or Web kill.
+Alpha explicitly does not include queues, scheduling, reservations, Docker orchestration, Kubernetes, Slurm integration, Web login, Web run, admin panels, quotas, or kill-other-users actions.

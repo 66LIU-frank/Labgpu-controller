@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -21,9 +23,14 @@ def run(args) -> int:
         redact=args.redact,
     )
     if args.format == "json":
-        print(json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True))
+        output = json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True)
     else:
-        print(render_markdown(payload))
+        output = render_markdown(payload)
+    if getattr(args, "copy", False):
+        copy_to_clipboard(output)
+        print("Copied LabGPU debug context to clipboard.")
+        return 0
+    print(output)
     return 0
 
 
@@ -41,12 +48,14 @@ def build_context(
     safe_env, redacted_fields = prepare_env(env or {}, include_env=include_env, redact=redact)
     return {
         "run": safe_run_meta(meta),
+        "gpu": gpu_context(meta),
         "diagnosis": read_json(run_dir / "diagnosis.json"),
         "git": read_json(Path(meta.git_json_path)) if meta.git_json_path else read_json(run_dir / "git.json"),
         "env": safe_env,
         "redacted_fields": redacted_fields,
-        "config": config_context(meta, run_dir),
+        "config": config_context(meta, run_dir, max_bytes=max_bytes),
         "log_tail": tail_text(Path(meta.log_path), tail, max_bytes=max_bytes) if meta.log_path else "",
+        "traceback": traceback_excerpt(Path(meta.log_path), max_bytes=max_bytes) if meta.log_path else "",
     }
 
 
@@ -74,15 +83,32 @@ def safe_run_meta(meta: RunMeta) -> dict[str, Any]:
     }
 
 
-def config_context(meta: RunMeta, run_dir: Path) -> dict[str, Any]:
+def config_context(meta: RunMeta, run_dir: Path, *, max_bytes: int = 200_000) -> dict[str, Any]:
     snapshot_dir = Path(meta.config_snapshot_dir) if meta.config_snapshot_dir else run_dir / "config"
     files = []
+    contents: dict[str, str] = {}
     if snapshot_dir.exists():
-        files = [str(path) for path in sorted(snapshot_dir.iterdir()) if path.is_file()]
+        for path in sorted(snapshot_dir.iterdir()):
+            if not path.is_file():
+                continue
+            files.append(str(path))
+            if sum(len(value.encode("utf-8", errors="replace")) for value in contents.values()) >= max_bytes:
+                continue
+            data = path.read_bytes()[: min(20_000, max_bytes)]
+            contents[path.name] = data.decode(errors="replace")
     return {
         "original_paths": meta.config_paths,
         "snapshot_dir": str(snapshot_dir) if snapshot_dir.exists() else None,
         "snapshot_files": files,
+        "snapshot_contents": contents,
+    }
+
+
+def gpu_context(meta: RunMeta) -> dict[str, Any]:
+    return {
+        "requested_gpu_indices": meta.requested_gpu_indices,
+        "gpu_uuids": meta.gpu_uuids,
+        "cuda_visible_devices": meta.cuda_visible_devices,
     }
 
 
@@ -101,6 +127,17 @@ def tail_text(path: Path, lines: int, *, max_bytes: int = 200_000) -> str:
     from labgpu.cli.logs import tail_bytes
 
     return tail_bytes(path, lines=lines, max_bytes=max_bytes).decode(errors="replace")
+
+
+def traceback_excerpt(path: Path, *, max_bytes: int = 200_000) -> str:
+    if not path.exists():
+        return ""
+    text = path.read_bytes()[-max_bytes:].decode(errors="replace")
+    marker = "Traceback (most recent call last):"
+    index = text.rfind(marker)
+    if index < 0:
+        return ""
+    return text[index:].strip()
 
 
 SENSITIVE_ENV_PARTS = (
@@ -151,6 +188,7 @@ def is_sensitive_key(key: str) -> bool:
 
 def render_markdown(payload: dict[str, Any]) -> str:
     run = payload["run"]
+    gpu = payload.get("gpu") or {}
     diagnosis = payload.get("diagnosis") or {}
     git = payload.get("git") or {}
     env = payload.get("env") or {}
@@ -169,6 +207,11 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- pid: `{run['pid'] or ''}`",
         f"- exit_code: `{run['exit_code'] if run['exit_code'] is not None else ''}`",
         f"- duration_seconds: `{run['duration_seconds'] if run['duration_seconds'] is not None else ''}`",
+        "",
+        "## GPU",
+        f"- CUDA_VISIBLE_DEVICES: `{gpu.get('cuda_visible_devices') or run['gpu'] or ''}`",
+        f"- requested_gpu_indices: `{', '.join(gpu.get('requested_gpu_indices') or [])}`",
+        f"- gpu_uuids: `{', '.join(gpu.get('gpu_uuids') or [])}`",
         "",
         "## Failure",
         f"- detected: `{diagnosis.get('title') or run.get('failure_reason') or 'unknown'}`",
@@ -204,9 +247,44 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- snapshot_dir: `{config.get('snapshot_dir') or ''}`",
         f"- snapshot_files: `{', '.join(config.get('snapshot_files') or [])}`",
         "",
+        "### Config Contents",
+        "```text",
+        render_config_contents(config.get("snapshot_contents") or {}),
+        "```",
+        "",
+        "## Traceback",
+        "```text",
+        payload.get("traceback") or "",
+        "```",
+        "",
         "## Last Logs",
         "```text",
         payload.get("log_tail") or "",
         "```",
     ]
     return "\n".join(lines)
+
+
+def render_config_contents(contents: object) -> str:
+    if not isinstance(contents, dict) or not contents:
+        return ""
+    parts = []
+    for name, content in contents.items():
+        parts.append(f"--- {name} ---")
+        parts.append(str(content))
+    return "\n".join(parts)
+
+
+def copy_to_clipboard(text: str) -> None:
+    commands = (
+        ["pbcopy"],
+        ["wl-copy"],
+        ["xclip", "-selection", "clipboard"],
+    )
+    for command in commands:
+        if not shutil.which(command[0]):
+            continue
+        result = subprocess.run(command, input=text, text=True, check=False, capture_output=True)
+        if result.returncode == 0:
+            return
+    raise RuntimeError("no clipboard command found; install pbcopy, wl-copy, or xclip")

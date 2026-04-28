@@ -1,17 +1,17 @@
 # Differentiation
 
-LabGPU is not another GPU dashboard and not a lightweight Slurm clone.
+LabGPU is not another lab admin dashboard and not a lightweight Slurm clone.
 
 Its wedge is:
 
 ```text
-messy-lab-first experiment observability
+personal remote GPU training workspace for students
 ```
 
 It links:
 
 ```text
-GPU process -> experiment name -> logs -> git/config/env -> failure diagnosis -> reproducible report/debug context
+find GPU -> run/adopt -> observe -> diagnose -> context/report -> safe action
 ```
 
 ## What Is Not Novel
@@ -19,7 +19,7 @@ GPU process -> experiment name -> logs -> git/config/env -> failure diagnosis ->
 - GPU memory/utilization monitoring.
 - Web GPU dashboards.
 - GPU reservation calendars.
-- Single-node GPU scheduling.
+- Single-node or cluster scheduling.
 - Full MLOps tracking.
 
 These are already covered by adjacent tools such as gpustat, nvitop, gpuview, TensorHive, gflow, MLflow, ClearML, DVC, and Aim.
@@ -30,9 +30,13 @@ These are already covered by adjacent tools such as gpustat, nvitop, gpuview, Te
 
 Status should show `free`, `tracked`, `adopted`, `untracked`, and `unknown`, not just PID and memory.
 
+### Cross-Host Pick
+
+`labgpu pick` should recommend a GPU across SSH hosts using free VRAM, model, load, disk health, alerts, and tags. This differs from single-host tools such as `nvidia-smi`, `gpustat`, `nvitop`, or local GPU selectors.
+
 ### Adopt Existing Processes
 
-Labs already have tmux/nohup/screen jobs. `labgpu adopt <pid> --name exp` turns an existing process into a run record without forcing users to restart it.
+Students already have tmux/nohup/screen jobs. `labgpu adopt <pid> --name exp` turns an existing process into a run record without forcing a restart.
 
 ### Zero-SDK Run Capsule
 
@@ -56,9 +60,9 @@ No training-code SDK is required.
 
 LabGPU should explain common failures from logs: CUDA OOM, NaN/Inf, Traceback, Killed, disk full, missing module, import error, permission issue, port conflict, and NCCL error.
 
-### Soft Governance
+### Safe Personal Actions
 
-Do not start with quotas, reservations, or preemption. Start with transparency: who is running what, how long it has run, whether it is tracked, and why it failed.
+Do not start with quotas, reservations, preemption, or admin panels. Start with personal visibility: where my run is, how long it has run, whether it is tracked, and why it failed.
 
 ### AI Debug Context
 
@@ -69,11 +73,13 @@ It should not call external APIs. It only packages local evidence.
 ## Differentiation Checklist
 
 - `status` shows `tracking_status`.
+- `pick` recommends across SSH hosts.
+- `where` shows where my training is running.
 - `adopt` creates `launch_mode=adopted`.
 - Untracked processes show an adopt hint.
 - Run folders are inspectable without LabGPU.
 - `diagnose` stores structured evidence.
 - `report` is human-readable.
 - `context` is optimized for AI and teammate debugging.
-- Web focuses on experiments, not only GPU cards.
+- Web starts with Train Now, My Runs, Failed/Suspicious Runs, and Problems; Servers is resource detail.
 - Sensitive environment data is not dumped by default.

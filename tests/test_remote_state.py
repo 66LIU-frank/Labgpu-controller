@@ -57,7 +57,7 @@ class RemoteStateTest(unittest.TestCase):
         )
         self.assertEqual(server["available_gpus"][0]["gpu_index"], 0)
         self.assertEqual(server["my_processes"][0]["runtime"], "1h00m")
-        self.assertGreaterEqual(len(server["alerts"]), 2)
+        self.assertGreaterEqual(len(server["alerts"]), 1)
         overview = build_overview([server])
         self.assertEqual(overview["available_gpus"], 1)
         self.assertEqual(overview["my_processes"], 1)

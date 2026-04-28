@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from labgpu.core.config import LabGPUConfig, ServerEntry, write_config
 from labgpu.remote.dashboard import (
     filter_available_gpu_items,
     filter_gpu_items,
@@ -12,6 +13,7 @@ from labgpu.remote.dashboard import (
     render_alerts_page,
     render_available_gpus,
     render_gpus_page,
+    render_host_card,
     render_index,
     render_me_page,
     render_servers_page,
@@ -105,7 +107,8 @@ class DashboardPagesTest(unittest.TestCase):
     def test_gpus_page_and_filter(self):
         data = sample_data()
         html = render_gpus_page(data)
-        self.assertIn("Find GPUs", html)
+        self.assertIn("Train Now", html)
+        self.assertIn("language-toggle", html)
         self.assertIn("theme-toggle", html)
         self.assertIn("Notify me when GPU is free", html)
         self.assertIn("CUDA_VISIBLE_DEVICES=0", html)
@@ -117,7 +120,8 @@ class DashboardPagesTest(unittest.TestCase):
 
     def test_my_processes_page_shows_health_and_action_guard(self):
         html = render_me_page(sample_data(shared_account=True))
-        self.assertIn("My GPU Processes", html)
+        self.assertIn("My Training", html)
+        self.assertIn("Agentless Own GPU Processes", html)
         self.assertIn("suspected_idle", html)
         self.assertIn("shared account", html)
         self.assertIn("Expand", html)
@@ -139,6 +143,9 @@ class DashboardPagesTest(unittest.TestCase):
             os.environ["LABGPU_HOME"] = tmp
             ssh_config = Path(tmp) / "ssh_config"
             ssh_config.write_text("Host alpha_liu\n  HostName 192.168.1.17\n  User lsg\n", encoding="utf-8")
+            config = LabGPUConfig()
+            config.servers["alpha_liu"] = ServerEntry(name="alpha_liu", alias="alpha_liu", tags=["A100"])
+            write_config(config)
             try:
                 html = render_settings_page(ssh_config=ssh_config)
             finally:
@@ -148,6 +155,7 @@ class DashboardPagesTest(unittest.TestCase):
                     os.environ["LABGPU_HOME"] = old_home
             self.assertIn("Import From SSH Config", html)
             self.assertIn("alpha_liu", html)
+            self.assertIn("value='alpha_liu' checked", html)
             self.assertIn("Save selected hosts", html)
 
     def test_summary_cards_and_empty_gpu_state(self):
@@ -159,6 +167,42 @@ class DashboardPagesTest(unittest.TestCase):
         empty = render_available_gpus([], {}, counts=data["overview"])
         self.assertIn("No clearly free GPU found.", empty)
         self.assertIn("View busy GPUs", empty)
+
+    def test_home_server_list_is_not_capped_at_six(self):
+        data = sample_data()
+        hosts = []
+        for index in range(7):
+            host = dict(data["hosts"][0])
+            host["alias"] = f"host_{index}"
+            hosts.append(host)
+        data["hosts"] = hosts
+        data["overview"] = build_overview(hosts)
+        html = render_index(data)
+        self.assertIn("host_0", html)
+        self.assertIn("host_6", html)
+        self.assertIn("Choose home servers", html)
+
+    def test_offline_cached_server_is_labeled_as_cached(self):
+        cached = sample_data()["hosts"][0]
+        host = {
+            "alias": "alpha_liu",
+            "hostname": "10.0.0.1",
+            "user": "lsg",
+            "port": "22",
+            "online": False,
+            "mode": "offline",
+            "error": "ssh probe timed out",
+            "elapsed_ms": 12000,
+            "probed_at": "2026-04-28T11:46:14+00:00",
+            "last_seen": "2026-04-28T05:08:53+00:00",
+            "cached": cached,
+            "alerts": [{"severity": "error"}],
+        }
+        html = render_host_card(host)
+        self.assertIn("offline · cached", html)
+        self.assertIn("cached 2 GPUs", html)
+        self.assertIn("Showing cached snapshot", html)
+        self.assertIn("ssh probe timed out", html)
 
     def test_formatters_and_server_health(self):
         self.assertEqual(format_memory(60000), "58.6 GB")

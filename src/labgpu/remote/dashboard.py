@@ -15,10 +15,14 @@ from labgpu.core.config import ServerEntry, load_config, write_config
 from labgpu.remote.actions import stop_process
 from labgpu.remote.alerts import all_alert_records, apply_alert_state, set_alert_status
 from labgpu.remote.cache import read_server_cache, write_server_cache
+from labgpu.remote.demo import fake_lab_data
+from labgpu.remote.history import append_history, apply_history_evidence, read_history
 from labgpu.remote.inventory import load_inventory
 from labgpu.remote.probe import probe_host
+from labgpu.remote import ranking
 from labgpu.remote.ssh_config import SSHHost, parse_ssh_config, resolve_ssh_host
-from labgpu.remote.state import annotate_server, build_overview, human_duration
+from labgpu.remote.state import alerts_for_server, annotate_server, build_overview, human_duration
+from labgpu.remote.workspace import failure_inbox_items, training_items
 
 
 def serve(
@@ -31,15 +35,17 @@ def serve(
     timeout: int = 8,
     open_browser: bool = False,
     allow_actions: bool = False,
+    fake_lab: bool = False,
 ) -> None:
     ServerHandler.ssh_config = ssh_config
     ServerHandler.names = names
     ServerHandler.pattern = pattern
     ServerHandler.timeout = timeout
+    ServerHandler.fake_lab = fake_lab
     ServerHandler.action_allowed = is_loopback(host) or allow_actions
     ServerHandler.action_token = secrets.token_urlsafe(24)
     if host == "0.0.0.0":
-        print("Warning: LabGPU servers dashboard has no authentication in this version.")
+        print("Warning: LabGPU Home has no authentication in this version.")
     if not ServerHandler.action_allowed:
         print("LabGPU Home actions are disabled for this bind address.")
     server = ThreadingHTTPServer((host, port), ServerHandler)
@@ -59,35 +65,65 @@ def collect_servers(
     names: list[str] | None = None,
     pattern: str | None = None,
     timeout: int = 8,
+    fake_lab: bool = False,
 ) -> dict[str, object]:
+    if fake_lab:
+        data = fake_lab_data()
+        hosts = data.get("hosts") if isinstance(data.get("hosts"), list) else []
+        if names:
+            selected = set(names)
+            hosts = [host for host in hosts if isinstance(host, dict) and host.get("alias") in selected]
+        if pattern:
+            needle = pattern.lower()
+            hosts = [host for host in hosts if isinstance(host, dict) and needle in str(host.get("alias") or "").lower()]
+        data["hosts"] = hosts
+        data["count"] = len(hosts)
+        data["overview"] = build_overview(hosts)
+        data["overview"]["all_alert_items"] = data["overview"].get("alert_items", [])
+        data["inventory_mode"] = "demo"
+        return data
+    saved_config = load_config()
+    using_saved_inventory = not names and not pattern and any(entry.enabled for entry in saved_config.servers.values())
     hosts = load_inventory(ssh_config=ssh_config, names=names, pattern=pattern)
     if not hosts:
         return {"hosts": [], "count": 0, "error": "no SSH hosts selected"}
     hosts = [resolve_ssh_host(host) for host in hosts]
+    host_order = {host.alias: index for index, host in enumerate(hosts)}
     results = []
-    with ThreadPoolExecutor(max_workers=min(8, len(hosts))) as executor:
+    with ThreadPoolExecutor(max_workers=min(16, len(hosts))) as executor:
         futures = {executor.submit(probe_host, host, timeout=timeout): host for host in hosts}
         for future in as_completed(futures):
             result = future.result()
             result = annotate_server(result)
+            alias = str(result.get("alias") or futures[future].alias)
+            result = apply_history_evidence(result, read_history(alias))
+            result["alerts"] = alerts_for_server(result)
             if result.get("online"):
                 write_server_cache(result)
+                append_history(result)
             else:
-                cached = read_server_cache(str(result.get("alias") or futures[future].alias))
+                cached = read_server_cache(alias)
                 if cached:
                     result["cached"] = cached
                     result["last_seen"] = cached.get("probed_at")
             results.append(result)
-    results.sort(key=lambda item: str(item.get("alias")))
+    results.sort(key=lambda item: host_order.get(str(item.get("alias") or ""), len(host_order)))
     overview = build_overview(results)
-    enriched_alerts = apply_alert_state(list(overview.get("alert_items") or []))
+    scoped_servers = {str(item.get("alias") or "") for item in results if isinstance(item, dict) and item.get("alias")}
+    enriched_alerts = apply_alert_state(list(overview.get("alert_items") or []), scoped_servers=scoped_servers)
     active_alerts = [alert for alert in enriched_alerts if alert.get("status") == "active"]
     overview["alert_items"] = active_alerts
     overview["all_alert_items"] = all_alert_records()
     overview["alerts"] = len(active_alerts)
     overview["critical_alerts"] = sum(1 for item in active_alerts if item.get("severity") == "error")
     overview["warning_alerts"] = sum(1 for item in active_alerts if item.get("severity") == "warning")
-    return {"hosts": results, "count": len(results), "overview": overview, "error": None}
+    return {
+        "hosts": results,
+        "count": len(results),
+        "overview": overview,
+        "error": None,
+        "inventory_mode": "saved" if using_saved_inventory else "ssh_config",
+    }
 
 
 class ServerHandler(BaseHTTPRequestHandler):
@@ -97,6 +133,7 @@ class ServerHandler(BaseHTTPRequestHandler):
     timeout: int = 8
     action_allowed: bool = False
     action_token: str = ""
+    fake_lab: bool = False
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -163,6 +200,7 @@ class ServerHandler(BaseHTTPRequestHandler):
             names=names,
             pattern=pattern,
             timeout=self.timeout,
+            fake_lab=self.fake_lab,
         )
         data["ui"] = {
             "q": params.get("q", [""])[0].strip(),
@@ -188,6 +226,7 @@ class ServerHandler(BaseHTTPRequestHandler):
             names=[alias],
             pattern=None,
             timeout=self.timeout,
+            fake_lab=self.fake_lab,
         )
 
     def _stop_process(self, alias: str, pid: int, *, force: bool) -> None:
@@ -248,8 +287,10 @@ class ServerHandler(BaseHTTPRequestHandler):
         allow_stop = truthy(first_value(payload.get("allow_stop_own_process")), default=True)
 
         config = load_config()
+        for entry in config.servers.values():
+            entry.enabled = False
         for alias in aliases:
-            entry = config.servers.get(alias) or ServerEntry(name=alias, alias=alias)
+            entry = next((item for item in config.servers.values() if item.alias == alias), None) or ServerEntry(name=alias, alias=alias)
             entry.enabled = True
             entry.tags = tags
             entry.disk_paths = disk_paths
@@ -294,16 +335,21 @@ class ServerHandler(BaseHTTPRequestHandler):
 def render_index(data: dict[str, object]) -> str:
     hosts = data.get("hosts") or []
     overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
-    cards = "".join(render_host_card(host, compact=True) for host in preview_list(hosts, 6))
+    cards = "".join(render_host_card(host, compact=True) for host in preview_list(hosts, len(hosts) if isinstance(hosts, list) else 0))
     if not cards:
         cards = f"<p class='muted'>{esc(data.get('error') or 'No hosts found.')}</p>"
+    mode = str(data.get("inventory_mode") or "ssh_config")
+    server_note = {
+        "saved": "Showing your saved enabled servers. Change this list in Settings.",
+        "demo": "Showing built-in demo servers.",
+    }.get(mode, "Showing SSH hosts from your config. Save selected hosts in Settings to make the home page faster.")
     return page(
         "LabGPU Home",
         f"""
         <section class="toolbar">
           <div>
             <h1>LabGPU Home</h1>
-            <p>Local SSH dashboard for lab GPU machines</p>
+            <p>Personal GPU workspace for students using shared SSH servers.</p>
           </div>
           <div class="actions">
             <button class="button" id="pause-refresh" type="button">Pause refresh</button>
@@ -311,14 +357,11 @@ def render_index(data: dict[str, object]) -> str:
           </div>
         </section>
         {render_overview(overview)}
-        <div class="split">
-          {render_available_gpus(overview.get('available_gpu_items') if isinstance(overview, dict) else [], {}, limit=6, title='Available GPUs', view_all='/gpus', counts=overview)}
-          {render_my_processes(overview.get('my_process_items') if isinstance(overview, dict) else [], limit=6, view_all='/me')}
-        </div>
-        <div class="split">
-          {render_alerts(overview.get('alert_items') if isinstance(overview, dict) else [], limit=8, view_all='/alerts')}
-          <section class="panel"><div class="section-head"><h2>Servers</h2><a href="/servers">View all</a></div><div class="grid compact">{cards}</div></section>
-        </div>
+        {render_train_now(overview, limit=4)}
+        {render_my_training(training_items(hosts, overview), limit=8, view_all='/me')}
+        {render_failure_inbox(failure_inbox_items(hosts, overview), limit=8)}
+        {render_alerts(overview.get('alert_items') if isinstance(overview, dict) else [], limit=8, view_all='/alerts', title='Problems')}
+        <section class="panel"><div class="section-head"><h2>Servers</h2><a href="/settings">Choose home servers</a></div><p class="muted">{esc(server_note)}</p><div class="grid compact">{cards}</div></section>
         """,
     )
 
@@ -327,12 +370,12 @@ def render_gpus_page(data: dict[str, object]) -> str:
     overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
     ui = data.get("ui") if isinstance(data.get("ui"), dict) else {}
     return page(
-        "Find GPUs",
+        "Train Now",
         f"""
         <section class="toolbar">
           <div>
-            <h1>Find GPUs</h1>
-            <p>Find the best free GPU across your SSH servers.</p>
+            <h1>Train Now</h1>
+            <p>Rank GPUs across SSH hosts by free VRAM, model, load, disk health, alerts, and tags.</p>
           </div>
           <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/">Overview</a></div>
         </section>
@@ -344,20 +387,22 @@ def render_gpus_page(data: dict[str, object]) -> str:
 
 
 def render_me_page(data: dict[str, object]) -> str:
+    hosts = data.get("hosts") or []
     overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
     ui = data.get("ui") if isinstance(data.get("ui"), dict) else {}
     return page(
-        "My Processes",
+        "My Training",
         f"""
         <section class="toolbar">
           <div>
-            <h1>My Processes</h1>
-            <p>Your GPU processes across all configured servers.</p>
+            <h1>My Training</h1>
+            <p>Your LabGPU runs, adopted runs, and agentless GPU processes across SSH servers.</p>
           </div>
           <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/">Overview</a></div>
         </section>
         {render_process_filters(ui)}
-        {render_my_processes(overview.get('my_process_items') if isinstance(overview, dict) else [], ui=ui, title='My GPU Processes')}
+        {render_my_training(training_items(hosts, overview), ui=ui)}
+        {render_my_processes(overview.get('my_process_items') if isinstance(overview, dict) else [], ui=ui, title='Agentless Own GPU Processes')}
         """,
     )
 
@@ -405,8 +450,9 @@ def render_alerts_page(data: dict[str, object]) -> str:
 def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
     config = load_config()
     ssh_hosts = parse_ssh_config(ssh_config)
+    saved_enabled = {entry.alias for entry in config.servers.values() if entry.enabled}
     host_rows = "".join(
-        f"<tr><td><label><input type='checkbox' name='aliases' value='{esc(host.alias)}'> <code>{esc(host.alias)}</code></label></td><td>{esc(host.hostname or '-')}</td><td>{esc(host.user or '-')}</td><td>{esc(host.port or 22)}</td><td><a href='/servers/{esc(host.alias)}'>Test connection</a></td></tr>"
+        f"<tr><td><label><input type='checkbox' name='aliases' value='{esc(host.alias)}' {'checked' if host.alias in saved_enabled else ''}> <code>{esc(host.alias)}</code></label></td><td>{esc(host.hostname or '-')}</td><td>{esc(host.user or '-')}</td><td>{esc(host.port or 22)}</td><td><a href='/servers/{esc(host.alias)}'>Test connection</a></td></tr>"
         for host in ssh_hosts
     ) or "<tr><td colspan='5' class='muted'>No SSH hosts found.</td></tr>"
     server_rows = "".join(
@@ -429,7 +475,7 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
         </section>
         <section class="panel">
           <h2>Import From SSH Config</h2>
-          <p class="muted">Select SSH aliases, set defaults, and save them into <code>~/.labgpu/config.toml</code>. Use Test connection to probe a host before saving.</p>
+          <p class="muted">Select the SSH aliases you want on LabGPU Home. Saved enabled hosts are the default probe set, so choosing fewer servers makes the home page faster. Test connection opens a probe page that auto-detects GPU model, disks, load, and LabGPU Enhanced Mode when available.</p>
           <form id="settings-import">
             <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
             <div class="filters">
@@ -458,7 +504,7 @@ def render_overview(overview: dict[str, object]) -> str:
     <section class="health">
       <div class="summary-card {online_class}"><strong>{esc(overview.get('online_servers', 0))}/{esc(overview.get('total_servers', 0))}</strong><span>online servers</span></div>
       <div class="summary-card {available_class}"><strong>{esc(available)}/{esc(total_gpus)}</strong><span>available GPUs</span></div>
-      <div class="summary-card ok"><strong>{esc(overview.get('my_processes', 0))}</strong><span>my GPU processes</span></div>
+      <div class="summary-card ok"><strong>{esc(overview.get('my_processes', 0))}</strong><span>my training processes</span></div>
       <div class="summary-card {alert_class}"><strong>{esc(overview.get('alerts', 0))}</strong><span>alerts · {esc(critical)} critical / {esc(warnings)} warning</span></div>
     </section>
     """
@@ -582,11 +628,119 @@ def render_alert_filters(ui: dict[str, object]) -> str:
     """
 
 
+def render_train_now(overview: dict[str, object], *, limit: int | None = None) -> str:
+    ui = {"availability": "available"}
+    items = filter_gpu_items(overview.get("gpu_items") or [], ui)
+    if limit is not None:
+        items = items[:limit]
+    if not items:
+        return render_available_gpus([], ui, title="Train Now / Recommended GPUs", counts=overview)
+    cards = "".join(render_gpu_recommendation_card(item) for item in items)
+    return (
+        "<section class='panel'>"
+        "<div class='section-head'><h2>Train Now / Recommended GPUs</h2><a href='/gpus'>View all</a></div>"
+        "<p class='muted'>Copy an SSH command, CUDA_VISIBLE_DEVICES value, or LabGPU launch snippet.</p>"
+        f"<div class='gpu-list'>{cards}</div></section>"
+    )
+
+
+def render_my_training(
+    items: object,
+    *,
+    ui: dict[str, object] | None = None,
+    title: str = "My Runs",
+    limit: int | None = None,
+    view_all: str | None = None,
+) -> str:
+    rows = filter_training_items(items, ui or {})
+    if limit is not None:
+        rows = rows[:limit]
+    head = section_head(title, view_all)
+    if not rows:
+        return f"<section class='panel'>{head}<p class='muted'>No LabGPU run or own GPU process found yet.</p></section>"
+    body = "".join(
+        f"<tr><td>{esc(item.get('name') or '-')}</td><td><a href='/servers/{esc(item.get('host'))}'>{esc(item.get('host') or '-')}</a></td><td>{esc(item.get('gpu') or '-')}</td><td>{esc(item.get('pid') or '-')}</td><td>{esc(item.get('runtime') or '-')}</td><td>{esc(item.get('last_log_time') or '-')}</td><td>{esc(item.get('status') or '-')}</td><td><span class='badge {esc(health_badge(item.get('health')))}'>{esc(item.get('health') or '-')}</span></td><td>{esc(short(item.get('diagnosis') or '-', 80))}</td><td>{render_training_actions(item)}</td></tr>"
+        for item in rows
+        if isinstance(item, dict)
+    )
+    return f"<section class='panel'>{head}<table><tr><th>Name</th><th>Host</th><th>GPU</th><th>PID</th><th>Runtime</th><th>Last log</th><th>Status</th><th>Health</th><th>Diagnosis</th><th>Action</th></tr>{body}</table></section>"
+
+
+def render_failure_inbox(items: object, *, limit: int | None = None) -> str:
+    rows = [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+    if limit is not None:
+        rows = rows[:limit]
+    if not rows:
+        return "<section class='panel'><div class='section-head'><h2>Failed or Suspicious Runs</h2></div><p class='muted'>No failed run, suspected idle process, or failure signal found.</p></section>"
+    body = "".join(
+        f"<tr><td>{esc(item.get('source') or item.get('kind') or '-')}</td><td>{esc(item.get('name') or '-')}</td><td>{esc(item.get('host') or '-')}</td><td>{esc(item.get('gpu') or '-')}</td><td>{esc(item.get('pid') or '-')}</td><td><span class='badge {esc(health_badge(item.get('status')))}'>{esc(item.get('status') or '-')}</span></td><td>{esc(short(item.get('diagnosis') or '-', 120))}</td><td>{render_training_actions(item)}</td></tr>"
+        for item in rows
+    )
+    return f"<section class='panel'><div class='section-head'><h2>Failed or Suspicious Runs</h2><a href='/me'>My training</a></div><table><tr><th>Source</th><th>Name</th><th>Host</th><th>GPU</th><th>PID</th><th>Status</th><th>Signal</th><th>Action</th></tr>{body}</table></section>"
+
+
+def filter_training_items(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
+    if not isinstance(items, list):
+        return []
+    q = str(ui.get("q") or "").lower()
+    server = str(ui.get("server") or "").lower()
+    health = str(ui.get("health") or "").lower()
+    out: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        haystack = " ".join(
+            [
+                str(item.get("name") or ""),
+                str(item.get("host") or ""),
+                str(item.get("pid") or ""),
+                str(item.get("command") or ""),
+                str(item.get("health") or ""),
+                str(item.get("diagnosis") or ""),
+            ]
+        ).lower()
+        if q and q not in haystack:
+            continue
+        if server and server not in str(item.get("host") or "").lower():
+            continue
+        if health and health not in str(item.get("health") or "").lower():
+            continue
+        out.append(dict(item))
+    out.sort(key=lambda item: str(item.get("runtime") or ""), reverse=True)
+    return out
+
+
+def render_training_actions(item: dict[str, object]) -> str:
+    command = str(item.get("command") or "")
+    actions: list[str] = []
+    if command:
+        actions.append(f"<button class='small' type='button' data-copy='{esc(command)}'>Copy command</button>")
+    if item.get("pid") not in {None, "", "-"} and item.get("kind") == "process":
+        proc = item.get("process") if isinstance(item.get("process"), dict) else item
+        actions.append(f"<button class='small' type='button' data-copy='{esc(debug_context_message(proc, server_alias=item.get('host')))}'>Context</button>")
+        actions.append(f"<button class='small' type='button' data-copy='{esc(process_adopt_command(proc))}'>Copy adopt</button>")
+    if item.get("name") and item.get("kind") == "run":
+        name = str(item.get("name"))
+        actions.append(f"<button class='small' type='button' data-copy='labgpu logs {esc(name)} --tail 100'>Tail log</button>")
+        actions.append(f"<button class='small' type='button' data-copy='labgpu diagnose {esc(name)}'>Diagnose</button>")
+        actions.append(f"<button class='small' type='button' data-copy='labgpu context {esc(name)} --copy'>Context</button>")
+    return " ".join(actions) or "-"
+
+
+def health_badge(value: object) -> str:
+    text = str(value or "").lower()
+    if any(word in text for word in ("error", "failed", "critical", "zombie", "oom", "traceback")):
+        return "error"
+    if any(word in text for word in ("warning", "suspected", "idle", "busy", "io_wait", "disk")):
+        return "warning"
+    return "ok"
+
+
 def render_available_gpus(
     items: object,
     ui: dict[str, object] | None = None,
     *,
-    title: str = "Available GPUs",
+    title: str = "Train Now / Recommended GPUs",
     limit: int | None = None,
     view_all: str | None = None,
     counts: dict[str, object] | None = None,
@@ -621,15 +775,18 @@ def render_available_gpus(
 def render_gpu_finder(overview: dict[str, object], ui: dict[str, object]) -> str:
     items = filter_gpu_items(overview.get("gpu_items") or [], ui)
     if not items:
-        return render_available_gpus([], ui, title="Available GPUs", counts=overview)
+        return render_available_gpus([], ui, title="Train Now / Recommended GPUs", counts=overview)
     cards = "".join(render_gpu_recommendation_card(item) for item in items)
-    return f"<section class='panel'><div class='section-head'><h2>GPU Recommendations</h2><a href='/gpus?availability=all'>View all</a></div><div class='gpu-list'>{cards}</div></section>"
+    return f"<section class='panel'><div class='section-head'><h2>Train Now Recommendations</h2><a href='/gpus?availability=all'>View all</a></div><div class='gpu-list'>{cards}</div></section>"
 
 
 def render_gpu_recommendation_card(item: dict[str, object]) -> str:
     rec = gpu_recommendation(item)
     memory_free = format_memory(item.get("memory_free_mb"))
     memory_total = format_memory(item.get("memory_total_mb"))
+    ssh_command = str(item.get("ssh_command") or ("ssh " + str(item.get("server") or "")))
+    cuda = str(item.get("cuda_visible_devices") or item.get("index") or "")
+    snippet = ranking.launch_snippet(item)
     return f"""
     <article class="gpu-choice {esc(rec['class'])}" data-gpu-choice="1" data-model="{esc(item.get('name') or '')}" data-free-mb="{esc(item.get('memory_free_mb') or 0)}" data-tags="{esc(join_values(item.get('tags') or item.get('server_tags') or []))}" data-server="{esc(item.get('server') or '')}" data-gpu-index="{esc(item.get('index'))}">
       <div class="card-head">
@@ -645,10 +802,16 @@ def render_gpu_recommendation_card(item: dict[str, object]) -> str:
         <span>{esc(item.get('temperature'))} C</span>
         <span>disk {esc(item.get('disk_health') or 'unknown')}</span>
         <span>load {esc(load_value(item.get('load')))}</span>
+        <span>score {esc(rec['score'])}</span>
       </div>
       <div class="meta">
-        <code>{esc(item.get('ssh_command') or ('ssh ' + str(item.get('server') or '')))}</code>
-        <code>CUDA_VISIBLE_DEVICES={esc(item.get('cuda_visible_devices') or item.get('index'))}</code>
+        <code>{esc(ssh_command)}</code>
+        <code>CUDA_VISIBLE_DEVICES={esc(cuda)}</code>
+      </div>
+      <div class="actions">
+        <button class="small" type="button" data-copy="{esc(ssh_command)}">Copy SSH command</button>
+        <button class="small" type="button" data-copy="CUDA_VISIBLE_DEVICES={esc(cuda)}">Copy CUDA_VISIBLE_DEVICES</button>
+        <button class="small" type="button" data-copy="{esc(snippet)}">Copy launch snippet</button>
       </div>
       <p class="muted">{esc(rec['reason'])}</p>
     </article>
@@ -656,95 +819,11 @@ def render_gpu_recommendation_card(item: dict[str, object]) -> str:
 
 
 def filter_available_gpu_items(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
-    if not isinstance(items, list):
-        return []
-    q = str(ui.get("q") or "").lower()
-    model = str(ui.get("model") or "").lower()
-    tag = str(ui.get("tag") or "").lower()
-    sort = str(ui.get("sort") or "")
-    min_mem_raw = str(ui.get("min_mem_gb") or "").strip()
-    min_mem_mb = None
-    if min_mem_raw:
-        try:
-            min_mem_mb = int(float(min_mem_raw) * 1024)
-        except ValueError:
-            min_mem_mb = None
-    filtered: list[dict[str, object]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        haystack = " ".join(
-            [
-                str(item.get("server") or ""),
-                str(item.get("name") or ""),
-                join_values(item.get("tags") or []),
-            ]
-        ).lower()
-        if q and q not in haystack:
-            continue
-        if model and model not in str(item.get("name") or "").lower():
-            continue
-        if tag and tag not in join_values(item.get("tags") or []).lower():
-            continue
-        if min_mem_mb is not None and (item.get("memory_free_mb") or 0) < min_mem_mb:
-            continue
-        filtered.append(item)
-    if sort == "model":
-        filtered.sort(key=lambda item: (str(item.get("name") or ""), str(item.get("server") or "")))
-    elif sort == "load":
-        filtered.sort(key=lambda item: load_sort_key(item.get("load")))
-    else:
-        filtered.sort(key=lambda item: int(item.get("memory_free_mb") or 0), reverse=True)
-    return filtered
+    return ranking.filter_available_gpu_items(items, ui)
 
 
 def filter_gpu_items(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
-    if not isinstance(items, list):
-        return []
-    q = str(ui.get("q") or "").lower()
-    model = str(ui.get("model") or "").lower()
-    tag = str(ui.get("tag") or "").lower()
-    availability = str(ui.get("availability") or "available")
-    min_mem_raw = str(ui.get("min_mem_gb") or "").strip()
-    min_mem_mb = None
-    if min_mem_raw:
-        try:
-            min_mem_mb = int(float(min_mem_raw) * 1024)
-        except ValueError:
-            min_mem_mb = None
-    filtered: list[dict[str, object]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        item = dict(item)
-        item.setdefault("ssh_command", f"ssh {item.get('server')}")
-        item.setdefault("cuda_visible_devices", str(item.get("index")))
-        haystack = " ".join(
-            [
-                str(item.get("server") or ""),
-                str(item.get("name") or ""),
-                join_values(item.get("tags") or item.get("server_tags") or []),
-                str(item.get("availability") or ""),
-            ]
-        ).lower()
-        if q and q not in haystack:
-            continue
-        if model and model not in str(item.get("name") or "").lower():
-            continue
-        if tag and tag not in join_values(item.get("tags") or item.get("server_tags") or []).lower():
-            continue
-        if min_mem_mb is not None and (item.get("memory_free_mb") or 0) < min_mem_mb:
-            continue
-        item_availability = str(item.get("availability") or item.get("status") or "")
-        if availability in {"", "available"} and item_availability not in {"free", "probably_available"}:
-            continue
-        if availability == "busy" and item_availability != "busy":
-            continue
-        if availability == "idle" and item_availability != "idle_but_occupied":
-            continue
-        filtered.append(item)
-    filtered.sort(key=gpu_recommendation_sort_key)
-    return filtered
+    return ranking.filter_gpu_items(items, ui)
 
 
 def filter_process_items(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
@@ -842,7 +921,7 @@ def render_my_processes(
     items: object,
     *,
     ui: dict[str, object] | None = None,
-    title: str = "My Processes",
+    title: str = "My GPU Processes",
     limit: int | None = None,
     view_all: str | None = None,
 ) -> str:
@@ -924,6 +1003,7 @@ def render_detail(data: dict[str, object]) -> str:
             <a class="button" href="/api/servers/{esc(host.get('alias'))}">JSON</a>
           </div>
         </section>
+        {render_cache_notice(host)}
         {render_health(host)}
         {render_labgpu_runs(host)}
         <section class="panel"><h2>Disks</h2>{render_disk_table(host.get('disks') or [])}</section>
@@ -939,20 +1019,29 @@ def render_host_card(host: object, *, compact: bool = False) -> str:
     online = bool(host.get("online"))
     health = server_health(host)
     status = "online" if online else "offline"
-    status_label = f"{status} · {health}" if online and health != "ok" else status
+    cached = host.get("cached") if isinstance(host.get("cached"), dict) else None
+    using_cache = bool(cached and not online and not (host.get("gpus") or []))
+    status_label = "offline · cached" if using_cache else (f"{status} · {health}" if online and health != "ok" else status)
     error = host.get("error")
     gpus = host.get("gpus") or []
-    cached = host.get("cached") if isinstance(host.get("cached"), dict) else None
-    display_gpus = gpus or (cached.get("gpus") if cached else []) or []
+    display_host = cached if using_cache and cached else host
+    display_gpus = gpus or (display_host.get("gpus") if isinstance(display_host, dict) else []) or []
     disk = host.get("disk") or {}
-    if not disk and cached:
-        disk = cached.get("disk") or {}
+    if using_cache and isinstance(display_host, dict):
+        disk = display_host.get("disk") or {}
     gpu_rows = "".join(render_gpu_row(gpu) for gpu in display_gpus) or "<tr><td colspan='5' class='muted'>No GPU data.</td></tr>"
     summary = gpu_summary(display_gpus)
-    memory = host.get("memory") if isinstance(host.get("memory"), dict) else {}
+    memory = display_host.get("memory") if isinstance(display_host, dict) and isinstance(display_host.get("memory"), dict) else {}
     mem = memory.get("mem") if isinstance(memory.get("mem"), dict) else {}
     mode = host.get("mode") or "offline"
     href = f"/servers/{esc(host.get('alias'))}"
+    cache_prefix = "cached " if using_cache else ""
+    cache_notice = ""
+    if using_cache:
+        cache_notice = (
+            f"<p class='muted' title='{esc(host.get('last_seen'))}'>Showing cached snapshot from "
+            f"{esc(relative_time(host.get('last_seen')))} because the current SSH probe failed.</p>"
+        )
     gpu_table = "" if compact else f"""
       <table>
         <tr><th>GPU</th><th>Name</th><th>Memory</th><th>Util</th><th>Processes</th></tr>
@@ -977,23 +1066,36 @@ def render_host_card(host: object, *, compact: bool = False) -> str:
         <span class="{esc('warn-text' if probe_seconds(host.get('elapsed_ms')) >= 5 else '')}">probe {esc(format_latency(host.get('elapsed_ms')))}</span>
       </div>
       <div class="meta">
-        <span>{esc(summary['total'])} GPUs</span>
-        <span>{esc(summary['free'])} free / {esc(summary['busy'])} busy</span>
-        <span>load {esc(load_label(host))}</span>
-        <span>mem {esc(mem.get('used_percent') if isinstance(mem, dict) else '-')}%</span>
-        <span>disk {esc(disk.get('use_percent') if isinstance(disk, dict) else '-')}</span>
+        <span>{esc(cache_prefix)}{esc(summary['total'])} GPUs</span>
+        <span>{esc(cache_prefix)}{esc(summary['free'])} free / {esc(summary['busy'])} busy</span>
+        <span>{esc(cache_prefix)}load {esc(load_label(display_host if isinstance(display_host, dict) else host))}</span>
+        <span>{esc(cache_prefix)}mem {esc(mem.get('used_percent') if isinstance(mem, dict) else '-')}%</span>
+        <span>{esc(cache_prefix)}disk {esc(disk.get('use_percent') if isinstance(disk, dict) else '-')}</span>
       </div>
       <div class="meta">
-        <span>{esc(host.get('uptime') or '-')}</span>
-        <span>top users {esc(top_users(host.get('processes') or []))}</span>
+        <span>{esc(cache_prefix)}{esc(display_host.get('uptime') if isinstance(display_host, dict) else host.get('uptime') or '-')}</span>
+        <span>{esc(cache_prefix)}top users {esc(top_users(display_host.get('processes') if isinstance(display_host, dict) else host.get('processes') or []))}</span>
         <span>alerts {esc(len(alerts) if isinstance(alerts, list) else 0)}</span>
         <span title="{esc(host.get('probed_at') or '-')}">last updated {esc(relative_time(host.get('probed_at')))}</span>
       </div>
-      {f"<p class='muted' title='{esc(host.get('last_seen'))}'>offline, last seen {esc(relative_time(host.get('last_seen')))}</p>" if cached and not online else ""}
+      {cache_notice}
       {f"<p class='error'>{esc(error)}</p>" if error else ""}
       {gpu_table}
     </article>
     """
+
+
+def render_cache_notice(host: dict[str, object]) -> str:
+    if host.get("online") or not isinstance(host.get("cached"), dict):
+        return ""
+    return (
+        "<section class='panel'>"
+        "<div class='meta'><span class='badge warning'>Cached snapshot</span>"
+        f"<span title='{esc(host.get('last_seen'))}'>last live data {esc(relative_time(host.get('last_seen')))}</span></div>"
+        f"<p class='muted'>Current SSH probe failed: {esc(host.get('error') or 'unavailable')}. "
+        "GPU, process, disk, and health details below are from the last successful probe.</p>"
+        "</section>"
+    )
 
 
 def display_with_cache(host: dict[str, object]) -> dict[str, object]:
@@ -1081,7 +1183,10 @@ def render_gpu_card(gpu: object, *, server_alias: object | None = None) -> str:
         <span>{esc(format_memory(gpu.get('memory_used_mb')))}/{esc(format_memory(gpu.get('memory_total_mb')))}</span>
         <span>{esc(gpu.get('utilization_gpu'))}% util</span>
         <span>{esc(gpu.get('temperature'))} C</span>
+        <span>{esc(gpu.get('availability') or gpu.get('status') or 'unknown')}</span>
+        <span>{esc(gpu.get('confidence') or '')}</span>
       </div>
+      {f"<p class='muted'>{esc(gpu.get('health_reason'))}</p>" if gpu.get('health_reason') else ""}
       <table><tr><th>User</th><th>PID</th><th>Runtime</th><th>Memory</th><th>Health</th><th>Command</th><th>Action</th></tr>{rows}</table>
     </article>
     """
@@ -1113,7 +1218,10 @@ def render_process_row(
     server = f"<td>{esc(server_alias)}</td>" if show_server and server_alias is not None else ""
     state = f"<td title='{esc(proc.get('state') or '-')}'>{esc(process_state_label(proc.get('state')))}</td>" if include_gpu else ""
     health_class = proc.get("health_severity") or proc.get("health_status") or "unknown"
-    health = f"<span class='badge {esc(health_class)}'>{esc(proc.get('health_status') or 'unknown')}</span>"
+    confidence = proc.get("confidence")
+    confidence_text = f" · {confidence}" if confidence else ""
+    health_title = process_evidence_text(proc) or proc.get("health_reason") or ""
+    health = f"<span class='badge {esc(health_class)}' title='{esc(health_title)}'>{esc(proc.get('health_status') or 'unknown')}{esc(confidence_text)}</span>"
     action = render_process_action(proc, server_alias=server_alias, action_allowed=action_allowed)
     command_html = (
         f"<code>{esc(command)}</code> "
@@ -1123,17 +1231,25 @@ def render_process_row(
     return (
         f"<tr>{server}{gpu}<td>{esc(user_label(proc.get('user')))}</td><td>{esc(proc.get('pid'))}</td>"
         f"<td>{esc(proc.get('runtime') or human_duration(proc.get('runtime_seconds')))}</td>{state}"
-        f"<td>{esc(format_memory(proc.get('used_memory_mb')))}</td><td title='{esc(proc.get('health_reason') or '')}'>{health}</td>"
+        f"<td>{esc(format_memory(proc.get('used_memory_mb')))}</td><td title='{esc(health_title)}'>{health}</td>"
         f"<td>{command_html}</td><td>{action}</td></tr>"
     )
 
 
 def render_process_action(proc: dict[str, object], *, server_alias: object | None, action_allowed: bool) -> str:
+    view = f"<a class='small' href='/servers/{esc(server_alias)}'>View</a> " if server_alias else ""
+    context = (
+        f"<button class='small' type='button' data-copy='{esc(debug_context_message(proc, server_alias=server_alias))}'>Context</button> "
+        if server_alias
+        else ""
+    )
     if proc.get("actions_disabled_reason"):
-        return f"<span class='muted'>{esc(proc.get('actions_disabled_reason'))}</span>"
+        return f"{view}{context}<span class='muted'>{esc(proc.get('actions_disabled_reason'))}</span>"
     if proc.get("is_current_user") and action_allowed and server_alias:
+        adopt = process_adopt_command(proc)
         return (
-            f"<a class='small' href='/servers/{esc(server_alias)}'>View</a> "
+            f"{view}{context}"
+            f"<button class='small' type='button' data-copy='{esc(adopt)}'>Copy adopt</button> "
             f"<button class='small danger' data-stop='term' data-server='{esc(server_alias)}' data-pid='{esc(proc.get('pid'))}' "
             f"data-gpu='{esc(proc.get('gpu_index') if proc.get('gpu_index') is not None else '-')}' "
             f"data-runtime='{esc(proc.get('runtime') or human_duration(proc.get('runtime_seconds')))}' "
@@ -1142,8 +1258,73 @@ def render_process_action(proc: dict[str, object], *, server_alias: object | Non
             f"data-hash='{esc(proc.get('command_hash') or '')}' data-command='{esc(short(proc.get('command') or '', 180))}'>Stop</button>"
         )
     if proc.get("is_current_user") and not action_allowed:
-        return "<span class='muted'>actions disabled</span>"
-    return f"<code>labgpu adopt {esc(proc.get('pid'))} --name NAME</code>"
+        return f"{view}{context}<span class='muted'>actions disabled</span>"
+    adopt = process_adopt_command(proc)
+    owner = owner_message(proc, server_alias=server_alias)
+    return (
+        f"{view}<button class='small' type='button' data-copy='{esc(adopt)}'>Copy adopt</button> "
+        f"<button class='small' type='button' data-copy='{esc(owner)}'>Copy owner message</button>"
+    )
+
+
+def process_adopt_command(proc: dict[str, object]) -> str:
+    pid = proc.get("pid")
+    gpu = proc.get("gpu_index")
+    gpu_arg = f" --gpu {gpu}" if gpu is not None else ""
+    return f"labgpu adopt {pid} --name NAME{gpu_arg}"
+
+
+def owner_message(proc: dict[str, object], *, server_alias: object | None) -> str:
+    gpu = proc.get("gpu_index") if proc.get("gpu_index") is not None else short(proc.get("gpu_uuid") or "-", 14)
+    evidence = process_evidence_text(proc)
+    pieces = [
+        "Hi, quick check on this GPU process:",
+        f"server={server_alias or '-'}",
+        f"gpu={gpu}",
+        f"pid={proc.get('pid')}",
+        f"user={proc.get('user') or 'unknown'}",
+        f"runtime={proc.get('runtime') or human_duration(proc.get('runtime_seconds'))}",
+        f"gpu_mem={format_memory(proc.get('used_memory_mb'))}",
+    ]
+    if evidence:
+        pieces.append(f"evidence={evidence}")
+    pieces.append("Could you confirm whether it is still needed when you have a chance?")
+    return " ".join(pieces)
+
+
+def debug_context_message(proc: dict[str, object], *, server_alias: object | None) -> str:
+    return "\n".join(
+        [
+            "# LabGPU Process Context",
+            f"server: {server_alias or '-'}",
+            f"gpu: {proc.get('gpu_index') if proc.get('gpu_index') is not None else proc.get('gpu_uuid') or '-'}",
+            f"pid: {proc.get('pid')}",
+            f"user: {proc.get('user') or 'unknown'}",
+            f"runtime: {proc.get('runtime') or human_duration(proc.get('runtime_seconds'))}",
+            f"gpu_memory: {format_memory(proc.get('used_memory_mb'))}",
+            f"health: {proc.get('health_status') or 'unknown'}",
+            f"evidence: {process_evidence_text(proc) or proc.get('health_reason') or '-'}",
+            "",
+            "command:",
+            str(proc.get("command") or ""),
+        ]
+    )
+
+
+def process_evidence_text(proc: dict[str, object]) -> str:
+    evidence = proc.get("idle_evidence")
+    if not isinstance(evidence, dict):
+        return ""
+    parts = []
+    if evidence.get("low_util_samples") is not None:
+        parts.append(f"GPU util < 3% for {evidence.get('low_util_samples')} samples")
+    if evidence.get("vram_occupied_mb") is not None:
+        parts.append(f"VRAM occupied {format_memory(evidence.get('vram_occupied_mb'))}")
+    if proc.get("cpu_low_samples") is not None:
+        parts.append(f"CPU low in {proc.get('cpu_low_samples')} samples")
+    if evidence.get("confidence"):
+        parts.append(f"confidence {evidence.get('confidence')}")
+    return "; ".join(parts)
 
 
 def page(title: str, body: str) -> str:
@@ -1266,13 +1447,172 @@ let paused = false;
 const actionToken = "{esc(ServerHandler.action_token)}";
 let selectedStopButton = null;
 const themeButton = document.getElementById("theme-toggle");
+const languageButton = document.getElementById("language-toggle");
+const translations = {{
+  "Overview": "总览",
+  "Train Now": "现在开跑",
+  "My Training": "我的训练",
+  "Servers": "服务器",
+  "Alerts": "告警",
+  "Settings": "设置",
+  "JSON": "JSON",
+  "Pause refresh": "暂停刷新",
+  "Resume refresh": "继续刷新",
+  "Dark": "深色",
+  "Light": "浅色",
+  "LabGPU Home": "LabGPU 主页",
+  "Personal GPU workspace for students using shared SSH servers.": "给学生使用共享 SSH GPU 服务器的个人训练工作台。",
+  "online servers": "在线服务器",
+  "available GPUs": "可用 GPU",
+  "my training processes": "我的训练进程",
+  "Train Now / Recommended GPUs": "现在开跑 / 推荐 GPU",
+  "Train Now Recommendations": "现在开跑推荐",
+  "Copy an SSH command, CUDA_VISIBLE_DEVICES value, or LabGPU launch snippet.": "复制 SSH 命令、CUDA_VISIBLE_DEVICES 或 LabGPU 启动片段。",
+  "My Runs": "我的任务",
+  "Failed or Suspicious Runs": "失败或可疑任务",
+  "No failed run, suspected idle process, or failure signal found.": "没有发现失败任务、疑似空转进程或失败信号。",
+  "Problems": "问题",
+  "Resource details for your SSH hosts.": "你的 SSH 主机资源详情。",
+  "Choose home servers": "选择首页服务器",
+  "Showing your saved enabled servers. Change this list in Settings.": "正在显示你保存并启用的服务器。可在设置中修改。",
+  "Showing built-in demo servers.": "正在显示内置演示服务器。",
+  "Showing SSH hosts from your config. Save selected hosts in Settings to make the home page faster.": "正在显示 SSH 配置中的主机。到设置保存常用服务器后，首页会更快。",
+  "View all": "查看全部",
+  "My training": "我的训练",
+  "Rank GPUs across SSH hosts by free VRAM, model, load, disk health, alerts, and tags.": "按空闲显存、型号、负载、磁盘健康、告警和标签对 SSH 主机上的 GPU 排序。",
+  "Your LabGPU runs, adopted runs, and agentless GPU processes across SSH servers.": "你在各 SSH 服务器上的 LabGPU 任务、接管任务和无代理 GPU 进程。",
+  "Configured SSH GPU servers, health, disks, and free/busy GPUs.": "已配置的 SSH GPU 服务器、健康状态、磁盘和 GPU 忙闲。",
+  "Disk, SSH, GPU, and process conditions that need attention.": "需要关注的磁盘、SSH、GPU 和进程状态。",
+  "Saved Servers": "已保存服务器",
+  "Import From SSH Config": "从 SSH 配置导入",
+  "Import SSH hosts and manage the server inventory stored in": "导入 SSH 主机并管理保存在",
+  "Select SSH aliases, set defaults, and save them into": "选择 SSH 别名、设置默认值，并保存到",
+  "Select the SSH aliases you want on LabGPU Home. Saved enabled hosts are the default probe set, so choosing fewer servers makes the home page faster. Test connection opens a probe page that auto-detects GPU model, disks, load, and LabGPU Enhanced Mode when available.": "选择你想放在 LabGPU 首页的 SSH 别名。保存并启用的服务器会作为默认探测范围，所以少选一些会让首页更快。测试连接会打开探测页面，自动检测 GPU 型号、磁盘、负载和可用的 LabGPU Enhanced Mode。",
+  "Search": "搜索",
+  "Model": "型号",
+  "Min free GB": "最小空闲 GB",
+  "Server tag": "服务器标签",
+  "Tag": "标签",
+  "Sort": "排序",
+  "Recommended": "推荐",
+  "Free memory": "空闲显存",
+  "Server load": "服务器负载",
+  "Filter": "过滤",
+  "Clear": "清除",
+  "Notify me when GPU is free": "GPU 空闲时通知我",
+  "Browser notification only": "仅浏览器通知",
+  "Notify me": "通知我",
+  "Clear watch": "清除监听",
+  "No browser watch configured.": "未配置浏览器监听。",
+  "Any": "任意",
+  "Healthy": "健康",
+  "Suspected idle": "疑似空转",
+  "IO wait": "IO 等待",
+  "Zombie": "僵尸进程",
+  "Online only": "仅在线",
+  "Has free GPU": "有空闲 GPU",
+  "Has alerts": "有告警",
+  "Has my processes": "有我的进程",
+  "Critical": "严重",
+  "Warning": "警告",
+  "Info": "信息",
+  "Active": "活跃",
+  "Dismissed": "已忽略",
+  "Resolved": "已解决",
+  "All": "全部",
+  "Name": "名称",
+  "Host": "主机",
+  "PID": "PID",
+  "Runtime": "运行时长",
+  "Last log": "最后日志",
+  "Status": "状态",
+  "Health": "健康",
+  "Diagnosis": "诊断",
+  "Action": "操作",
+  "Source": "来源",
+  "Signal": "信号",
+  "Type": "类型",
+  "Severity": "级别",
+  "Last seen": "最后出现",
+  "Message": "消息",
+  "Alias": "别名",
+  "Enabled": "启用",
+  "Tags": "标签",
+  "Disk paths": "磁盘路径",
+  "Shared account": "共享账号",
+  "Stop own process": "停止自己的进程",
+  "HostName": "主机名",
+  "User": "用户",
+  "Port": "端口",
+  "Probe": "探测",
+  "Test connection": "测试连接",
+  "Save selected hosts": "保存选中主机",
+  "Copy SSH command": "复制 SSH 命令",
+  "Copy CUDA_VISIBLE_DEVICES": "复制 CUDA_VISIBLE_DEVICES",
+  "Copy launch snippet": "复制启动片段",
+  "Copy command": "复制命令",
+  "Copy adopt": "复制接管命令",
+  "Copy owner message": "复制询问消息",
+  "Tail log": "查看日志尾部",
+  "Diagnose": "诊断",
+  "Context": "上下文",
+  "View": "查看",
+  "Stop": "停止",
+  "Stop safely": "安全停止",
+  "Force Kill": "强制终止",
+  "Cancel": "取消",
+  "Stop this process?": "停止这个进程？",
+  "This sends SIGTERM first. Force Kill is only offered if the process is still alive.": "会先发送 SIGTERM；只有进程仍存活时才提供强制终止。",
+  "actions disabled": "操作已禁用",
+  "shared account": "共享账号",
+  "No LabGPU run or own GPU process found yet.": "还没有发现 LabGPU 任务或自己的 GPU 进程。",
+  "No clearly free GPU found.": "没有找到明确空闲的 GPU。",
+  "View busy GPUs": "查看忙碌 GPU",
+  "View suspected idle GPUs": "查看疑似空转 GPU",
+  "View all GPUs": "查看全部 GPU",
+  "Agentless Own GPU Processes": "无代理检测到的我的 GPU 进程",
+  "No GPU process owned by the SSH user.": "没有发现当前 SSH 用户拥有的 GPU 进程。",
+  "All Alerts": "全部告警"
+}};
+const reverseTranslations = Object.fromEntries(Object.entries(translations).map(([en, zh]) => [zh, en]));
+function currentLanguage() {{
+  return localStorage.getItem("labgpu-language") || "en";
+}}
+function translateText(text, lang) {{
+  const trimmed = text.trim();
+  if (!trimmed) return text;
+  const leading = text.match(/^\\s*/)[0];
+  const trailing = text.match(/\\s*$/)[0];
+  if (lang === "zh" && translations[trimmed]) return leading + translations[trimmed] + trailing;
+  if (lang === "en" && reverseTranslations[trimmed]) return leading + reverseTranslations[trimmed] + trailing;
+  return text;
+}}
+function applyLanguage(lang) {{
+  document.documentElement.lang = lang === "zh" ? "zh-CN" : "en";
+  if (languageButton) languageButton.textContent = lang === "zh" ? "EN" : "中文";
+  const skip = new Set(["SCRIPT", "STYLE", "CODE", "PRE", "TEXTAREA"]);
+  document.querySelectorAll("body *").forEach((element) => {{
+    if (skip.has(element.tagName) || element.id === "theme-toggle" || element.id === "language-toggle") return;
+    element.childNodes.forEach((node) => {{
+      if (node.nodeType === Node.TEXT_NODE) node.nodeValue = translateText(node.nodeValue || "", lang);
+    }});
+  }});
+  updateThemeButton();
+}}
+function updateThemeButton() {{
+  if (!themeButton) return;
+  const dark = document.documentElement.dataset.theme === "dark";
+  const zh = currentLanguage() === "zh";
+  themeButton.textContent = zh ? (dark ? "浅色" : "深色") : (dark ? "Light" : "Dark");
+}}
 function applyTheme(theme) {{
   const dark = theme === "dark" || (theme === "system" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.dataset.theme = dark ? "dark" : "light";
-  if (themeButton) themeButton.textContent = dark ? "Light mode" : "Dark mode";
+  updateThemeButton();
 }}
 try {{
   applyTheme(localStorage.getItem("labgpu-theme") || "system");
+  applyLanguage(currentLanguage());
   if (themeButton) {{
     themeButton.addEventListener("click", () => {{
       const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
@@ -1280,12 +1620,19 @@ try {{
       applyTheme(next);
     }});
   }}
+  if (languageButton) {{
+    languageButton.addEventListener("click", () => {{
+      const next = currentLanguage() === "zh" ? "en" : "zh";
+      localStorage.setItem("labgpu-language", next);
+      applyLanguage(next);
+    }});
+  }}
 }} catch (error) {{}}
 const btn = document.getElementById("pause-refresh");
 if (btn) {{
   btn.addEventListener("click", () => {{
     paused = !paused;
-    btn.textContent = paused ? "Resume refresh" : "Pause refresh";
+    btn.textContent = translateText(paused ? "Resume refresh" : "Pause refresh", currentLanguage());
   }});
 }}
 setInterval(() => {{
@@ -1304,8 +1651,9 @@ document.querySelectorAll("[data-copy]").forEach((button) => {{
   button.addEventListener("click", async () => {{
     try {{
       await navigator.clipboard.writeText(button.dataset.copy || "");
-      button.textContent = "Copied";
-      setTimeout(() => button.textContent = "Copy", 1200);
+      const original = button.textContent || "Copy";
+      button.textContent = currentLanguage() === "zh" ? "已复制" : "Copied";
+      setTimeout(() => button.textContent = original, 1200);
     }} catch (error) {{
       window.prompt("Copy command", button.dataset.copy || "");
     }}
@@ -1348,7 +1696,7 @@ function readWatch() {{
 }}
 function setWatchStatus() {{
   const watch = readWatch();
-  if (watchStatus) watchStatus.textContent = watch ? `Watching model=${{watch.model || "*"}}, min=${{watch.minMemGb || "0"}}GB, tag=${{watch.tag || "*"}}` : "No browser watch configured.";
+  if (watchStatus) watchStatus.textContent = watch ? `Watching model=${{watch.model || "*"}}, min=${{watch.minMemGb || "0"}}GB, tag=${{watch.tag || "*"}}` : translateText("No browser watch configured.", currentLanguage());
 }}
 if (watchEnable) {{
   watchEnable.addEventListener("click", async () => {{
@@ -1454,12 +1802,13 @@ def render_nav() -> str:
     return """
     <nav class="topnav">
       <a href="/">Overview</a>
-      <a href="/gpus">Find GPUs</a>
-      <a href="/me">My Processes</a>
+      <a href="/gpus">Train Now</a>
+      <a href="/me">My Training</a>
       <a href="/servers">Servers</a>
       <a href="/alerts">Alerts</a>
       <a href="/settings">Settings</a>
-      <button id="theme-toggle" type="button">Dark mode</button>
+      <button id="language-toggle" type="button">中文</button>
+      <button id="theme-toggle" type="button">Dark</button>
     </nav>
     """
 
@@ -1484,13 +1833,7 @@ def checked(value: object) -> str:
 
 
 def load_sort_key(value: object) -> tuple[float, str]:
-    if isinstance(value, dict):
-        raw = value.get("1m")
-        try:
-            return (float(raw), "")
-        except (TypeError, ValueError):
-            pass
-    return (999999.0, "")
+    return ranking.load_sort_key(value)
 
 
 def alert_rank(value: object) -> int:
@@ -1498,64 +1841,28 @@ def alert_rank(value: object) -> int:
 
 
 def gpu_recommendation(item: dict[str, object]) -> dict[str, str]:
-    availability = str(item.get("availability") or item.get("status") or "")
-    disk = str(item.get("disk_health") or "unknown")
-    free_mb = int(item.get("memory_free_mb") or 0)
-    load_ratio = load_ratio_value(item.get("load"))
-    if availability == "busy":
-        return {"label": "Busy", "class": "busy", "severity": "warning", "reason": "A compute process is using this GPU."}
-    if availability == "idle_but_occupied":
-        return {
-            "label": "Not recommended",
-            "class": "not-recommended",
-            "severity": "warning",
-            "reason": "GPU memory is occupied with low current utilization.",
-        }
-    if disk == "critical":
-        return {"label": "Not recommended", "class": "not-recommended", "severity": "error", "reason": "Server disk is critical."}
-    if disk == "warning" or load_ratio >= 0.85:
-        return {"label": "OK", "class": "ok-choice", "severity": "warning", "reason": "Usable, but server health has warnings."}
-    if free_mb >= 40 * 1024:
-        return {"label": "Recommended", "class": "recommended", "severity": "ok", "reason": "High free memory and no major server warning."}
-    return {"label": "OK", "class": "ok-choice", "severity": "ok", "reason": "Free GPU with no major warning."}
+    return ranking.gpu_recommendation(item)
+
+
+def recommendation_score(item: dict[str, object]) -> int:
+    return ranking.recommendation_score(item)
 
 
 def gpu_recommendation_sort_key(item: dict[str, object]) -> tuple[int, float, int]:
-    recommendation = gpu_recommendation(item)
-    rank = {"Recommended": 0, "OK": 1, "Not recommended": 2, "Busy": 3}.get(recommendation["label"], 4)
-    load = load_ratio_value(item.get("load"))
-    free = int(item.get("memory_free_mb") or 0)
-    return (rank, load, -free)
+    key = ranking.gpu_recommendation_sort_key(item)
+    return (key[0], key[2], key[3])
 
 
 def load_ratio_value(value: object) -> float:
-    if isinstance(value, dict):
-        raw = value.get("ratio")
-        if raw is not None:
-            try:
-                return float(raw)
-            except (TypeError, ValueError):
-                return 0.0
-    return 0.0
+    return ranking.load_ratio_value(value)
 
 
 def load_value(value: object) -> str:
-    if isinstance(value, dict):
-        raw = value.get("1m")
-        if raw is not None:
-            return str(raw)
-    return "-"
+    return ranking.load_value(value)
 
 
 def format_memory(value: object) -> str:
-    try:
-        mb = float(value)
-    except (TypeError, ValueError):
-        return "-"
-    if mb >= 1024:
-        gb = mb / 1024
-        return f"{gb:.1f} GB"
-    return f"{int(mb)} MB"
+    return ranking.format_memory(value)
 
 
 def process_state_label(value: object) -> str:
@@ -1679,7 +1986,7 @@ def top_users(processes: object) -> str:
     for proc in processes:
         if not isinstance(proc, dict):
             continue
-        user = str(proc.get("user") or "?")
+        user = user_label(proc.get("user"))
         counts[user] = counts.get(user, 0) + 1
     if not counts:
         return "-"
@@ -1687,9 +1994,7 @@ def top_users(processes: object) -> str:
 
 
 def join_values(values: object) -> str:
-    if not isinstance(values, list):
-        return "-"
-    return ",".join(str(value) for value in values) or "-"
+    return ranking.join_values(values)
 
 
 def is_loopback(host: str) -> bool:

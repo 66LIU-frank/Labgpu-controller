@@ -13,5 +13,6 @@ def run(args) -> int:
         timeout=args.timeout,
         open_browser=not args.no_open,
         allow_actions=args.allow_actions,
+        fake_lab=args.fake_lab,
     )
     return 0
