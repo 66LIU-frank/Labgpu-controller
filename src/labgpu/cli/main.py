@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from labgpu import __version__
-from labgpu.cli import adopt, context as context_cmd, demo, diagnose, doctor, kill, list as list_cmd, logs, pick, refresh, report, run as run_cmd, servers, status, ui, web, where
+from labgpu.cli import adopt, context as context_cmd, demo, diagnose, doctor, init as init_cmd, kill, list as list_cmd, logs, pick, refresh, report, run as run_cmd, servers, status, ui, web, where
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -34,6 +34,18 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("doctor", help="check local LabGPU environment")
     p.set_defaults(handler=doctor.run)
 
+    p = sub.add_parser("init", help="set up your personal SSH GPU workspace")
+    p.add_argument("--hosts", help="comma-separated SSH aliases to show on LabGPU Home")
+    p.add_argument("--pattern", help="filter SSH aliases by substring")
+    p.add_argument("--config", help="SSH config path, default ~/.ssh/config")
+    p.add_argument("--labgpu-config", help=argparse.SUPPRESS)
+    p.add_argument("--tags", default="training", help="comma-separated tags to attach, default: training")
+    p.add_argument("--shared-account", action="store_true", help="mark selected hosts as shared Linux accounts; disables stop actions")
+    p.add_argument("--timeout", type=int, default=8)
+    p.add_argument("--no-probe", action="store_true", help="save hosts without probing GPUs")
+    p.add_argument("--keep-existing", action="store_true", help="do not disable existing servers that were not selected")
+    p.set_defaults(handler=init_cmd.run)
+
     p = sub.add_parser("status", help="show GPU status")
     p.add_argument("--json", action="store_true")
     p.add_argument("--fake", action="store_true", help="use fake GPU data for demos and tests")
@@ -54,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--all", action="store_true", help="include busy and not-recommended GPUs")
     p.add_argument("--explain", action="store_true", help="print why each GPU was recommended or rejected")
     p.add_argument("--json", action="store_true")
-    p.add_argument("--cmd", action="store_true", help="print copyable launch snippets only")
+    p.add_argument("--cmd", nargs="?", const="python train.py", metavar="COMMAND", help="print copyable launch snippets; optionally include a training command")
     p.add_argument("--fake-lab", action="store_true", help="use built-in multi-server demo data")
     p.set_defaults(handler=pick.run)
 
@@ -72,7 +84,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("run", help="launch an experiment in tmux")
     p.add_argument("--name", required=True)
-    p.add_argument("--gpu", help="CUDA_VISIBLE_DEVICES value, for example 0 or 0,1")
+    p.add_argument("--gpu", help="CUDA_VISIBLE_DEVICES value, for example 0, 0,1, or auto")
+    p.add_argument("--min-vram", help="minimum free VRAM for --gpu auto, for example 24G")
+    p.add_argument("--prefer", help="preferred local GPU model for --gpu auto, for example A100 or 4090")
     p.add_argument("--project")
     p.add_argument("--tag", action="append", default=[])
     p.add_argument("--note")
@@ -127,6 +141,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--project")
     p.add_argument("--tag", action="append", default=[])
     p.add_argument("--note")
+    p.add_argument("--allow-other-owner", action="store_true", help="allow recording a note for a PID owned by another user")
     p.set_defaults(handler=adopt.run)
 
     p = sub.add_parser("web", help="start the older single-machine run UI")

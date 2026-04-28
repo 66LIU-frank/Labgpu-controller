@@ -5,6 +5,7 @@ Use LabGPU as a personal GPU training workspace from your laptop and from SSH GP
 ## 1. Open Your Workspace
 
 ```bash
+labgpu init
 labgpu ui
 ```
 
@@ -20,7 +21,7 @@ The home page starts with Train Now / Recommended GPUs, then My Runs, Failed or 
 
 ```bash
 labgpu pick --min-vram 24G --prefer A100 --tag training
-labgpu pick --min-vram 24G --prefer 4090 --cmd
+labgpu pick --min-vram 24G --prefer 4090 --cmd "python train.py --config configs/base.yaml"
 ```
 
 `labgpu pick` ranks GPUs across SSH hosts. It is not a single-machine selector; it uses your SSH inventory.
@@ -30,13 +31,13 @@ labgpu pick --min-vram 24G --prefer 4090 --cmd
 On the chosen GPU server:
 
 ```bash
-labgpu run --name baseline --gpu 0 --config configs/base.yaml -- python train.py --config configs/base.yaml
+labgpu run --name baseline --gpu auto --min-vram 24G --config configs/base.yaml -- python train.py --config configs/base.yaml
 ```
 
 For an already-running process:
 
 ```bash
-labgpu adopt 23891 --name old_baseline --gpu 0 --log ./train.log
+labgpu adopt 23891 --name old_baseline --log ./train.log
 ```
 
 Each run gets a directory under `~/.labgpu/runs/`. The most important files are `meta.json`, `stdout.log`, `events.jsonl`, `command.sh`, `git.json`, `env.json`, and `diagnosis.json`.
@@ -69,7 +70,7 @@ labgpu where --fake-lab
 To save your server list once:
 
 ```bash
-labgpu servers import-ssh --hosts alpha_liu,Song-1 --tags A100,training
+labgpu init --hosts alpha_liu,Song-1 --tags A100,training
 labgpu ui
 ```
 

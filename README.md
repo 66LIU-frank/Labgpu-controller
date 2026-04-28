@@ -25,9 +25,10 @@ LabGPU is a personal remote GPU training workspace for students and individual r
 The basic workflow does not require a remote daemon, root access, Slurm, Kubernetes, Docker, or a tracking server.
 
 ```bash
+labgpu init
 labgpu ui
 labgpu pick --min-vram 24G --prefer A100
-labgpu run --name sft --gpu 0 -- python train.py --config configs/sft.yaml
+labgpu run --name sft --gpu auto --min-vram 24G -- python train.py --config configs/sft.yaml
 labgpu where
 ```
 
@@ -141,6 +142,7 @@ curl -fsSL https://raw.githubusercontent.com/66LIU-frank/Labgpu-controller/main/
 Then start your personal training workspace:
 
 ```bash
+labgpu init
 labgpu ui
 ```
 
@@ -148,7 +150,7 @@ From the terminal, ask LabGPU where to train:
 
 ```bash
 labgpu pick --min-vram 24G --prefer A100 --tag training
-labgpu pick --min-vram 24G --prefer 4090 --cmd
+labgpu pick --min-vram 24G --prefer 4090 --cmd "python train.py --config configs/sft.yaml"
 ```
 
 For a specific server from your `~/.ssh/config`:
@@ -166,7 +168,7 @@ labgpu ui --hosts alpha_liu,song_1,gpu4090
 Save the server list once, then just run `labgpu ui` later:
 
 ```bash
-labgpu servers import-ssh --hosts alpha_liu,song_1,gpu4090 --tags lab
+labgpu init --hosts alpha_liu,song_1,gpu4090 --tags lab
 labgpu ui
 ```
 
@@ -174,7 +176,7 @@ This saved list becomes the default LabGPU Home probe set. Use it to keep the
 home page focused and fast:
 
 ```bash
-labgpu servers import-ssh --hosts alpha_liu,alpha_shi --tags A100,training
+labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
 labgpu ui
 ```
 
@@ -208,7 +210,7 @@ Save a server inventory once:
 
 ```bash
 labgpu servers list
-labgpu servers import-ssh --hosts alpha_liu,Song-1 --tags A100,training
+labgpu init --hosts alpha_liu,Song-1 --tags A100,training
 labgpu ui
 ```
 
@@ -278,7 +280,7 @@ LabGPU Home is the daily entry point, but the CLI still gives you a reproducible
 Launch an experiment in `tmux`:
 
 ```bash
-labgpu run --name bert_baseline --gpu 0 --config configs/bert.yaml \
+labgpu run --name bert_baseline --gpu auto --min-vram 24G --config configs/bert.yaml \
   -- python train.py --config configs/bert.yaml
 ```
 
@@ -354,10 +356,11 @@ See [docs/compatibility.md](docs/compatibility.md) for NVIDIA, MIG, Docker, MPS,
 ```text
 labgpu doctor
 labgpu status [--json] [--fake] [--watch]
-labgpu pick [--min-vram 24G] [--prefer A100] [--tag training] [--explain] [--cmd] [--json]
+labgpu init [--hosts alpha_liu,Song-1] [--tags A100,training]
+labgpu pick [--min-vram 24G] [--prefer A100] [--tag training] [--explain] [--cmd "COMMAND"] [--json]
 labgpu where [--json]
 labgpu refresh
-labgpu run --name NAME --gpu 0 -- COMMAND ...
+labgpu run --name NAME --gpu 0|auto [--min-vram 24G] -- COMMAND ...
 labgpu list [--all] [--user USER] [--status failed] [--json]
 labgpu logs RUN [--tail 100] [--follow]
 labgpu kill RUN [--force]
@@ -413,7 +416,7 @@ On a GPU server:
 ```bash
 labgpu doctor
 labgpu status
-labgpu run --name smoke_success --gpu 0 -- bash -lc 'echo start; sleep 1; echo done'
+labgpu run --name smoke_success --gpu auto -- bash -lc 'echo start; sleep 1; echo done'
 sleep 2
 labgpu refresh
 labgpu list --all

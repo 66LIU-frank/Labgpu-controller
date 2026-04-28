@@ -65,6 +65,32 @@ class PickAndHistoryTest(unittest.TestCase):
         self.assertIn("why:", text)
         self.assertIn("free", text)
 
+    def test_pick_cmd_accepts_training_command(self):
+        args = Namespace(
+            config=None,
+            hosts=None,
+            pattern=None,
+            timeout=1,
+            fake_lab=True,
+            model="A100",
+            tag="training",
+            min_vram="24G",
+            min_free_gb=0,
+            all=False,
+            limit=1,
+            json=False,
+            cmd="python train.py --config configs/sft.yaml",
+            explain=False,
+        )
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = pick.run(args)
+        self.assertEqual(code, 0)
+        text = output.getvalue()
+        self.assertIn("ssh alpha_liu", text)
+        self.assertIn("CUDA_VISIBLE_DEVICES=0", text)
+        self.assertIn("python train.py --config configs/sft.yaml", text)
+
     def test_gpu_recommendation_uses_score_and_busy_label(self):
         data = collect_servers(fake_lab=True)
         choices = filter_gpu_items(data["overview"]["gpu_items"], {"availability": "all"})

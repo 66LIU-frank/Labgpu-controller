@@ -24,8 +24,9 @@ def run(args) -> int:
     }
     items = filter_gpu_items(overview.get("gpu_items") or [], ui)
     prefer = getattr(args, "prefer", None) or getattr(args, "model", None) or ""
-    rows = [pick_row(item, prefer=prefer) for item in items[: args.limit]]
-    if getattr(args, "cmd", False):
+    command = command_for_snippet(getattr(args, "cmd", None))
+    rows = [pick_row(item, prefer=prefer, command=command) for item in items[: args.limit]]
+    if wants_cmd_output(getattr(args, "cmd", None)):
         if not rows:
             return 1
         for row in rows:
@@ -58,7 +59,7 @@ def run(args) -> int:
     return 0
 
 
-def pick_row(item: dict[str, object], *, prefer: object = None) -> dict[str, object]:
+def pick_row(item: dict[str, object], *, prefer: object = None, command: str = "python train.py") -> dict[str, object]:
     recommendation = gpu_recommendation(item, prefer=prefer)
     return {
         "score": recommendation["score"],
@@ -72,7 +73,17 @@ def pick_row(item: dict[str, object], *, prefer: object = None) -> dict[str, obj
         "free_memory_mb": item.get("memory_free_mb"),
         "ssh_command": item.get("ssh_command") or f"ssh {item.get('server')}",
         "cuda_visible_devices": item.get("cuda_visible_devices") or str(item.get("index")),
-        "launch_snippet": launch_snippet(item),
+        "launch_snippet": launch_snippet(item, command=command),
         "disk_health": item.get("disk_health"),
         "availability": item.get("availability"),
     }
+
+
+def command_for_snippet(value: object) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "python train.py"
+
+
+def wants_cmd_output(value: object) -> bool:
+    return value is not None and value is not False

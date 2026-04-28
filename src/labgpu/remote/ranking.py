@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 from typing import Any
 
@@ -296,9 +297,11 @@ def gpu_recommendation_sort_key(item: dict[str, object], *, prefer: object = Non
 def launch_snippet(item: dict[str, object], *, command: str = "python train.py", run_name: str = "NAME") -> str:
     server = str(item.get("server") or "")
     gpu = str(item.get("cuda_visible_devices") or item.get("index") or "")
+    cuda = f"CUDA_DEVICE_ORDER=PCI_BUS_ID CUDA_VISIBLE_DEVICES={shlex.quote(gpu)}"
     if not server:
-        return f"CUDA_VISIBLE_DEVICES={gpu} labgpu run --name {run_name} --gpu {gpu} -- {command}"
-    return f"ssh {server} 'labgpu run --name {run_name} --gpu {gpu} -- {command}'"
+        return f"{cuda} {command}"
+    remote = f"cd ~/YOUR_PROJECT && {cuda} {command}"
+    return f"ssh {shlex.quote(server)} {shlex.quote(remote)}"
 
 
 def load_sort_key(value: object) -> tuple[float, str]:
