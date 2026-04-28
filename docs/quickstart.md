@@ -31,6 +31,13 @@ Then open `http://127.0.0.1:8765`. This uses your local `~/.ssh/config`; do not 
 
 The home page shows server cards, available GPUs, your own GPU processes, and alerts. Stop buttons are only shown for processes owned by the current SSH user and are guarded by a re-probe before any signal is sent.
 
+To save your server list once:
+
+```bash
+labgpu servers import-ssh --hosts alpha_liu,Song-1 --tags A100,training
+labgpu ui
+```
+
 For CLI debugging:
 
 ```bash

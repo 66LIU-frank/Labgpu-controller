@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import glob
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,6 +16,10 @@ class SSHHost:
     proxyjump: str | None = None
     identity_files: list[str] = field(default_factory=list)
     options: dict[str, str] = field(default_factory=dict)
+    tags: list[str] = field(default_factory=list)
+    disk_paths: list[str] = field(default_factory=list)
+    shared_account: bool = False
+    allow_stop_own_process: bool = True
 
 
 def default_ssh_config_path() -> Path:
@@ -100,6 +105,10 @@ def resolve_ssh_host(host: SSHHost, *, timeout: int = 3) -> SSHHost:
         proxyjump=_first_str(parsed.get("proxyjump")) or host.proxyjump,
         identity_files=list(parsed.get("identityfile") or host.identity_files),
         options=options,
+        tags=list(host.tags),
+        disk_paths=list(host.disk_paths),
+        shared_account=host.shared_account,
+        allow_stop_own_process=host.allow_stop_own_process,
     )
 
 
@@ -153,3 +162,7 @@ def _first_str(value: str | list[str] | None) -> str | None:
     if isinstance(value, list):
         return value[0] if value else None
     return value
+
+
+def quote_words(values: list[str]) -> str:
+    return " ".join(shlex.quote(value) for value in values)

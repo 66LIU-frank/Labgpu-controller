@@ -14,6 +14,7 @@ Core decisions:
 - `labgpu context` packages local evidence for AI assistants or teammates, but LabGPU does not call external APIs.
 - `labgpu refresh` reconciles stale `running` records after wrapper crashes, manual tmux deletion, or server restarts.
 - `labgpu ui` / `labgpu servers` is intentionally local-first: it reads the user's SSH config and probes remote machines over SSH, without deploying a daemon.
+- `~/.labgpu/config.toml` can store the enabled server inventory, tags, disk paths, shared-account mode, and whether stop-own-process actions are allowed.
 - Agentless Mode only requires SSH plus standard tools such as `nvidia-smi`, `ps`, `df`, `free`, and `uptime`.
 - Enhanced Mode is opportunistic: if the remote PATH has `labgpu`, the local UI may also show remote LabGPU runs and status. Failure to enter Enhanced Mode must not break Agentless Mode.
 - LabGPU Home may stop only the current SSH user's processes. Every stop action re-probes PID identity before signaling and writes a local audit record.

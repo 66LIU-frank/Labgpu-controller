@@ -83,6 +83,14 @@ labgpu servers list
 labgpu servers probe alpha_liu
 ```
 
+If you want `labgpu ui` to remember servers without passing `--hosts`, import them once:
+
+```bash
+labgpu servers import-ssh --hosts alpha_liu,Song-1 --tags A100,training
+```
+
 ## Stop buttons are missing
 
 LabGPU Home only shows Stop buttons for GPU processes owned by the current SSH user. Actions are enabled by default on `127.0.0.1`; if you bind the UI to `0.0.0.0`, actions stay disabled unless you explicitly pass `--allow-actions`.
+
+If a server is marked as a shared account in `~/.labgpu/config.toml`, Agentless stop actions are disabled because LabGPU cannot know which person owns a process when everyone logs in with the same Linux user.

@@ -12,8 +12,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from labgpu.remote.actions import stop_process
 from labgpu.remote.cache import read_server_cache, write_server_cache
+from labgpu.remote.inventory import load_inventory
 from labgpu.remote.probe import probe_host
-from labgpu.remote.ssh_config import SSHHost, parse_ssh_config, resolve_ssh_host, select_hosts
+from labgpu.remote.ssh_config import SSHHost, resolve_ssh_host
 from labgpu.remote.state import annotate_server, build_overview, human_duration
 
 
@@ -56,7 +57,7 @@ def collect_servers(
     pattern: str | None = None,
     timeout: int = 8,
 ) -> dict[str, object]:
-    hosts = select_hosts(parse_ssh_config(ssh_config), names=names, pattern=pattern)
+    hosts = load_inventory(ssh_config=ssh_config, names=names, pattern=pattern)
     if not hosts:
         return {"hosts": [], "count": 0, "error": "no SSH hosts selected"}
     hosts = [resolve_ssh_host(host) for host in hosts]
@@ -128,12 +129,18 @@ class ServerHandler(BaseHTTPRequestHandler):
         if params.get("hosts"):
             names = split_hosts(params["hosts"][0])
         pattern = params.get("pattern", [self.pattern])[0]
-        return collect_servers(
+        data = collect_servers(
             ssh_config=self.ssh_config,
             names=names,
             pattern=pattern,
             timeout=self.timeout,
         )
+        data["ui"] = {
+            "q": params.get("q", [""])[0].strip(),
+            "min_mem_gb": params.get("min_mem_gb", [""])[0].strip(),
+            "model": params.get("model", [""])[0].strip(),
+        }
+        return data
 
     def _data_for_alias(self, alias: str) -> dict[str, object]:
         return collect_servers(
@@ -156,7 +163,7 @@ class ServerHandler(BaseHTTPRequestHandler):
         except (ValueError, OSError):
             self.send_error(HTTPStatus.BAD_REQUEST, "invalid JSON")
             return
-        host = resolve_ssh_host(select_hosts(parse_ssh_config(self.ssh_config), names=[alias])[0])
+        host = resolve_ssh_host(load_inventory(ssh_config=self.ssh_config, names=[alias])[0])
         result = stop_process(
             host,
             pid=pid,
@@ -201,8 +208,9 @@ def render_index(data: dict[str, object]) -> str:
             <a class="button" href="/api/servers">JSON</a>
           </div>
         </section>
+        {render_filters(data.get('ui') if isinstance(data.get('ui'), dict) else {})}
         {render_overview(overview)}
-        {render_available_gpus(overview.get('available_gpu_items') if isinstance(overview, dict) else [])}
+        {render_available_gpus(overview.get('available_gpu_items') if isinstance(overview, dict) else [], data.get('ui') if isinstance(data.get('ui'), dict) else {})}
         {render_my_processes(overview.get('my_process_items') if isinstance(overview, dict) else [])}
         {render_alerts(overview.get('alert_items') if isinstance(overview, dict) else [])}
         <section class="grid">{cards}</section>
@@ -221,7 +229,23 @@ def render_overview(overview: dict[str, object]) -> str:
     """
 
 
-def render_available_gpus(items: object) -> str:
+def render_filters(ui: dict[str, object]) -> str:
+    q = str(ui.get("q") or "")
+    model = str(ui.get("model") or "")
+    min_mem = str(ui.get("min_mem_gb") or "")
+    return f"""
+    <form class="filters" method="get">
+      <label>Search <input name="q" value="{esc(q)}" placeholder="alpha, A100, lsg"></label>
+      <label>Model <input name="model" value="{esc(model)}" placeholder="A100 / 4090 / H800"></label>
+      <label>Min free GB <input name="min_mem_gb" value="{esc(min_mem)}" placeholder="24"></label>
+      <button class="button" type="submit">Filter</button>
+      <a class="button" href="/">Clear</a>
+    </form>
+    """
+
+
+def render_available_gpus(items: object, ui: dict[str, object] | None = None) -> str:
+    items = filter_available_gpu_items(items, ui or {})
     if not isinstance(items, list) or not items:
         return "<section class='panel'><h2>Available GPUs</h2><p class='muted'>No clearly free GPU found.</p></section>"
     rows = "".join(
@@ -230,6 +254,39 @@ def render_available_gpus(items: object) -> str:
         if isinstance(item, dict)
     )
     return f"<section class='panel'><h2>Available GPUs</h2><table><tr><th>Server</th><th>GPU</th><th>Model</th><th>Free memory</th><th>Util</th><th>Copy</th></tr>{rows}</table></section>"
+
+
+def filter_available_gpu_items(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
+    if not isinstance(items, list):
+        return []
+    q = str(ui.get("q") or "").lower()
+    model = str(ui.get("model") or "").lower()
+    min_mem_raw = str(ui.get("min_mem_gb") or "").strip()
+    min_mem_mb = None
+    if min_mem_raw:
+        try:
+            min_mem_mb = int(float(min_mem_raw) * 1024)
+        except ValueError:
+            min_mem_mb = None
+    filtered: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        haystack = " ".join(
+            [
+                str(item.get("server") or ""),
+                str(item.get("name") or ""),
+                join_values(item.get("tags") or []),
+            ]
+        ).lower()
+        if q and q not in haystack:
+            continue
+        if model and model not in str(item.get("name") or "").lower():
+            continue
+        if min_mem_mb is not None and (item.get("memory_free_mb") or 0) < min_mem_mb:
+            continue
+        filtered.append(item)
+    return filtered
 
 
 def render_my_processes(items: object) -> str:
@@ -321,6 +378,7 @@ def render_host_card(host: object) -> str:
         <span>user {esc(host.get('user') or '-')}</span>
         <span>port {esc(host.get('port') or '22')}</span>
         <span>{esc(mode)}</span>
+        <span>{esc(join_values(host.get('tags') or []))}</span>
         <span>{esc(host.get('elapsed_ms'))} ms</span>
       </div>
       <div class="meta">
@@ -471,6 +529,8 @@ def render_process_row(
 
 
 def render_process_action(proc: dict[str, object], *, server_alias: object | None, action_allowed: bool) -> str:
+    if proc.get("actions_disabled_reason"):
+        return f"<span class='muted'>{esc(proc.get('actions_disabled_reason'))}</span>"
     if proc.get("is_current_user") and action_allowed and server_alias:
         return (
             f"<button class='small danger' data-stop='term' data-server='{esc(server_alias)}' data-pid='{esc(proc.get('pid'))}' "
@@ -494,6 +554,9 @@ a{{color:inherit}} code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace
 .toolbar{{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:18px}}
 .actions{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
 .button{{border:1px solid #d0d5dd;background:#fff;border-radius:6px;padding:7px 10px;color:#1f2328;text-decoration:none;cursor:pointer}}
+.filters{{display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:#fff;border:1px solid #d8d8d0;border-radius:8px;padding:12px;margin-bottom:14px}}
+.filters label{{display:flex;flex-direction:column;gap:4px;color:#667085;font-size:12px}}
+.filters input{{border:1px solid #d0d5dd;border-radius:6px;padding:7px 8px;min-width:150px}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}}
 .card{{background:#fff;border:1px solid #d8d8d0;border-radius:8px;padding:14px;overflow:hidden}}
 .card-head{{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}}

@@ -41,6 +41,10 @@ def stop_process(
     force: bool = False,
     timeout: int = 8,
 ) -> dict[str, Any]:
+    if host.shared_account:
+        return finish(host, pid, "shared_account_disabled", ok=False, message="Stop is disabled for shared-account servers in Agentless Mode.")
+    if not host.allow_stop_own_process:
+        return finish(host, pid, "actions_disabled", ok=False, message="Stop is disabled for this server by config.")
     current = annotate_server(probe_host(host, timeout=timeout))
     proc = find_process(current, pid)
     if not proc:

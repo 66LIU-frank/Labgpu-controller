@@ -148,6 +148,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_probe.add_argument("--json", action="store_true")
     p_probe.set_defaults(handler=servers.run_probe)
 
+    p_import = servers_sub.add_parser("import-ssh", help="save SSH hosts into ~/.labgpu/config.toml")
+    p_import.add_argument("--hosts", help="comma-separated SSH aliases")
+    p_import.add_argument("--pattern", help="filter SSH aliases by substring")
+    p_import.add_argument("--tags", help="comma-separated tags to attach, for example A100,training")
+    p_import.add_argument("--config", help="SSH config path, default ~/.ssh/config")
+    p_import.add_argument("--json", action="store_true")
+    p_import.set_defaults(handler=servers.run_import_ssh)
+
     return parser
 
 

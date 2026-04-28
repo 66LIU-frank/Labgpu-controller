@@ -2,6 +2,8 @@
 
 LabGPU is a lightweight experiment observability layer for messy shared GPU servers in research labs.
 
+LabGPU's goal is not to make users remember more commands. It should let users open one page and know which server is usable, which GPU is free, whether their own processes are healthy, who is occupying resources, what needs attention, and whether they can safely stop their own process.
+
 It helps students and lab mates answer the boring but important questions:
 
 - Who is using GPU 0?
@@ -125,6 +127,7 @@ labgpu ui --host 0.0.0.0 --allow-actions   # only if you explicitly accept the r
 labgpu servers [--hosts alpha_liu,Song-1] [--pattern Sui]
 labgpu servers list
 labgpu servers probe alpha_liu
+labgpu servers import-ssh --hosts alpha_liu,Song-1 --tags A100,training
 ```
 
 ## LabGPU Home
@@ -142,6 +145,15 @@ http://127.0.0.1:8765
 ```
 
 This is Agentless Mode: SSH is enough to show hostname, uptime, CPU load, memory, swap, disk mounts, GPUs, GPU processes, process runtime/state, users, available GPUs, your own GPU processes, alerts, and redacted commands. If `labgpu` is also available on the remote server PATH, LabGPU Home switches that host to Enhanced Mode and attempts to show remote LabGPU status and runs.
+
+To save a server inventory once and then run `labgpu ui` without `--hosts`:
+
+```bash
+labgpu servers import-ssh --hosts alpha_liu,Song-1 --tags A100,training
+labgpu ui
+```
+
+This writes `~/.labgpu/config.toml`, where each server can define tags, disk paths, whether the SSH account is shared, and whether stopping own processes is allowed.
 
 LabGPU Home can safely stop your own remote GPU processes from the UI. Stop actions:
 

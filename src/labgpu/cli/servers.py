@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 
+from labgpu.core.config import config_path
 from labgpu.remote.dashboard import collect_servers, serve, split_hosts
+from labgpu.remote.inventory import import_ssh_hosts
 from labgpu.remote.ssh_config import parse_ssh_config, resolve_ssh_host, select_hosts
 
 
@@ -70,6 +72,29 @@ def run_probe(args) -> int:
         status = "online" if host.get("online") else "offline"
         detail = host.get("error") or f"{len(gpus)} GPUs, {len(gpus) - busy} free, {busy} busy"
         print(f"{host.get('alias')}: {status} - {detail}")
+    return 0
+
+
+def run_import_ssh(args) -> int:
+    names = split_hosts(getattr(args, "hosts", None))
+    tags = split_hosts(getattr(args, "tags", None)) or []
+    _config, imported = import_ssh_hosts(
+        ssh_config=args.config,
+        names=names,
+        pattern=args.pattern,
+        tags=tags,
+    )
+    path = config_path()
+    if args.json:
+        print(json.dumps({"config": str(path), "imported": [entry.__dict__ for entry in imported]}, indent=2, ensure_ascii=False, sort_keys=True))
+        return 0
+    if not imported:
+        print("No SSH hosts imported.")
+        return 0
+    print(f"Saved {len(imported)} server(s) to {path}:")
+    for entry in imported:
+        tag_text = f" tags={','.join(entry.tags)}" if entry.tags else ""
+        print(f"- {entry.alias}{tag_text}")
     return 0
 
 

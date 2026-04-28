@@ -27,9 +27,18 @@ def annotate_server(host: dict[str, Any]) -> dict[str, Any]:
             if gpu:
                 proc.setdefault("gpu_index", gpu.get("index"))
             annotate_process(proc, gpu=gpu)
+            if proc.get("is_current_user"):
+                if host.get("shared_account"):
+                    proc["actions_disabled_reason"] = "shared account"
+                elif not host.get("allow_stop_own_process", True):
+                    proc["actions_disabled_reason"] = "disabled by config"
     host["available_gpus"] = available_gpus(host)
     host["my_processes"] = my_processes(host)
     host["alerts"] = alerts_for_server(host)
+    if host.get("shared_account"):
+        for proc in host.get("my_processes") or []:
+            if isinstance(proc, dict):
+                proc["actions_disabled_reason"] = "shared account"
     return host
 
 
@@ -114,6 +123,7 @@ def available_gpus(host: dict[str, Any]) -> list[dict[str, Any]]:
                 "memory_total_mb": gpu.get("memory_total_mb"),
                 "utilization_gpu": gpu.get("utilization_gpu"),
                 "cuda_visible_devices": str(gpu.get("index")),
+                "tags": host.get("tags") or [],
             }
         )
     return items
@@ -127,6 +137,10 @@ def my_processes(host: dict[str, Any]) -> list[dict[str, Any]]:
         item = dict(proc)
         item["server"] = host.get("alias")
         item["remote_hostname"] = host.get("remote_hostname")
+        if host.get("shared_account"):
+            item["actions_disabled_reason"] = "shared account"
+        elif not host.get("allow_stop_own_process", True):
+            item["actions_disabled_reason"] = "disabled by config"
         items.append(item)
     return items
 

@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import re
+import shlex
 import subprocess
 import time
 from io import StringIO
@@ -13,7 +14,10 @@ from labgpu.remote.ssh_config import SSHHost
 from labgpu.utils.time import now_utc
 
 
-REMOTE_SCRIPT = r"""
+DEFAULT_DISK_PATHS = ["/", "/home", "/data", "/scratch", "/mnt", "/nvme"]
+
+
+REMOTE_SCRIPT_TEMPLATE = r"""
 set +e
 echo "__LABGPU_SECTION__ host"
 hostname 2>/dev/null
@@ -30,7 +34,7 @@ if command -v free >/dev/null 2>&1; then
   free -m 2>/dev/null | awk 'NR==2{printf "mem\t%s\t%s\t%s\n",$2,$3,$7} NR==3{printf "swap\t%s\t%s\t%s\n",$2,$3,$4}'
 fi
 echo "__LABGPU_SECTION__ disks"
-for p in / /home /data /scratch /mnt /nvme; do
+for p in __LABGPU_DISK_PATHS__; do
   [ -d "$p" ] || continue
   df -P -h "$p" 2>/dev/null | tail -1
 done | awk '!seen[$6]++'
@@ -115,7 +119,7 @@ def probe_host(host: SSHHost, *, timeout: int = 8) -> dict[str, Any]:
             ],
             check=False,
             capture_output=True,
-            input=REMOTE_SCRIPT,
+            input=build_remote_script(host.disk_paths),
             text=True,
             timeout=max(timeout + 4, 6),
         )
@@ -401,8 +405,17 @@ def _base(host: SSHHost, *, online: bool, error: str | None, elapsed: float) -> 
         "user": host.user,
         "port": host.port,
         "proxyjump": host.proxyjump,
+        "tags": host.tags,
+        "disk_paths": host.disk_paths,
+        "shared_account": host.shared_account,
+        "allow_stop_own_process": host.allow_stop_own_process,
         "online": online,
         "error": error,
         "elapsed_ms": int(elapsed * 1000),
         "probed_at": now_utc(),
     }
+
+
+def build_remote_script(disk_paths: list[str] | None = None) -> str:
+    paths = disk_paths or DEFAULT_DISK_PATHS
+    return REMOTE_SCRIPT_TEMPLATE.replace("__LABGPU_DISK_PATHS__", " ".join(shlex.quote(path) for path in paths))

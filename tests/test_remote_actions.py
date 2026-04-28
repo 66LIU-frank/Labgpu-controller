@@ -62,6 +62,21 @@ class RemoteActionsTest(unittest.TestCase):
         self.assertEqual(result["result"], "process_identity_changed")
         run.assert_not_called()
 
+    def test_shared_account_disables_agentless_stop(self):
+        host = SSHHost(alias="alpha", shared_account=True)
+        with patch("labgpu.remote.actions.probe_host") as probe, patch("labgpu.remote.actions.subprocess.run") as run, patch("labgpu.remote.actions.append_audit"):
+            result = stop_process(
+                host,
+                pid=123,
+                expected_user="alice",
+                expected_start_time=None,
+                expected_command_hash=None,
+            )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["result"], "shared_account_disabled")
+        probe.assert_not_called()
+        run.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
