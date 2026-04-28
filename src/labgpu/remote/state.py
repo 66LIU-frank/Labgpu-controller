@@ -50,16 +50,27 @@ def build_overview(hosts: list[dict[str, Any]]) -> dict[str, Any]:
     mine: list[dict[str, Any]] = []
     alerts: list[dict[str, Any]] = []
     total_gpus = 0
+    busy_gpus = 0
+    suspected_idle_gpus = 0
     for host in hosts:
         host_gpus = host.get("gpus") or []
         host_processes = host.get("processes") or []
         total_gpus += len(host_gpus)
         for gpu in host_gpus:
             if isinstance(gpu, dict):
+                if gpu.get("availability") == "busy":
+                    busy_gpus += 1
+                elif gpu.get("availability") == "idle_but_occupied":
+                    suspected_idle_gpus += 1
                 item = dict(gpu)
                 item["server"] = host.get("alias")
                 item["server_tags"] = host.get("tags") or []
                 item["server_mode"] = host.get("mode")
+                item["tags"] = host.get("tags") or []
+                item["disk_health"] = disk_health(host.get("disks") or [])
+                item["load"] = host.get("load_avg")
+                item["ssh_command"] = f"ssh {host.get('alias')}"
+                item["cuda_visible_devices"] = str(gpu.get("index"))
                 gpus.append(item)
         for proc in host_processes:
             if isinstance(proc, dict):
@@ -80,6 +91,10 @@ def build_overview(hosts: list[dict[str, Any]]) -> dict[str, Any]:
         "available_gpus": len(available),
         "my_processes": len(mine),
         "alerts": len(alerts),
+        "critical_alerts": sum(1 for item in alerts if item.get("severity") == "error"),
+        "warning_alerts": sum(1 for item in alerts if item.get("severity") == "warning"),
+        "busy_gpus": busy_gpus,
+        "suspected_idle_gpus": suspected_idle_gpus,
         "server_items": hosts,
         "gpu_items": gpus,
         "process_items": processes,

@@ -5,13 +5,15 @@ import json
 import secrets
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from labgpu.core.config import load_config
+from labgpu.core.config import ServerEntry, load_config, write_config
 from labgpu.remote.actions import stop_process
+from labgpu.remote.alerts import all_alert_records, apply_alert_state, set_alert_status
 from labgpu.remote.cache import read_server_cache, write_server_cache
 from labgpu.remote.inventory import load_inventory
 from labgpu.remote.probe import probe_host
@@ -77,7 +79,15 @@ def collect_servers(
                     result["last_seen"] = cached.get("probed_at")
             results.append(result)
     results.sort(key=lambda item: str(item.get("alias")))
-    return {"hosts": results, "count": len(results), "overview": build_overview(results), "error": None}
+    overview = build_overview(results)
+    enriched_alerts = apply_alert_state(list(overview.get("alert_items") or []))
+    active_alerts = [alert for alert in enriched_alerts if alert.get("status") == "active"]
+    overview["alert_items"] = active_alerts
+    overview["all_alert_items"] = all_alert_records()
+    overview["alerts"] = len(active_alerts)
+    overview["critical_alerts"] = sum(1 for item in active_alerts if item.get("severity") == "error")
+    overview["warning_alerts"] = sum(1 for item in active_alerts if item.get("severity") == "warning")
+    return {"hosts": results, "count": len(results), "overview": overview, "error": None}
 
 
 class ServerHandler(BaseHTTPRequestHandler):
@@ -131,6 +141,12 @@ class ServerHandler(BaseHTTPRequestHandler):
                 return
             self._stop_process(unquote(parts[2]), pid, force=parts[5] == "force-stop")
             return
+        if len(parts) == 4 and parts[:2] == ["api", "alerts"] and parts[3] in {"dismiss", "snooze", "activate"}:
+            self._alert_action(unquote(parts[2]), parts[3])
+            return
+        if parts == ["api", "settings", "import-ssh"]:
+            self._settings_import()
+            return
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def log_message(self, format: str, *args: object) -> None:
@@ -161,6 +177,8 @@ class ServerHandler(BaseHTTPRequestHandler):
             "alerts": params.get("alerts", [""])[0].strip(),
             "mine": params.get("mine", [""])[0].strip(),
             "sort": params.get("sort", [""])[0].strip(),
+            "availability": params.get("availability", [""])[0].strip(),
+            "alert_status": params.get("alert_status", ["active"])[0].strip() or "active",
         }
         return data
 
@@ -197,6 +215,68 @@ class ServerHandler(BaseHTTPRequestHandler):
         )
         self._json(result, status=HTTPStatus.OK if result.get("ok") else HTTPStatus.CONFLICT)
 
+    def _alert_action(self, key: str, action: str) -> None:
+        if not self._valid_action_token():
+            self.send_error(HTTPStatus.FORBIDDEN, "invalid action token")
+            return
+        status = {"dismiss": "dismissed", "snooze": "snoozed", "activate": "active"}[action]
+        try:
+            record = set_alert_status(key, status)
+        except KeyError:
+            self.send_error(HTTPStatus.NOT_FOUND, "alert not found")
+            return
+        except ValueError as exc:
+            self.send_error(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        self._json({"ok": True, "alert": record})
+
+    def _settings_import(self) -> None:
+        payload = self._read_body_payload()
+        if not self._valid_action_token(payload):
+            self.send_error(HTTPStatus.FORBIDDEN, "invalid action token")
+            return
+        aliases = payload.get("aliases") or payload.get("alias") or []
+        if isinstance(aliases, str):
+            aliases = split_hosts(aliases) or []
+        aliases = [str(alias).strip() for alias in aliases if str(alias).strip()]
+        if not aliases:
+            self.send_error(HTTPStatus.BAD_REQUEST, "no aliases selected")
+            return
+        tags = split_csv(str(first_value(payload.get("tags")) or ""))
+        disk_paths = split_csv(str(first_value(payload.get("disk_paths")) or "")) or ["/", "/home", "/data", "/scratch", "/mnt", "/nvme"]
+        shared_account = truthy(first_value(payload.get("shared_account")))
+        allow_stop = truthy(first_value(payload.get("allow_stop_own_process")), default=True)
+
+        config = load_config()
+        for alias in aliases:
+            entry = config.servers.get(alias) or ServerEntry(name=alias, alias=alias)
+            entry.enabled = True
+            entry.tags = tags
+            entry.disk_paths = disk_paths
+            entry.shared_account = shared_account
+            entry.allow_stop_own_process = allow_stop
+            config.servers[entry.name] = entry
+        write_config(config)
+        self._json({"ok": True, "imported": aliases})
+
+    def _read_body_payload(self) -> dict[str, object]:
+        body = self.rfile.read(int(self.headers.get("Content-Length", "0") or "0"))
+        content_type = self.headers.get("Content-Type", "")
+        if "application/json" in content_type:
+            try:
+                payload = json.loads(body.decode("utf-8") or "{}")
+            except ValueError:
+                return {}
+            return payload if isinstance(payload, dict) else {}
+        parsed = parse_qs(body.decode("utf-8", errors="replace"))
+        return {key: values if len(values) > 1 else values[0] for key, values in parsed.items()}
+
+    def _valid_action_token(self, payload: dict[str, object] | None = None) -> bool:
+        token = self.headers.get("X-LabGPU-Action-Token")
+        if not token and payload:
+            token = str(payload.get("action_token") or "")
+        return bool(token and token == self.action_token)
+
     def _html(self, body: str) -> None:
         self._send("text/html; charset=utf-8", body.encode("utf-8"))
 
@@ -232,7 +312,7 @@ def render_index(data: dict[str, object]) -> str:
         </section>
         {render_overview(overview)}
         <div class="split">
-          {render_available_gpus(overview.get('available_gpu_items') if isinstance(overview, dict) else [], {}, limit=6, title='Available GPUs', view_all='/gpus')}
+          {render_available_gpus(overview.get('available_gpu_items') if isinstance(overview, dict) else [], {}, limit=6, title='Available GPUs', view_all='/gpus', counts=overview)}
           {render_my_processes(overview.get('my_process_items') if isinstance(overview, dict) else [], limit=6, view_all='/me')}
         </div>
         <div class="split">
@@ -257,7 +337,8 @@ def render_gpus_page(data: dict[str, object]) -> str:
           <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/">Overview</a></div>
         </section>
         {render_filters(ui, kind='gpus')}
-        {render_available_gpus(overview.get('available_gpu_items') if isinstance(overview, dict) else [], ui, title='Available GPUs')}
+        {render_gpu_watch_panel(ui)}
+        {render_gpu_finder(overview, ui)}
         """,
     )
 
@@ -316,7 +397,7 @@ def render_alerts_page(data: dict[str, object]) -> str:
           <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/">Overview</a></div>
         </section>
         {render_alert_filters(ui)}
-        {render_alerts(overview.get('alert_items') if isinstance(overview, dict) else [], ui=ui, title='All Alerts')}
+        {render_alerts(overview.get('all_alert_items') if isinstance(overview, dict) else [], ui=ui, title='All Alerts')}
         """,
     )
 
@@ -325,7 +406,7 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
     config = load_config()
     ssh_hosts = parse_ssh_config(ssh_config)
     host_rows = "".join(
-        f"<tr><td><code>{esc(host.alias)}</code></td><td>{esc(host.hostname or '-')}</td><td>{esc(host.user or '-')}</td><td>{esc(host.port or 22)}</td><td><code>labgpu servers import-ssh --hosts {esc(host.alias)}</code></td></tr>"
+        f"<tr><td><label><input type='checkbox' name='aliases' value='{esc(host.alias)}'> <code>{esc(host.alias)}</code></label></td><td>{esc(host.hostname or '-')}</td><td>{esc(host.user or '-')}</td><td>{esc(host.port or 22)}</td><td><a href='/servers/{esc(host.alias)}'>Test connection</a></td></tr>"
         for host in ssh_hosts
     ) or "<tr><td colspan='5' class='muted'>No SSH hosts found.</td></tr>"
     server_rows = "".join(
@@ -348,20 +429,37 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
         </section>
         <section class="panel">
           <h2>Import From SSH Config</h2>
-          <p class="muted">Alpha settings are intentionally simple: choose aliases here, then use the import command. Full in-page editing can be added after the server model settles.</p>
-          <table><tr><th>Alias</th><th>HostName</th><th>User</th><th>Port</th><th>Import command</th></tr>{host_rows}</table>
+          <p class="muted">Select SSH aliases, set defaults, and save them into <code>~/.labgpu/config.toml</code>. Use Test connection to probe a host before saving.</p>
+          <form id="settings-import">
+            <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
+            <div class="filters">
+              <label>Tags <input name="tags" placeholder="A100,training"></label>
+              <label>Disk paths <input name="disk_paths" value="/,/home,/data,/scratch,/mnt,/nvme"></label>
+              <label><input type="checkbox" name="shared_account" value="1"> Shared Linux account</label>
+              <label><input type="checkbox" name="allow_stop_own_process" value="1" checked> Allow stop own process</label>
+              <button class="button" type="submit">Save selected hosts</button>
+            </div>
+            <table><tr><th>Alias</th><th>HostName</th><th>User</th><th>Port</th><th>Probe</th></tr>{host_rows}</table>
+          </form>
         </section>
         """,
     )
 
 
 def render_overview(overview: dict[str, object]) -> str:
+    online_class = "ok" if overview.get("online_servers") else "error"
+    available = int(overview.get("available_gpus") or 0)
+    total_gpus = int(overview.get("total_gpus") or 0)
+    available_class = "ok" if available else ("warning" if total_gpus else "unknown")
+    critical = int(overview.get("critical_alerts") or 0)
+    warnings = int(overview.get("warning_alerts") or 0)
+    alert_class = "error" if critical else ("warning" if warnings else "ok")
     return f"""
     <section class="health">
-      <div><strong>{esc(overview.get('online_servers', 0))}/{esc(overview.get('total_servers', 0))}</strong><span>online servers</span></div>
-      <div><strong>{esc(overview.get('available_gpus', 0))}/{esc(overview.get('total_gpus', 0))}</strong><span>available GPUs</span></div>
-      <div><strong>{esc(overview.get('my_processes', 0))}</strong><span>my GPU processes</span></div>
-      <div><strong>{esc(overview.get('alerts', 0))}</strong><span>alerts</span></div>
+      <div class="summary-card {online_class}"><strong>{esc(overview.get('online_servers', 0))}/{esc(overview.get('total_servers', 0))}</strong><span>online servers</span></div>
+      <div class="summary-card {available_class}"><strong>{esc(available)}/{esc(total_gpus)}</strong><span>available GPUs</span></div>
+      <div class="summary-card ok"><strong>{esc(overview.get('my_processes', 0))}</strong><span>my GPU processes</span></div>
+      <div class="summary-card {alert_class}"><strong>{esc(overview.get('alerts', 0))}</strong><span>alerts · {esc(critical)} critical / {esc(warnings)} warning</span></div>
     </section>
     """
 
@@ -389,6 +487,25 @@ def render_filters(ui: dict[str, object], *, kind: str = "all") -> str:
       <button class="button" type="submit">Filter</button>
       <a class="button" href="/{esc(kind if kind != 'all' else '')}">Clear</a>
     </form>
+    """
+
+
+def render_gpu_watch_panel(ui: dict[str, object]) -> str:
+    model = str(ui.get("model") or "")
+    min_mem = str(ui.get("min_mem_gb") or "")
+    tag = str(ui.get("tag") or "")
+    return f"""
+    <section class="panel">
+      <div class="section-head"><h2>Notify me when GPU is free</h2><span class="muted">Browser notification only</span></div>
+      <div class="filters">
+        <label>Model <input id="watch-model" value="{esc(model)}" placeholder="A100 / 4090"></label>
+        <label>Min free GB <input id="watch-min-mem" value="{esc(min_mem)}" placeholder="24"></label>
+        <label>Server tag <input id="watch-tag" value="{esc(tag)}" placeholder="training"></label>
+        <button class="button" type="button" id="watch-enable">Notify me</button>
+        <button class="button" type="button" id="watch-clear">Clear watch</button>
+      </div>
+      <p class="muted" id="watch-status">No browser watch configured.</p>
+    </section>
     """
 
 
@@ -439,6 +556,7 @@ def render_server_filters(ui: dict[str, object]) -> str:
 def render_alert_filters(ui: dict[str, object]) -> str:
     severity = str(ui.get("severity") or "")
     q = str(ui.get("q") or "")
+    status = str(ui.get("alert_status") or "active")
     return f"""
     <form class="filters" method="get">
       <label>Search <input name="q" value="{esc(q)}" placeholder="server, message"></label>
@@ -448,6 +566,14 @@ def render_alert_filters(ui: dict[str, object]) -> str:
           {option('error', 'Critical', severity)}
           {option('warning', 'Warning', severity)}
           {option('info', 'Info', severity)}
+        </select>
+      </label>
+      <label>Status
+        <select name="alert_status">
+          {option('active', 'Active', status)}
+          {option('dismissed', 'Dismissed', status)}
+          {option('resolved', 'Resolved', status)}
+          {option('all', 'All', status)}
         </select>
       </label>
       <button class="button" type="submit">Filter</button>
@@ -463,19 +589,70 @@ def render_available_gpus(
     title: str = "Available GPUs",
     limit: int | None = None,
     view_all: str | None = None,
+    counts: dict[str, object] | None = None,
 ) -> str:
     items = filter_available_gpu_items(items, ui or {})
     if limit is not None:
         items = items[:limit]
     head = section_head(title, view_all)
     if not isinstance(items, list) or not items:
-        return f"<section class='panel'>{head}<p class='muted'>No clearly free GPU found.</p></section>"
+        busy = int((counts or {}).get("busy_gpus") or 0)
+        idle = int((counts or {}).get("suspected_idle_gpus") or 0)
+        total = int((counts or {}).get("total_gpus") or 0)
+        return (
+            f"<section class='panel'>{head}"
+            "<p><strong>No clearly free GPU found.</strong></p>"
+            f"<p class='muted'>{esc(busy)} GPUs are busy.</p>"
+            f"<p class='muted'>{esc(idle)} GPUs look idle but occupied.</p>"
+            "<div class='actions empty-actions'>"
+            "<a class='button' href='/gpus?availability=busy'>View busy GPUs</a>"
+            "<a class='button' href='/gpus?availability=idle'>View suspected idle GPUs</a>"
+            f"<a class='button' href='/gpus?availability=all'>View all GPUs ({esc(total)})</a>"
+            "</div></section>"
+        )
     rows = "".join(
         f"<tr><td><a href='/servers/{esc(item.get('server'))}'>{esc(item.get('server'))}</a></td><td>GPU {esc(item.get('gpu_index'))}</td><td>{esc(short(item.get('name') or '', 34))}</td><td>{esc(item.get('memory_free_mb'))} MB</td><td>{esc(item.get('utilization_gpu'))}%</td><td>{esc(item.get('temperature'))} C</td><td>{esc(item.get('disk_health'))}</td><td><code>{esc(item.get('ssh_command'))}</code><br><code>CUDA_VISIBLE_DEVICES={esc(item.get('cuda_visible_devices'))}</code></td></tr>"
         for item in items
         if isinstance(item, dict)
     )
     return f"<section class='panel'>{head}<table><tr><th>Server</th><th>GPU</th><th>Model</th><th>Free memory</th><th>Util</th><th>Temp</th><th>Disk</th><th>Copy</th></tr>{rows}</table></section>"
+
+
+def render_gpu_finder(overview: dict[str, object], ui: dict[str, object]) -> str:
+    items = filter_gpu_items(overview.get("gpu_items") or [], ui)
+    if not items:
+        return render_available_gpus([], ui, title="Available GPUs", counts=overview)
+    cards = "".join(render_gpu_recommendation_card(item) for item in items)
+    return f"<section class='panel'><div class='section-head'><h2>GPU Recommendations</h2><a href='/gpus?availability=all'>View all</a></div><div class='gpu-list'>{cards}</div></section>"
+
+
+def render_gpu_recommendation_card(item: dict[str, object]) -> str:
+    rec = gpu_recommendation(item)
+    memory_free = format_memory(item.get("memory_free_mb"))
+    memory_total = format_memory(item.get("memory_total_mb"))
+    return f"""
+    <article class="gpu-choice {esc(rec['class'])}" data-gpu-choice="1" data-model="{esc(item.get('name') or '')}" data-free-mb="{esc(item.get('memory_free_mb') or 0)}" data-tags="{esc(join_values(item.get('tags') or item.get('server_tags') or []))}" data-server="{esc(item.get('server') or '')}" data-gpu-index="{esc(item.get('index'))}">
+      <div class="card-head">
+        <div>
+          <h3><a href="/servers/{esc(item.get('server'))}">{esc(item.get('server'))}</a> · GPU {esc(item.get('index'))}</h3>
+          <p>{esc(short(item.get('name') or '', 42))}</p>
+        </div>
+        <span class="badge {esc(rec['severity'])}">{esc(rec['label'])}</span>
+      </div>
+      <div class="meta">
+        <span>{esc(memory_free)} free / {esc(memory_total)}</span>
+        <span>{esc(item.get('utilization_gpu'))}% util</span>
+        <span>{esc(item.get('temperature'))} C</span>
+        <span>disk {esc(item.get('disk_health') or 'unknown')}</span>
+        <span>load {esc(load_value(item.get('load')))}</span>
+      </div>
+      <div class="meta">
+        <code>{esc(item.get('ssh_command') or ('ssh ' + str(item.get('server') or '')))}</code>
+        <code>CUDA_VISIBLE_DEVICES={esc(item.get('cuda_visible_devices') or item.get('index'))}</code>
+      </div>
+      <p class="muted">{esc(rec['reason'])}</p>
+    </article>
+    """
 
 
 def filter_available_gpu_items(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
@@ -521,6 +698,55 @@ def filter_available_gpu_items(items: object, ui: dict[str, object]) -> list[dic
     return filtered
 
 
+def filter_gpu_items(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
+    if not isinstance(items, list):
+        return []
+    q = str(ui.get("q") or "").lower()
+    model = str(ui.get("model") or "").lower()
+    tag = str(ui.get("tag") or "").lower()
+    availability = str(ui.get("availability") or "available")
+    min_mem_raw = str(ui.get("min_mem_gb") or "").strip()
+    min_mem_mb = None
+    if min_mem_raw:
+        try:
+            min_mem_mb = int(float(min_mem_raw) * 1024)
+        except ValueError:
+            min_mem_mb = None
+    filtered: list[dict[str, object]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item = dict(item)
+        item.setdefault("ssh_command", f"ssh {item.get('server')}")
+        item.setdefault("cuda_visible_devices", str(item.get("index")))
+        haystack = " ".join(
+            [
+                str(item.get("server") or ""),
+                str(item.get("name") or ""),
+                join_values(item.get("tags") or item.get("server_tags") or []),
+                str(item.get("availability") or ""),
+            ]
+        ).lower()
+        if q and q not in haystack:
+            continue
+        if model and model not in str(item.get("name") or "").lower():
+            continue
+        if tag and tag not in join_values(item.get("tags") or item.get("server_tags") or []).lower():
+            continue
+        if min_mem_mb is not None and (item.get("memory_free_mb") or 0) < min_mem_mb:
+            continue
+        item_availability = str(item.get("availability") or item.get("status") or "")
+        if availability in {"", "available"} and item_availability not in {"free", "probably_available"}:
+            continue
+        if availability == "busy" and item_availability != "busy":
+            continue
+        if availability == "idle" and item_availability != "idle_but_occupied":
+            continue
+        filtered.append(item)
+    filtered.sort(key=gpu_recommendation_sort_key)
+    return filtered
+
+
 def filter_process_items(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
     if not isinstance(items, list):
         return []
@@ -556,6 +782,7 @@ def filter_alert_items(items: object, ui: dict[str, object]) -> list[dict[str, o
         return []
     q = str(ui.get("q") or "").lower()
     severity = str(ui.get("severity") or "").lower()
+    status = str(ui.get("alert_status") or "active").lower()
     filtered: list[dict[str, object]] = []
     for item in items:
         if not isinstance(item, dict):
@@ -564,6 +791,8 @@ def filter_alert_items(items: object, ui: dict[str, object]) -> list[dict[str, o
         if q and q not in haystack:
             continue
         if severity and severity != str(item.get("severity") or "").lower():
+            continue
+        if status != "all" and status != str(item.get("status") or "active").lower():
             continue
         filtered.append(item)
     filtered.sort(key=lambda item: (alert_rank(item.get("severity")), str(item.get("server") or "")))
@@ -652,11 +881,26 @@ def render_alerts(
     if not isinstance(items, list) or not items:
         return f"<section class='panel'>{head}<p class='muted'>No current alerts.</p></section>"
     rows = "".join(
-        f"<tr><td><a href='/servers/{esc(item.get('server'))}'>{esc(item.get('server'))}</a></td><td>{esc(item.get('type') or '-')}</td><td><span class='badge {esc(item.get('severity'))}'>{esc(item.get('severity'))}</span></td><td>{esc(item.get('message'))}</td><td><button class='small' type='button' disabled>Dismiss</button> <button class='small' type='button' disabled>Snooze</button></td></tr>"
+        f"<tr><td><a href='/servers/{esc(item.get('server'))}'>{esc(item.get('server'))}</a></td><td>{esc(item.get('type') or '-')}</td><td><span class='badge {esc(item.get('severity'))}'>{esc(item.get('severity'))}</span></td><td>{esc(item.get('status') or 'active')}</td><td title='{esc(item.get('first_seen') or '')}'>{esc(relative_time(item.get('last_seen')))}</td><td>{esc(item.get('message'))}</td><td>{render_alert_action(item)}</td></tr>"
         for item in items
         if isinstance(item, dict)
     )
-    return f"<section class='panel'>{head}<table><tr><th>Server</th><th>Type</th><th>Severity</th><th>Message</th><th>Action</th></tr>{rows}</table></section>"
+    return f"<section class='panel'>{head}<table><tr><th>Server</th><th>Type</th><th>Severity</th><th>Status</th><th>Last seen</th><th>Message</th><th>Action</th></tr>{rows}</table></section>"
+
+
+def render_alert_action(item: dict[str, object]) -> str:
+    key = item.get("key")
+    if not key:
+        return "-"
+    status = str(item.get("status") or "active")
+    if status == "active":
+        return (
+            f"<button class='small' data-alert-action='dismiss' data-alert-key='{esc(key)}' type='button'>Dismiss</button> "
+            f"<button class='small' data-alert-action='snooze' data-alert-key='{esc(key)}' type='button'>Snooze</button>"
+        )
+    if status in {"dismissed", "snoozed"}:
+        return f"<button class='small' data-alert-action='activate' data-alert-key='{esc(key)}' type='button'>Restore</button>"
+    return "-"
 
 
 def render_detail(data: dict[str, object]) -> str:
@@ -693,7 +937,9 @@ def render_host_card(host: object, *, compact: bool = False) -> str:
     if not isinstance(host, dict):
         return ""
     online = bool(host.get("online"))
+    health = server_health(host)
     status = "online" if online else "offline"
+    status_label = f"{status} · {health}" if online and health != "ok" else status
     error = host.get("error")
     gpus = host.get("gpus") or []
     cached = host.get("cached") if isinstance(host.get("cached"), dict) else None
@@ -721,14 +967,14 @@ def render_host_card(host: object, *, compact: bool = False) -> str:
           <h2><a href="{href}">{esc(host.get('alias'))}</a></h2>
           <p>{esc(host.get('remote_hostname') or host.get('hostname') or '')}</p>
         </div>
-        <span class="pill {status}">{status}</span>
+        <span class="pill {esc(status)} {esc(health)}">{esc(status_label)}</span>
       </div>
       <div class="meta">
         <span>user {esc(host.get('user') or '-')}</span>
         <span>port {esc(host.get('port') or '22')}</span>
         <span>{esc(mode)}</span>
         <span>{esc(join_values(host.get('tags') or []))}</span>
-        <span>{esc(host.get('elapsed_ms'))} ms</span>
+        <span class="{esc('warn-text' if probe_seconds(host.get('elapsed_ms')) >= 5 else '')}">probe {esc(format_latency(host.get('elapsed_ms')))}</span>
       </div>
       <div class="meta">
         <span>{esc(summary['total'])} GPUs</span>
@@ -741,9 +987,9 @@ def render_host_card(host: object, *, compact: bool = False) -> str:
         <span>{esc(host.get('uptime') or '-')}</span>
         <span>top users {esc(top_users(host.get('processes') or []))}</span>
         <span>alerts {esc(len(alerts) if isinstance(alerts, list) else 0)}</span>
-        <span>last probe {esc(host.get('probed_at') or '-')}</span>
+        <span title="{esc(host.get('probed_at') or '-')}">last updated {esc(relative_time(host.get('probed_at')))}</span>
       </div>
-      {f"<p class='muted'>offline, last seen {esc(host.get('last_seen'))}</p>" if cached and not online else ""}
+      {f"<p class='muted' title='{esc(host.get('last_seen'))}'>offline, last seen {esc(relative_time(host.get('last_seen')))}</p>" if cached and not online else ""}
       {f"<p class='error'>{esc(error)}</p>" if error else ""}
       {gpu_table}
     </article>
@@ -766,14 +1012,14 @@ def render_gpu_row(gpu: object) -> str:
         return ""
     processes = gpu.get("processes") or []
     process_text = "<br>".join(
-        f"{esc(proc.get('user') or '?')} pid {esc(proc.get('pid'))} {esc(proc.get('used_memory_mb'))}MB {esc(short(proc.get('command') or '', 80))}"
+        f"{esc(user_label(proc.get('user')))} pid {esc(proc.get('pid'))} {esc(format_memory(proc.get('used_memory_mb')))} {esc(short(proc.get('command') or '', 80))}"
         for proc in processes
         if isinstance(proc, dict)
     ) or "<span class='muted'>free</span>"
     return (
         f"<tr><td>{esc(gpu.get('index'))}</td>"
         f"<td>{esc(short(gpu.get('name') or '', 22))}</td>"
-        f"<td>{esc(gpu.get('memory_used_mb'))}/{esc(gpu.get('memory_total_mb'))} MB</td>"
+        f"<td>{esc(format_memory(gpu.get('memory_used_mb')))}/{esc(format_memory(gpu.get('memory_total_mb')))}</td>"
         f"<td>{esc(gpu.get('utilization_gpu'))}% / {esc(gpu.get('temperature'))} C</td>"
         f"<td>{process_text}</td></tr>"
     )
@@ -791,7 +1037,7 @@ def render_health(host: dict[str, object]) -> str:
       <div><strong>{esc(load_label(host))}</strong><span>load</span></div>
       <div><strong>{esc(mem.get('used_percent') if isinstance(mem, dict) else '-')}%</strong><span>memory</span></div>
       <div><strong>{esc(swap.get('used_percent') if isinstance(swap, dict) else '-')}%</strong><span>swap</span></div>
-      <div><strong>{esc(host.get('probed_at') or '-')}</strong><span>last probe</span></div>
+      <div><strong title="{esc(host.get('probed_at') or '-')}">{esc(relative_time(host.get('probed_at')))}</strong><span>last updated</span></div>
     </section>
     """
 
@@ -832,7 +1078,7 @@ def render_gpu_card(gpu: object, *, server_alias: object | None = None) -> str:
     <article class="gpu-card">
       <h3>GPU {esc(gpu.get('index'))} <span>{esc(short(gpu.get('name') or '', 32))}</span></h3>
       <div class="meta">
-        <span>{esc(gpu.get('memory_used_mb'))}/{esc(gpu.get('memory_total_mb'))} MB</span>
+        <span>{esc(format_memory(gpu.get('memory_used_mb')))}/{esc(format_memory(gpu.get('memory_total_mb')))}</span>
         <span>{esc(gpu.get('utilization_gpu'))}% util</span>
         <span>{esc(gpu.get('temperature'))} C</span>
       </div>
@@ -860,19 +1106,25 @@ def render_process_row(
     show_server: bool = False,
     action_allowed: bool = False,
 ) -> str:
-    command = short(proc.get("command") or "", 140)
+    full_command = str(proc.get("command") or "")
+    command = short(full_command, 120)
     gpu_value = proc.get("gpu_index") if proc.get("gpu_index") is not None else short(proc.get("gpu_uuid") or "", 14)
     gpu = f"<td>{esc(gpu_value)}</td>" if include_gpu else ""
     server = f"<td>{esc(server_alias)}</td>" if show_server and server_alias is not None else ""
-    state = f"<td>{esc(proc.get('state') or '-')}</td>" if include_gpu else ""
+    state = f"<td title='{esc(proc.get('state') or '-')}'>{esc(process_state_label(proc.get('state')))}</td>" if include_gpu else ""
     health_class = proc.get("health_severity") or proc.get("health_status") or "unknown"
     health = f"<span class='badge {esc(health_class)}'>{esc(proc.get('health_status') or 'unknown')}</span>"
     action = render_process_action(proc, server_alias=server_alias, action_allowed=action_allowed)
+    command_html = (
+        f"<code>{esc(command)}</code> "
+        f"<button class='small' type='button' data-copy='{esc(full_command)}'>Copy</button>"
+        f"<details><summary>Expand</summary><code>{esc(full_command)}</code></details>"
+    )
     return (
-        f"<tr>{server}{gpu}<td>{esc(proc.get('user') or '?')}</td><td>{esc(proc.get('pid'))}</td>"
+        f"<tr>{server}{gpu}<td>{esc(user_label(proc.get('user')))}</td><td>{esc(proc.get('pid'))}</td>"
         f"<td>{esc(proc.get('runtime') or human_duration(proc.get('runtime_seconds')))}</td>{state}"
-        f"<td>{esc(proc.get('used_memory_mb'))} MB</td><td title='{esc(proc.get('health_reason') or '')}'>{health}</td>"
-        f"<td><code>{esc(command)}</code></td><td>{action}</td></tr>"
+        f"<td>{esc(format_memory(proc.get('used_memory_mb')))}</td><td title='{esc(proc.get('health_reason') or '')}'>{health}</td>"
+        f"<td>{command_html}</td><td>{action}</td></tr>"
     )
 
 
@@ -881,7 +1133,11 @@ def render_process_action(proc: dict[str, object], *, server_alias: object | Non
         return f"<span class='muted'>{esc(proc.get('actions_disabled_reason'))}</span>"
     if proc.get("is_current_user") and action_allowed and server_alias:
         return (
+            f"<a class='small' href='/servers/{esc(server_alias)}'>View</a> "
             f"<button class='small danger' data-stop='term' data-server='{esc(server_alias)}' data-pid='{esc(proc.get('pid'))}' "
+            f"data-gpu='{esc(proc.get('gpu_index') if proc.get('gpu_index') is not None else '-')}' "
+            f"data-runtime='{esc(proc.get('runtime') or human_duration(proc.get('runtime_seconds')))}' "
+            f"data-memory='{esc(format_memory(proc.get('used_memory_mb')))}' "
             f"data-user='{esc(proc.get('user') or '')}' data-start='{esc(proc.get('start_time') or '')}' "
             f"data-hash='{esc(proc.get('command_hash') or '')}' data-command='{esc(short(proc.get('command') or '', 180))}'>Stop</button>"
         )
@@ -942,6 +1198,9 @@ h1,h2,h3,p{{margin:0}} h1{{font-size:28px}} h2{{font-size:18px}} h3{{font-size:1
 a{{color:inherit}} code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--code)}}
 .topnav{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:18px}}
 .topnav a,.topnav button{{border:1px solid var(--border);background:var(--button);border-radius:999px;padding:6px 10px;text-decoration:none;color:var(--link);font:inherit;cursor:pointer}}
+dialog{{border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);max-width:min(560px,calc(100vw - 32px));padding:18px}}
+dialog::backdrop{{background:rgba(0,0,0,.45)}}
+.modal-actions{{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}}
 .toolbar{{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:18px}}
 .actions{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
 .button{{border:1px solid var(--border);background:var(--button);border-radius:6px;padding:7px 10px;color:var(--text);text-decoration:none;cursor:pointer}}
@@ -967,9 +1226,15 @@ a{{color:inherit}} code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace
 .health{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}}
 .health>div{{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px}}
 .health strong{{display:block;font-size:18px}} .health span{{color:var(--muted);font-size:12px}}
+.summary-card.ok{{border-color:#75c793}} .summary-card.warning{{border-color:#f59e0b}} .summary-card.error{{border-color:#ef4444}}
 .gpu-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px;margin-top:10px}}
 .gpu-card{{border:1px solid var(--border-soft);border-radius:8px;padding:12px;background:var(--surface-soft);overflow:hidden}}
 .gpu-card h3 span{{color:var(--muted);font-weight:500}}
+.gpu-list{{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;margin-top:12px}}
+.gpu-choice{{border:1px solid var(--border-soft);border-radius:8px;padding:12px;background:var(--surface-soft)}}
+.gpu-choice.recommended{{border-color:#75c793}} .gpu-choice.not-recommended{{border-color:#ef4444}} .gpu-choice.busy{{opacity:.86}}
+.warn-text{{color:#b54708}}
+.empty-actions{{margin-top:12px}}
 table{{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}}
 th,td{{border-top:1px solid var(--row);padding:7px;text-align:left;vertical-align:top}} th{{color:var(--muted)}}
 html[data-theme="dark"] .pill.online{{color:#86efac;background:#143421}} html[data-theme="dark"] .pill.offline{{color:#fca5a5;background:#3a1717}}
@@ -977,9 +1242,29 @@ html[data-theme="dark"] .badge.ok{{background:#143421;color:#86efac}} html[data-
 html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
 @media(max-width:640px){{main{{width:calc(100vw - 20px)}}.grid,.split{{grid-template-columns:1fr}}.toolbar{{align-items:flex-start;flex-direction:column}}}}
 </style></head><body><main>{render_nav()}{body}</main>
+<dialog id="stop-modal">
+  <h2>Stop this process?</h2>
+  <p class="muted">This sends SIGTERM first. Force Kill is only offered if the process is still alive.</p>
+  <table>
+    <tr><th>Server</th><td id="modal-server"></td></tr>
+    <tr><th>GPU</th><td id="modal-gpu"></td></tr>
+    <tr><th>PID</th><td id="modal-pid"></td></tr>
+    <tr><th>User</th><td id="modal-user"></td></tr>
+    <tr><th>Runtime</th><td id="modal-runtime"></td></tr>
+    <tr><th>Memory</th><td id="modal-memory"></td></tr>
+    <tr><th>Command</th><td><code id="modal-command"></code></td></tr>
+  </table>
+  <p id="modal-result" class="muted"></p>
+  <div class="modal-actions">
+    <button class="button" id="modal-cancel" type="button">Cancel</button>
+    <button class="button danger" id="modal-stop" type="button">Stop safely</button>
+    <button class="button danger-strong" id="modal-force" type="button" hidden>Force Kill</button>
+  </div>
+</dialog>
 <script>
 let paused = false;
 const actionToken = "{esc(ServerHandler.action_token)}";
+let selectedStopButton = null;
 const themeButton = document.getElementById("theme-toggle");
 function applyTheme(theme) {{
   const dark = theme === "dark" || (theme === "system" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -1008,16 +1293,140 @@ setInterval(() => {{
 }}, 15000);
 document.querySelectorAll("[data-stop]").forEach((button) => {{
   button.addEventListener("click", async () => {{
-    const msg = `Stop this process?\\n\\nServer: ${{button.dataset.server}}\\nPID: ${{button.dataset.pid}}\\nUser: ${{button.dataset.user}}\\nCommand: ${{button.dataset.command || "-"}}\\n\\nThis sends SIGTERM first.`;
-    if (!window.confirm(msg)) return;
-    let payload = await stopProcess(button, false);
-    if (!payload.ok && payload.result === "alive" && window.confirm("Process is still alive. Force kill with SIGKILL?")) {{
-      payload = await stopProcess(button, true);
-    }}
-    window.alert(payload.message || payload.result || "done");
-    if (payload.ok) window.location.reload();
+    selectedStopButton = button;
+    fillStopModal(button);
+    const dialog = document.getElementById("stop-modal");
+    if (dialog && dialog.showModal) dialog.showModal();
+    else if (window.confirm("Stop this process?")) runStop(false);
   }});
 }});
+document.querySelectorAll("[data-copy]").forEach((button) => {{
+  button.addEventListener("click", async () => {{
+    try {{
+      await navigator.clipboard.writeText(button.dataset.copy || "");
+      button.textContent = "Copied";
+      setTimeout(() => button.textContent = "Copy", 1200);
+    }} catch (error) {{
+      window.prompt("Copy command", button.dataset.copy || "");
+    }}
+  }});
+}});
+document.querySelectorAll("[data-alert-action]").forEach((button) => {{
+  button.addEventListener("click", async () => {{
+    const key = button.dataset.alertKey;
+    const action = button.dataset.alertAction;
+    const response = await fetch(`/api/alerts/${{encodeURIComponent(key)}}/${{action}}`, {{
+      method: "POST",
+      headers: {{"X-LabGPU-Action-Token": actionToken}}
+    }});
+    if (response.ok) window.location.reload();
+    else window.alert("Alert action failed.");
+  }});
+}});
+const settingsImport = document.getElementById("settings-import");
+if (settingsImport) {{
+  settingsImport.addEventListener("submit", async (event) => {{
+    event.preventDefault();
+    const form = new FormData(settingsImport);
+    const response = await fetch("/api/settings/import-ssh", {{
+      method: "POST",
+      body: new URLSearchParams(form)
+    }});
+    if (response.ok) {{
+      window.alert("Saved server inventory.");
+      window.location.reload();
+    }} else {{
+      window.alert("Saving settings failed.");
+    }}
+  }});
+}}
+const watchEnable = document.getElementById("watch-enable");
+const watchClear = document.getElementById("watch-clear");
+const watchStatus = document.getElementById("watch-status");
+function readWatch() {{
+  try {{ return JSON.parse(localStorage.getItem("labgpu-gpu-watch") || "null"); }} catch (error) {{ return null; }}
+}}
+function setWatchStatus() {{
+  const watch = readWatch();
+  if (watchStatus) watchStatus.textContent = watch ? `Watching model=${{watch.model || "*"}}, min=${{watch.minMemGb || "0"}}GB, tag=${{watch.tag || "*"}}` : "No browser watch configured.";
+}}
+if (watchEnable) {{
+  watchEnable.addEventListener("click", async () => {{
+    if ("Notification" in window && Notification.permission === "default") await Notification.requestPermission();
+    const watch = {{
+      model: document.getElementById("watch-model").value.trim(),
+      minMemGb: document.getElementById("watch-min-mem").value.trim(),
+      tag: document.getElementById("watch-tag").value.trim(),
+      notified: false
+    }};
+    localStorage.setItem("labgpu-gpu-watch", JSON.stringify(watch));
+    setWatchStatus();
+    checkGpuWatch();
+  }});
+}}
+if (watchClear) {{
+  watchClear.addEventListener("click", () => {{
+    localStorage.removeItem("labgpu-gpu-watch");
+    setWatchStatus();
+  }});
+}}
+function checkGpuWatch() {{
+  const watch = readWatch();
+  if (!watch) return;
+  const minMb = Number.parseFloat(watch.minMemGb || "0") * 1024;
+  const model = (watch.model || "").toLowerCase();
+  const tag = (watch.tag || "").toLowerCase();
+  const hit = Array.from(document.querySelectorAll("[data-gpu-choice]")).find((node) => {{
+    const free = Number.parseInt(node.dataset.freeMb || "0", 10);
+    const name = (node.dataset.model || "").toLowerCase();
+    const tags = (node.dataset.tags || "").toLowerCase();
+    return free >= minMb && (!model || name.includes(model)) && (!tag || tags.includes(tag));
+  }});
+  if (hit && !watch.notified) {{
+    const message = `${{hit.dataset.server}} GPU ${{hit.dataset.gpuIndex}} is available`;
+    if ("Notification" in window && Notification.permission === "granted") new Notification("LabGPU", {{body: message}});
+    else window.alert(message);
+    watch.notified = true;
+    localStorage.setItem("labgpu-gpu-watch", JSON.stringify(watch));
+  }}
+}}
+setWatchStatus();
+checkGpuWatch();
+const modalCancel = document.getElementById("modal-cancel");
+if (modalCancel) modalCancel.addEventListener("click", () => document.getElementById("stop-modal").close());
+const modalStop = document.getElementById("modal-stop");
+if (modalStop) modalStop.addEventListener("click", () => runStop(false));
+const modalForce = document.getElementById("modal-force");
+if (modalForce) modalForce.addEventListener("click", () => runStop(true));
+function fillStopModal(button) {{
+  const pairs = {{
+    "modal-server": button.dataset.server || "-",
+    "modal-gpu": button.dataset.gpu || "-",
+    "modal-pid": button.dataset.pid || "-",
+    "modal-user": button.dataset.user || "-",
+    "modal-runtime": button.dataset.runtime || "-",
+    "modal-memory": button.dataset.memory || "-",
+    "modal-command": button.dataset.command || "-"
+  }};
+  for (const [id, value] of Object.entries(pairs)) {{
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+  }}
+  const result = document.getElementById("modal-result");
+  if (result) result.textContent = "";
+  const force = document.getElementById("modal-force");
+  if (force) force.hidden = true;
+}}
+async function runStop(force) {{
+  if (!selectedStopButton) return;
+  const result = document.getElementById("modal-result");
+  if (result) result.textContent = force ? "Sending SIGKILL..." : "Sending SIGTERM...";
+  const payload = await stopProcess(selectedStopButton, force);
+  if (result) result.textContent = payload.message || payload.result || "done";
+  const forceButton = document.getElementById("modal-force");
+  if (!payload.ok && payload.result === "alive" && forceButton) forceButton.hidden = false;
+  if (payload.ok) setTimeout(() => window.location.reload(), 800);
+}}
 async function stopProcess(button, force) {{
     const path = `/api/servers/${{encodeURIComponent(button.dataset.server)}}/processes/${{button.dataset.pid}}/${{force ? "force-stop" : "stop"}}`;
     const response = await fetch(path, {{
@@ -1086,6 +1495,151 @@ def load_sort_key(value: object) -> tuple[float, str]:
 
 def alert_rank(value: object) -> int:
     return {"error": 0, "warning": 1, "info": 2}.get(str(value), 3)
+
+
+def gpu_recommendation(item: dict[str, object]) -> dict[str, str]:
+    availability = str(item.get("availability") or item.get("status") or "")
+    disk = str(item.get("disk_health") or "unknown")
+    free_mb = int(item.get("memory_free_mb") or 0)
+    load_ratio = load_ratio_value(item.get("load"))
+    if availability == "busy":
+        return {"label": "Busy", "class": "busy", "severity": "warning", "reason": "A compute process is using this GPU."}
+    if availability == "idle_but_occupied":
+        return {
+            "label": "Not recommended",
+            "class": "not-recommended",
+            "severity": "warning",
+            "reason": "GPU memory is occupied with low current utilization.",
+        }
+    if disk == "critical":
+        return {"label": "Not recommended", "class": "not-recommended", "severity": "error", "reason": "Server disk is critical."}
+    if disk == "warning" or load_ratio >= 0.85:
+        return {"label": "OK", "class": "ok-choice", "severity": "warning", "reason": "Usable, but server health has warnings."}
+    if free_mb >= 40 * 1024:
+        return {"label": "Recommended", "class": "recommended", "severity": "ok", "reason": "High free memory and no major server warning."}
+    return {"label": "OK", "class": "ok-choice", "severity": "ok", "reason": "Free GPU with no major warning."}
+
+
+def gpu_recommendation_sort_key(item: dict[str, object]) -> tuple[int, float, int]:
+    recommendation = gpu_recommendation(item)
+    rank = {"Recommended": 0, "OK": 1, "Not recommended": 2, "Busy": 3}.get(recommendation["label"], 4)
+    load = load_ratio_value(item.get("load"))
+    free = int(item.get("memory_free_mb") or 0)
+    return (rank, load, -free)
+
+
+def load_ratio_value(value: object) -> float:
+    if isinstance(value, dict):
+        raw = value.get("ratio")
+        if raw is not None:
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                return 0.0
+    return 0.0
+
+
+def load_value(value: object) -> str:
+    if isinstance(value, dict):
+        raw = value.get("1m")
+        if raw is not None:
+            return str(raw)
+    return "-"
+
+
+def format_memory(value: object) -> str:
+    try:
+        mb = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    if mb >= 1024:
+        gb = mb / 1024
+        return f"{gb:.1f} GB"
+    return f"{int(mb)} MB"
+
+
+def process_state_label(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "unknown"
+    state = text[0]
+    return {
+        "R": "running",
+        "S": "sleeping",
+        "D": "io wait",
+        "Z": "zombie",
+        "T": "stopped",
+        "I": "idle",
+    }.get(state, "unknown")
+
+
+def user_label(value: object) -> str:
+    text = str(value or "").strip()
+    if not text or text == "?":
+        return "unknown"
+    return text
+
+
+def probe_seconds(value: object) -> float:
+    try:
+        return float(value) / 1000
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def format_latency(value: object) -> str:
+    seconds = probe_seconds(value)
+    if seconds >= 1:
+        return f"{seconds:.1f}s"
+    return f"{int(seconds * 1000)}ms"
+
+
+def server_health(host: dict[str, object]) -> str:
+    alerts = host.get("alerts") if isinstance(host.get("alerts"), list) else []
+    if any(isinstance(alert, dict) and alert.get("severity") == "error" for alert in alerts):
+        return "critical"
+    if any(isinstance(alert, dict) and alert.get("severity") == "warning" for alert in alerts):
+        return "warning"
+    return "ok"
+
+
+def relative_time(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "-"
+    normalized = text.replace("Z", "+00:00")
+    try:
+        timestamp = datetime.fromisoformat(normalized)
+    except ValueError:
+        return text
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    seconds = max(0, int((datetime.now(timezone.utc) - timestamp.astimezone(timezone.utc)).total_seconds()))
+    if seconds < 60:
+        return f"{seconds}s ago"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours}h ago"
+    return f"{hours // 24}d ago"
+
+
+def split_csv(value: str) -> list[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def first_value(value: object) -> object:
+    if isinstance(value, list):
+        return value[0] if value else None
+    return value
+
+
+def truthy(value: object, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return str(value).lower() in {"1", "true", "yes", "on"}
 
 
 def short(value: object, width: int) -> str:

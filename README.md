@@ -160,6 +160,8 @@ The inventory is written to:
 
 LabGPU Home includes a light/dark mode toggle in the top navigation and remembers the preference in the browser.
 
+The `/gpus` page also includes a browser-only "Notify me when GPU is free" watch. It can watch by GPU model, minimum free memory, and server tag. This does not require Telegram, email, Feishu, or any external service.
+
 Example:
 
 ```toml
