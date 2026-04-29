@@ -20,29 +20,83 @@ find GPU -> run/adopt -> observe -> diagnose -> context/report -> safe action
 
 ## Get Started in 3 Minutes
 
-Basic mode runs on your laptop. It reads your `~/.ssh/config`, probes selected SSH hosts, and opens a local workspace. You do not need root access, a remote daemon, Slurm, Kubernetes, or a shared tracking server.
+You run LabGPU on your own laptop. It reads your `~/.ssh/config`, probes the SSH hosts you choose, and opens a local web workspace. You do not need root access, a remote daemon, Slurm, Kubernetes, or a shared tracking server.
 
-Try the fake multi-server demo first:
+Before using real servers, make sure this works:
+
+- Python 3.10+
+- `ssh YOUR_ALIAS` can reach your GPU server
+- NVIDIA servers should have `nvidia-smi`
+
+### 1. Install
 
 ```bash
 pipx install git+https://github.com/66LIU-frank/Labgpu-controller.git
+```
+
+No `pipx`? Use:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/66LIU-frank/Labgpu-controller/main/install.sh | sh
+```
+
+### 2. Try the demo
+
+```bash
 labgpu demo
 labgpu pick --fake-lab
 ```
 
-Use real SSH GPU servers in three steps:
+### 3. Add your SSH GPU servers
+
+If your aliases already exist in `~/.ssh/config`:
 
 ```bash
 labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
-labgpu ui
-labgpu pick --min-vram 24G --prefer A100
 ```
 
-Then copy the SSH/CUDA command from `Train Now`, or run LabGPU on the chosen GPU server to save a full run capsule:
+Or start the UI and add/import servers from `Settings`:
+
+```bash
+labgpu ui
+```
+
+In `Settings` you can:
+
+- choose which servers appear on the homepage
+- add a new SSH server and optionally write a `Host` block to `~/.ssh/config`
+- import existing SSH aliases
+- create optional server groups such as `AlphaLab`, `off-campus`, or `H800`
+
+### 4. Find a GPU and copy the launch command
+
+Use the `Train Now` page, or run:
+
+```bash
+labgpu pick --min-vram 24G --prefer A100 --explain
+labgpu pick --min-vram 24G --prefer 4090 --cmd "python train.py --config configs/sft.yaml"
+```
+
+Each recommended GPU card can copy:
+
+- `ssh HOST`
+- `CUDA_VISIBLE_DEVICES=GPU_INDEX`
+- a launch snippet
+- or open an SSH terminal for that server
+
+### 5. Track your own training
+
+On the GPU server, run through LabGPU when you want a full run capsule:
 
 ```bash
 labgpu run --name sft --gpu auto --min-vram 24G -- python train.py --config configs/sft.yaml
 labgpu where
+```
+
+If a training job is already running, adopt it:
+
+```bash
+labgpu adopt 23891 --name old_baseline --log ./train.log
 ```
 
 ## What It Does
@@ -61,40 +115,7 @@ labgpu where
 | Ask AI or teammates for help | `labgpu context --copy` exports one redacted Markdown debug context. |
 | Stop safely | UI actions only target your own process, with conservative checks. |
 
-## Daily Workflow
-
-Install:
-
-```bash
-pipx install git+https://github.com/66LIU-frank/Labgpu-controller.git
-```
-
-Or:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/66LIU-frank/Labgpu-controller/main/install.sh | sh
-```
-
-Choose the SSH hosts shown on your homepage:
-
-```bash
-labgpu init
-labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
-```
-
-Open the workspace:
-
-```bash
-labgpu ui
-```
-
-Then use `Settings` when you want to adjust what appears on the homepage:
-
-- save which SSH GPU servers are enabled
-- add a new SSH server and optionally append a `Host` block to `~/.ssh/config`
-- import existing SSH aliases from `~/.ssh/config`
-- edit optional server groups such as `AlphaLab`, `off-campus`, or `H800`
-- keep LabGPU's saved inventory in `~/.labgpu/config.toml`
+## Common Tasks
 
 Find a GPU:
 

@@ -20,29 +20,83 @@
 
 ## 3 分钟上手
 
-基础模式只需要在你的电脑上运行 LabGPU。它读取你的 `~/.ssh/config`，通过 SSH 探测你选中的 GPU 服务器，然后打开本地工作台。不需要 root，不需要远端 daemon，不需要 Slurm/Kubernetes，也不需要共享 tracking server。
+LabGPU 跑在你自己的电脑上。它读取你的 `~/.ssh/config`，通过 SSH 探测你选中的 GPU 服务器，然后打开本地工作台。不需要 root，不需要远端 daemon，不需要 Slurm/Kubernetes，也不需要共享 tracking server。
 
-先用假数据 demo 看效果：
+接真实服务器前，先确认：
+
+- Python 3.10+
+- `ssh YOUR_ALIAS` 可以连到你的 GPU 服务器
+- NVIDIA 服务器上有 `nvidia-smi`
+
+### 1. 安装
 
 ```bash
 pipx install git+https://github.com/66LIU-frank/Labgpu-controller.git
+```
+
+没有 `pipx` 的话：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/66LIU-frank/Labgpu-controller/main/install.sh | sh
+```
+
+### 2. 先看 demo
+
+```bash
 labgpu demo
 labgpu pick --fake-lab
 ```
 
-接入自己的 SSH GPU 服务器，只要三步：
+### 3. 添加你的 SSH GPU 服务器
+
+如果你的 alias 已经在 `~/.ssh/config` 里：
 
 ```bash
 labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
-labgpu ui
-labgpu pick --min-vram 24G --prefer A100
 ```
 
-然后从 `Train Now` 复制 SSH/CUDA 命令直接开跑；如果你也在目标 GPU 服务器上安装了 LabGPU，就可以保存完整 run capsule：
+或者直接打开 UI，从 `Settings` 新增/导入服务器：
+
+```bash
+labgpu ui
+```
+
+在 `Settings` 里可以：
+
+- 选择哪些服务器显示在首页
+- 新增 SSH 服务器，并可选择写入一个 `Host` block 到 `~/.ssh/config`
+- 从已有 `~/.ssh/config` 导入 SSH aliases
+- 后续再创建可选分组，比如 `AlphaLab`、`校外服务器`、`H800`
+
+### 4. 找卡并复制启动命令
+
+用 `Train Now` 页面，或者命令行：
+
+```bash
+labgpu pick --min-vram 24G --prefer A100 --explain
+labgpu pick --min-vram 24G --prefer 4090 --cmd "python train.py --config configs/sft.yaml"
+```
+
+每张推荐 GPU 卡片都可以复制：
+
+- `ssh HOST`
+- `CUDA_VISIBLE_DEVICES=GPU_INDEX`
+- 启动片段
+- 或直接打开对应服务器的 SSH 终端
+
+### 5. 追踪自己的训练
+
+如果你想保存完整 run capsule，就在目标 GPU 服务器上通过 LabGPU 启动：
 
 ```bash
 labgpu run --name sft --gpu auto --min-vram 24G -- python train.py --config configs/sft.yaml
 labgpu where
+```
+
+如果任务已经在跑，也可以接管：
+
+```bash
+labgpu adopt 23891 --name old_baseline --log ./train.log
 ```
 
 ## 它能帮你做什么
@@ -61,40 +115,7 @@ labgpu where
 | 发给 AI/同学求助 | `labgpu context --copy` 复制一份默认脱敏的 Markdown debug context。 |
 | 安全停止 | UI 只对自己的进程显示 stop action，并做保守校验。 |
 
-## 日常用法
-
-安装：
-
-```bash
-pipx install git+https://github.com/66LIU-frank/Labgpu-controller.git
-```
-
-或者：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/66LIU-frank/Labgpu-controller/main/install.sh | sh
-```
-
-选择首页要展示哪些 SSH 服务器：
-
-```bash
-labgpu init
-labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
-```
-
-打开个人训练工作台：
-
-```bash
-labgpu ui
-```
-
-之后可以在 `Settings` 里调整首页展示和配置：
-
-- 保存哪些 SSH GPU 服务器启用
-- 新增服务器，并可选择追加一个 `Host` block 到 `~/.ssh/config`
-- 从已有 `~/.ssh/config` 导入 SSH aliases
-- 后续再编辑可选分组，比如 `AlphaLab`、`校外服务器`、`H800`
-- LabGPU 的服务器清单保存在 `~/.labgpu/config.toml`
+## 常用任务
 
 找 GPU：
 
