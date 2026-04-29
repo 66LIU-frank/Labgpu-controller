@@ -50,7 +50,7 @@ def rank_gpus(
 
 def recommendation_from_item(item: dict[str, object], *, command: str = "python train.py", prefer: str | None = None) -> GpuRecommendation:
     rec = gpu_recommendation(item, prefer=prefer)
-    labels = {"Recommended": "recommended", "OK": "ok", "Busy": "busy", "Not recommended": "not_recommended"}
+    labels = {"Recommended": "recommended", "OK": "ok", "Free but risky": "risky", "Busy": "busy", "Not recommended": "not_recommended"}
     gpu = str(item.get("cuda_visible_devices") or item.get("index") or "")
     tags = item.get("tags") or item.get("server_tags") or []
     alerts = item.get("server_alerts") if isinstance(item.get("server_alerts"), list) else []
@@ -195,6 +195,14 @@ def gpu_recommendation(item: dict[str, object], *, prefer: object = None) -> dic
             "reason": "GPU memory is occupied with low current utilization.",
             "score": str(score),
         }
+    if (disk == "critical" or alert_penalty >= 20) and availability in {"free", "probably_available"}:
+        return {
+            "label": "Free but risky",
+            "class": "risky",
+            "severity": "warning",
+            "reason": "GPU is free, but the server has a critical disk or health alert.",
+            "score": str(score),
+        }
     if disk == "critical" or alert_penalty >= 20:
         return {"label": "Not recommended", "class": "not-recommended", "severity": "error", "reason": "Server has a critical health alert.", "score": str(score)}
     if disk == "warning" or load_ratio >= 0.85 or alert_penalty:
@@ -259,10 +267,10 @@ def recommendation_score(item: dict[str, object], *, prefer: object = None) -> i
         score += 12
     disk = str(item.get("disk_health") or "")
     if disk == "critical":
-        score -= 40
+        score -= 25
     elif disk == "warning":
         score -= 15
-    score -= alert_severity(item)
+    score -= min(30, alert_severity(item))
     score -= int(load_ratio_value(item.get("load")) * 20)
     if availability == "busy":
         score -= 60
@@ -287,7 +295,7 @@ def alert_severity(item: dict[str, object]) -> int:
 
 def gpu_recommendation_sort_key(item: dict[str, object], *, prefer: object = None) -> tuple[int, int, float, int]:
     recommendation = gpu_recommendation(item, prefer=prefer)
-    rank = {"Recommended": 0, "OK": 1, "Not recommended": 2, "Busy": 3}.get(recommendation["label"], 4)
+    rank = {"Recommended": 0, "OK": 1, "Free but risky": 2, "Not recommended": 3, "Busy": 4}.get(recommendation["label"], 5)
     score = int(recommendation["score"])
     load = load_ratio_value(item.get("load"))
     free = int(item.get("memory_free_mb") or 0)

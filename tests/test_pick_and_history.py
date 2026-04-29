@@ -100,6 +100,21 @@ class PickAndHistoryTest(unittest.TestCase):
         scores = [int(gpu_recommendation(item)["score"]) for item in choices]
         self.assertTrue(all(0 <= score <= 100 for score in scores))
 
+    def test_free_gpu_on_critical_disk_is_risky_not_busy(self):
+        item = {
+            "availability": "free",
+            "memory_free_mb": 81920,
+            "memory_total_mb": 81920,
+            "name": "NVIDIA A100-SXM4-80GB",
+            "disk_health": "critical",
+            "server_alerts": [{"severity": "error"}],
+            "load": {"ratio": 0.02},
+        }
+        rec = gpu_recommendation(item)
+        self.assertEqual(rec["label"], "Free but risky")
+        self.assertGreater(int(rec["score"]), 0)
+        self.assertIn("GPU is free", rec["reason"])
+
     def test_rank_gpus_returns_copyable_cross_host_recommendations(self):
         ranked = rank_gpus(fake_lab_hosts(), min_vram_mb=24 * 1024, prefer="A100", tag="training")
         self.assertGreaterEqual(len(ranked), 1)
