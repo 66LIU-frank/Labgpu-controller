@@ -1,61 +1,119 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" role="img" aria-label="LabGPU Home demo preview">
-  <rect width="1120" height="620" rx="18" fill="#0f1419"/>
-  <rect x="28" y="28" width="1064" height="564" rx="14" fill="#161b22" stroke="#2b3440"/>
-  <text x="58" y="76" fill="#e6edf3" font-family="Inter,Arial,sans-serif" font-size="28" font-weight="700">LabGPU Home</text>
-  <text x="58" y="104" fill="#9aa7b7" font-family="Inter,Arial,sans-serif" font-size="15">Find a GPU, launch training, track your runs, and diagnose failures from one local page.</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="LabGPU personal GPU workspace demo preview">
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="18" flood-color="#020617" flood-opacity="0.38"/>
+    </filter>
+  </defs>
 
-  <g transform="translate(58 136)">
-    <rect width="230" height="82" rx="10" fill="#10291b" stroke="#2f8f55"/>
-    <text x="18" y="34" fill="#86efac" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="700">2 / 3</text>
-    <text x="18" y="58" fill="#b8c3cf" font-family="Inter,Arial,sans-serif" font-size="14">online servers</text>
-  </g>
-  <g transform="translate(306 136)">
-    <rect width="230" height="82" rx="10" fill="#3b2a0a" stroke="#f59e0b"/>
-    <text x="18" y="34" fill="#facc15" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="700">2 / 5</text>
-    <text x="18" y="58" fill="#b8c3cf" font-family="Inter,Arial,sans-serif" font-size="14">available GPUs</text>
-  </g>
-  <g transform="translate(554 136)">
-    <rect width="230" height="82" rx="10" fill="#102133" stroke="#406b9f"/>
-    <text x="18" y="34" fill="#bfdbfe" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="700">2</text>
-    <text x="18" y="58" fill="#b8c3cf" font-family="Inter,Arial,sans-serif" font-size="14">my training</text>
-  </g>
-  <g transform="translate(802 136)">
-    <rect width="230" height="82" rx="10" fill="#3a1717" stroke="#ef4444"/>
-    <text x="18" y="34" fill="#fca5a5" font-family="Inter,Arial,sans-serif" font-size="26" font-weight="700">3</text>
-    <text x="18" y="58" fill="#b8c3cf" font-family="Inter,Arial,sans-serif" font-size="14">alerts</text>
+  <rect width="1280" height="720" rx="28" fill="#0b1117"/>
+  <rect x="40" y="34" width="1200" height="652" rx="18" fill="#151b23" stroke="#2b3440" filter="url(#shadow)"/>
+
+  <g transform="translate(72 62)">
+    <text x="0" y="0" fill="#f8fafc" font-family="Inter,Arial,sans-serif" font-size="30" font-weight="800">LabGPU</text>
+    <text x="0" y="30" fill="#a9b6c7" font-family="Inter,Arial,sans-serif" font-size="15">Personal GPU workspace for students using shared SSH servers.</text>
+    <text x="0" y="55" fill="#d8e2ef" font-family="Inter,Arial,sans-serif" font-size="15">Find a free GPU. Launch training. Track runs. Diagnose failures.</text>
   </g>
 
-  <g transform="translate(58 252)">
-    <rect width="492" height="230" rx="12" fill="#111820" stroke="#25303b"/>
-    <text x="20" y="36" fill="#e6edf3" font-family="Inter,Arial,sans-serif" font-size="19" font-weight="700">Train Now</text>
-    <rect x="20" y="58" width="452" height="62" rx="8" fill="#10291b" stroke="#2f8f55"/>
-    <text x="38" y="88" fill="#e6edf3" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="700">alpha_liu · GPU 0</text>
-    <text x="38" y="108" fill="#9aa7b7" font-family="Inter,Arial,sans-serif" font-size="13">A100 80GB · 80.0GB free · Recommended · copy CUDA</text>
-    <rect x="20" y="134" width="452" height="62" rx="8" fill="#102133" stroke="#406b9f"/>
-    <text x="38" y="164" fill="#e6edf3" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="700">song_1 · GPU 0</text>
-    <text x="38" y="184" fill="#9aa7b7" font-family="Inter,Arial,sans-serif" font-size="13">RTX 4090 · 23.8GB free · copy CUDA_VISIBLE_DEVICES=0</text>
+  <g transform="translate(925 58)">
+    <rect width="248" height="34" rx="17" fill="#0f1720" stroke="#2b3440"/>
+    <text x="18" y="22" fill="#8ee6a6" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="700">No daemon</text>
+    <text x="102" y="22" fill="#b8c3cf" font-family="Inter,Arial,sans-serif" font-size="13">No root</text>
+    <text x="168" y="22" fill="#b8c3cf" font-family="Inter,Arial,sans-serif" font-size="13">No Slurm</text>
   </g>
 
-  <g transform="translate(570 252)">
-    <rect width="492" height="230" rx="12" fill="#111820" stroke="#25303b"/>
-    <text x="20" y="36" fill="#e6edf3" font-family="Inter,Arial,sans-serif" font-size="19" font-weight="700">My Training</text>
-    <rect x="20" y="58" width="452" height="62" rx="8" fill="#3b2a0a" stroke="#f59e0b"/>
-    <text x="38" y="88" fill="#e6edf3" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="700">alpha_liu · GPU 1 · PID 123</text>
-    <text x="38" y="108" fill="#facc15" font-family="Inter,Arial,sans-serif" font-size="13">suspected idle · high confidence · 58.6GB VRAM</text>
-    <rect x="20" y="134" width="452" height="62" rx="8" fill="#10291b" stroke="#2f8f55"/>
-    <text x="38" y="164" fill="#e6edf3" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="700">song_1 · GPU 1 · PID 789</text>
-    <text x="38" y="184" fill="#86efac" font-family="Inter,Arial,sans-serif" font-size="13">running · 12m · safe stop available</text>
+  <g transform="translate(72 142)">
+    <rect width="260" height="86" rx="12" fill="#10291b" stroke="#2f8f55"/>
+    <text x="18" y="33" fill="#86efac" font-family="Inter,Arial,sans-serif" font-size="28" font-weight="800">2 / 3</text>
+    <text x="18" y="60" fill="#c7d2df" font-family="Inter,Arial,sans-serif" font-size="14">online SSH GPU servers</text>
+  </g>
+  <g transform="translate(352 142)">
+    <rect width="260" height="86" rx="12" fill="#102133" stroke="#406b9f"/>
+    <text x="18" y="33" fill="#bfdbfe" font-family="Inter,Arial,sans-serif" font-size="28" font-weight="800">3</text>
+    <text x="52" y="33" fill="#bfdbfe" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="700">recommended GPUs</text>
+    <text x="18" y="60" fill="#c7d2df" font-family="Inter,Arial,sans-serif" font-size="14">ranked for training now</text>
+  </g>
+  <g transform="translate(632 142)">
+    <rect width="260" height="86" rx="12" fill="#2b2109" stroke="#d99a16"/>
+    <text x="18" y="33" fill="#facc15" font-family="Inter,Arial,sans-serif" font-size="28" font-weight="800">1</text>
+    <text x="52" y="33" fill="#facc15" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="700">suspicious run</text>
+    <text x="18" y="60" fill="#c7d2df" font-family="Inter,Arial,sans-serif" font-size="14">idle evidence + logs</text>
+  </g>
+  <g transform="translate(912 142)">
+    <rect width="260" height="86" rx="12" fill="#241a2e" stroke="#7c5cff"/>
+    <text x="18" y="33" fill="#c4b5fd" font-family="Inter,Arial,sans-serif" font-size="28" font-weight="800">1</text>
+    <text x="52" y="33" fill="#c4b5fd" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="700">project sync</text>
+    <text x="18" y="60" fill="#c7d2df" font-family="Inter,Arial,sans-serif" font-size="14">test speed, then move code</text>
   </g>
 
-  <g transform="translate(58 510)">
-    <text x="0" y="0" fill="#e6edf3" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="700">Problems</text>
-    <text x="0" y="30" fill="#facc15" font-family="Inter,Arial,sans-serif" font-size="14">alpha_liu disk / is 93% used</text>
-    <text x="0" y="56" fill="#facc15" font-family="Inter,Arial,sans-serif" font-size="14">GPU util &lt; 3% while 58.6GB VRAM is occupied</text>
+  <g transform="translate(72 258)">
+    <rect width="546" height="276" rx="14" fill="#101720" stroke="#2b3440"/>
+    <text x="22" y="38" fill="#f8fafc" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="800">Train Now</text>
+    <text x="407" y="38" fill="#a9b6c7" font-family="Inter,Arial,sans-serif" font-size="13">ranked by GPU fit</text>
+
+    <rect x="22" y="60" width="502" height="72" rx="10" fill="#122b1c" stroke="#35a767"/>
+    <rect x="408" y="76" width="92" height="25" rx="12" fill="#173b26"/>
+    <text x="431" y="93" fill="#86efac" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700">Recommended</text>
+    <text x="42" y="89" fill="#f8fafc" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="800">alpha_shi / GPU 0</text>
+    <text x="42" y="114" fill="#a9b6c7" font-family="Inter,Arial,sans-serif" font-size="14">A100 80GB - 80.0GB free - 0% util - CUDA_VISIBLE_DEVICES=0</text>
+
+    <rect x="22" y="146" width="502" height="72" rx="10" fill="#122234" stroke="#3b82c4"/>
+    <rect x="426" y="162" width="74" height="25" rx="12" fill="#18314b"/>
+    <text x="450" y="179" fill="#bfdbfe" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700">OK</text>
+    <text x="42" y="175" fill="#f8fafc" font-family="Inter,Arial,sans-serif" font-size="17" font-weight="800">alpha_liu / GPU 7</text>
+    <text x="42" y="200" fill="#a9b6c7" font-family="Inter,Arial,sans-serif" font-size="14">A100 80GB - 24.5GB free - copy SSH / CUDA / launch snippet</text>
+
+    <g transform="translate(22 236)">
+      <rect width="112" height="28" rx="7" fill="#1d2630" stroke="#334155"/>
+      <text x="18" y="19" fill="#d8e2ef" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700">Copy SSH</text>
+      <rect x="124" width="142" height="28" rx="7" fill="#1d2630" stroke="#334155"/>
+      <text x="142" y="19" fill="#d8e2ef" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700">Copy CUDA</text>
+      <rect x="278" width="154" height="28" rx="7" fill="#1d2630" stroke="#334155"/>
+      <text x="296" y="19" fill="#d8e2ef" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700">Open SSH terminal</text>
+    </g>
   </g>
 
-  <g transform="translate(570 510)">
-    <text x="0" y="0" fill="#e6edf3" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="700">Context</text>
-    <text x="0" y="30" fill="#bfdbfe" font-family="Inter,Arial,sans-serif" font-size="14">copy AI/debug context with command, git, env, GPU, logs</text>
-    <text x="0" y="56" fill="#bfdbfe" font-family="Inter,Arial,sans-serif" font-size="14">safe actions stay scoped to your own processes</text>
+  <g transform="translate(642 258)">
+    <rect width="538" height="276" rx="14" fill="#101720" stroke="#2b3440"/>
+    <text x="22" y="38" fill="#f8fafc" font-family="Inter,Arial,sans-serif" font-size="21" font-weight="800">My Runs</text>
+    <text x="410" y="38" fill="#a9b6c7" font-family="Inter,Arial,sans-serif" font-size="13">tracked + adopted</text>
+
+    <rect x="22" y="60" width="494" height="64" rx="10" fill="#122b1c" stroke="#2f8f55"/>
+    <text x="42" y="88" fill="#f8fafc" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="800">sft_baseline</text>
+    <text x="170" y="88" fill="#86efac" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="700">running</text>
+    <text x="42" y="111" fill="#a9b6c7" font-family="Inter,Arial,sans-serif" font-size="13">alpha_liu GPU 0 - PID 2478887 - 3h12m - log active</text>
+
+    <rect x="22" y="138" width="494" height="64" rx="10" fill="#2b2109" stroke="#d99a16"/>
+    <text x="42" y="166" fill="#f8fafc" font-family="Inter,Arial,sans-serif" font-size="16" font-weight="800">old_baseline</text>
+    <text x="170" y="166" fill="#facc15" font-family="Inter,Arial,sans-serif" font-size="13" font-weight="700">suspected idle</text>
+    <text x="42" y="189" fill="#c7d2df" font-family="Inter,Arial,sans-serif" font-size="13">GPU util &lt; 3% over 28m - VRAM occupied 58.6GB</text>
+
+    <g transform="translate(22 224)">
+      <rect width="104" height="30" rx="7" fill="#1d2630" stroke="#334155"/>
+      <text x="22" y="20" fill="#d8e2ef" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700">Tail log</text>
+      <rect x="116" width="104" height="30" rx="7" fill="#1d2630" stroke="#334155"/>
+      <text x="136" y="20" fill="#d8e2ef" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700">Diagnose</text>
+      <rect x="232" width="126" height="30" rx="7" fill="#1d2630" stroke="#334155"/>
+      <text x="252" y="20" fill="#d8e2ef" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700">Copy context</text>
+      <rect x="370" width="104" height="30" rx="7" fill="#2f1414" stroke="#7f1d1d"/>
+      <text x="392" y="20" fill="#fca5a5" font-family="Inter,Arial,sans-serif" font-size="12" font-weight="700">Safe stop</text>
+    </g>
+  </g>
+
+  <g transform="translate(72 562)">
+    <rect width="354" height="82" rx="14" fill="#101720" stroke="#2b3440"/>
+    <text x="20" y="31" fill="#f8fafc" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="800">Failure Inbox</text>
+    <text x="20" y="57" fill="#fca5a5" font-family="Inter,Arial,sans-serif" font-size="13">CUDA OOM - traceback found - copy debug context</text>
+  </g>
+
+  <g transform="translate(460 562)">
+    <rect width="354" height="82" rx="14" fill="#101720" stroke="#2b3440"/>
+    <text x="20" y="31" fill="#f8fafc" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="800">Project Sync</text>
+    <text x="20" y="57" fill="#c4b5fd" font-family="Inter,Arial,sans-serif" font-size="13">nettest alpha_liu alpha_shi - then sync project</text>
+  </g>
+
+  <g transform="translate(848 562)">
+    <rect width="332" height="82" rx="14" fill="#101720" stroke="#2b3440"/>
+    <text x="20" y="31" fill="#f8fafc" font-family="Inter,Arial,sans-serif" font-size="18" font-weight="800">Debug Context</text>
+    <text x="20" y="57" fill="#bfdbfe" font-family="Inter,Arial,sans-serif" font-size="13">command, config, git, env, GPU, logs</text>
   </g>
 </svg>
