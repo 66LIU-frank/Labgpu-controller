@@ -183,6 +183,8 @@ class DashboardPagesTest(unittest.TestCase):
             self.assertIn("Import From SSH Config", html)
             self.assertIn("Add Server", html)
             self.assertIn("settings-add-server", html)
+            self.assertIn("settings-groups", html)
+            self.assertIn("Server Groups", html)
             self.assertIn("Group", html)
             self.assertIn("Write to SSH config", html)
             self.assertIn("alpha_liu", html)
@@ -213,6 +215,7 @@ class DashboardPagesTest(unittest.TestCase):
         html = render_index(data)
         self.assertIn("Cached page", html)
         self.assertIn("Cached data age", html)
+        self.assertNotIn("Opening from local cache", html)
         self.assertIn("Refresh now", html)
 
     def test_summary_cards_and_empty_gpu_state(self):

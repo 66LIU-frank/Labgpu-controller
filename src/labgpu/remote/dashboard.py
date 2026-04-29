@@ -337,6 +337,9 @@ class ServerHandler(BaseHTTPRequestHandler):
         if parts == ["api", "settings", "add-server"]:
             self._settings_add_server()
             return
+        if parts == ["api", "settings", "groups"]:
+            self._settings_groups()
+            return
         if parts == ["api", "assistant", "chat"]:
             self._assistant_chat()
             return
@@ -471,7 +474,8 @@ class ServerHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, "no aliases selected")
             return
         tags = split_csv(str(first_value(payload.get("tags")) or ""))
-        group = str(first_value(payload.get("group")) or "").strip()
+        group_value = first_value(payload.get("group"))
+        group = str(group_value or "").strip()
         disk_paths = split_csv(str(first_value(payload.get("disk_paths")) or "")) or ["/", "/home", "/data", "/scratch", "/mnt", "/nvme"]
         shared_account = truthy(first_value(payload.get("shared_account")))
         allow_stop = truthy(first_value(payload.get("allow_stop_own_process")), default=True)
@@ -482,7 +486,8 @@ class ServerHandler(BaseHTTPRequestHandler):
         for alias in aliases:
             entry = next((item for item in config.servers.values() if item.alias == alias), None) or ServerEntry(name=alias, alias=alias)
             entry.enabled = True
-            entry.group = group
+            if group_value is not None:
+                entry.group = group
             entry.tags = tags
             entry.disk_paths = disk_paths
             entry.shared_account = shared_account
@@ -507,7 +512,8 @@ class ServerHandler(BaseHTTPRequestHandler):
         identity_file = str(first_value(payload.get("identity_file")) or "").strip()
         write_ssh = truthy(first_value(payload.get("write_ssh_config")), default=True)
         tags = split_csv(str(first_value(payload.get("tags")) or ""))
-        group = str(first_value(payload.get("group")) or "").strip()
+        group_value = first_value(payload.get("group"))
+        group = str(group_value or "").strip()
         disk_paths = split_csv(str(first_value(payload.get("disk_paths")) or "")) or ["/", "/home", "/data", "/scratch", "/mnt", "/nvme"]
         shared_account = truthy(first_value(payload.get("shared_account")))
         allow_stop = truthy(first_value(payload.get("allow_stop_own_process")), default=True)
@@ -540,7 +546,8 @@ class ServerHandler(BaseHTTPRequestHandler):
         config = load_config()
         entry = config.servers.get(alias) or ServerEntry(name=alias, alias=alias)
         entry.enabled = True
-        entry.group = group
+        if group_value is not None:
+            entry.group = group
         entry.tags = tags
         entry.disk_paths = disk_paths
         entry.shared_account = shared_account
@@ -556,6 +563,26 @@ class ServerHandler(BaseHTTPRequestHandler):
                 "backup": str(backup_path) if backup_path else "",
             }
         )
+
+    def _settings_groups(self) -> None:
+        payload = self._read_body_payload()
+        if not self._valid_action_token(payload):
+            self.send_error(HTTPStatus.FORBIDDEN, "invalid action token")
+            return
+        aliases = payload.get("aliases") or []
+        if isinstance(aliases, str):
+            aliases = [aliases]
+        aliases = [str(alias).strip() for alias in aliases if str(alias).strip()]
+        config = load_config()
+        updated: list[str] = []
+        for alias in aliases:
+            entry = next((item for item in config.servers.values() if item.alias == alias), None)
+            if not entry:
+                continue
+            entry.group = str(first_value(payload.get(f"group:{alias}")) or "").strip()
+            updated.append(alias)
+        write_config(config)
+        self._json({"ok": True, "updated": updated})
 
     def _assistant_chat(self) -> None:
         payload = self._read_body_payload()
@@ -722,10 +749,15 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
         f"<tr><td><label><input type='checkbox' name='aliases' value='{esc(host.alias)}' {'checked' if host.alias in saved_enabled else ''}> <code>{esc(host.alias)}</code></label></td><td>{esc(host.hostname or '-')}</td><td>{esc(host.user or '-')}</td><td>{esc(host.port or 22)}</td><td><a href='/servers/{esc(host.alias)}'>Test connection</a></td></tr>"
         for host in ssh_hosts
     ) or "<tr><td colspan='5' class='muted'>No SSH hosts found.</td></tr>"
+    saved_entries = list(config.servers.values())
     server_rows = "".join(
         f"<tr><td><code>{esc(entry.alias)}</code></td><td>{esc(entry.enabled)}</td><td>{esc(entry.group or '-')}</td><td>{esc(join_values(entry.tags))}</td><td>{esc(join_values(entry.disk_paths))}</td><td>{esc(entry.shared_account)}</td><td>{esc(entry.allow_stop_own_process)}</td></tr>"
-        for entry in config.servers.values()
+        for entry in saved_entries
     ) or "<tr><td colspan='7' class='muted'>No saved LabGPU server inventory yet.</td></tr>"
+    group_rows = "".join(
+        f"<tr><td><code>{esc(entry.alias)}</code><input type='hidden' name='aliases' value='{esc(entry.alias)}'></td><td>{esc('enabled' if entry.enabled else 'disabled')}</td><td><input name='group:{esc(entry.alias)}' value='{esc(entry.group)}' placeholder='AlphaLab / off-campus / H800'></td><td>{esc(join_values(entry.tags))}</td></tr>"
+        for entry in saved_entries
+    ) or "<tr><td colspan='4' class='muted'>Save servers first, then create groups here.</td></tr>"
     return page(
         "Settings",
         f"""
@@ -741,6 +773,15 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
           <table><tr><th>Alias</th><th>Enabled</th><th>Group</th><th>Tags</th><th>Disk paths</th><th>Shared account</th><th>Stop own process</th></tr>{server_rows}</table>
         </section>
         <section class="panel">
+          <h2>Server Groups</h2>
+          <p class="muted">Groups are optional. Create a group by typing the same group name on the servers you want together, then use the group chips on Home, Train Now, My Training, Servers, Alerts, or Assistant.</p>
+          <form id="settings-groups">
+            <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
+            <table><tr><th>Alias</th><th>Status</th><th>Group</th><th>Tags</th></tr>{group_rows}</table>
+            <div class="actions" style="margin-top:10px"><button class="button" type="submit">Save groups</button></div>
+          </form>
+        </section>
+        <section class="panel">
           <h2>Add Server</h2>
           <p class="muted">For a new student setup, fill the basics below. LabGPU can add the SSH alias to <code>{esc(ssh_config_path)}</code> and save it to <code>~/.labgpu/config.toml</code>.</p>
           <form id="settings-add-server">
@@ -749,7 +790,6 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
               <label>Alias <input name="alias" required placeholder="alpha_liu"></label>
               <label>HostName or IP <input name="hostname" required placeholder="gpu.example.edu"></label>
               <label>SSH user <input name="user" placeholder="student"></label>
-              <label>Group <input name="group" placeholder="AlphaLab / off-campus"></label>
               <label>Tags <input name="tags" placeholder="A100,training"></label>
               <label><input type="checkbox" name="write_ssh_config" value="1" checked> Write to SSH config</label>
               <button class="button" type="submit">Add server</button>
@@ -775,7 +815,6 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
             <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
             <div class="filters">
               <label>Tags <input name="tags" placeholder="A100,training"></label>
-              <label>Group <input name="group" placeholder="AlphaLab / off-campus"></label>
               <label>Disk paths <input name="disk_paths" value="/,/home,/data,/scratch,/mnt,/nvme"></label>
               <label><input type="checkbox" name="shared_account" value="1"> Shared Linux account</label>
               <label><input type="checkbox" name="allow_stop_own_process" value="1" checked> Allow stop own process</label>
@@ -866,9 +905,7 @@ def render_data_status(data: dict[str, object]) -> str:
     refreshing = data.get("refreshing_hosts") if isinstance(data.get("refreshing_hosts"), list) else []
     oldest = int(data.get("oldest_cache_age_seconds") or 0)
     age = human_duration(oldest) if oldest else "just now"
-    parts = ["<span>Opening from local cache.</span>"]
-    if refreshing:
-        parts.append("<span>Background refresh is running.</span>")
+    parts: list[str] = []
     if missing:
         parts.append(f"<span><span>Servers missing cache</span>: {esc(missing)}</span>")
     parts.append(f"<span><span>Cached data age</span>: {esc(age)}</span>")
@@ -968,6 +1005,7 @@ def render_gpu_watch_panel(ui: dict[str, object]) -> str:
         <button class="button" type="button" id="watch-enable">Notify me</button>
         <button class="button" type="button" id="watch-clear">Clear watch</button>
       </div>
+      <p class="muted">When a matching GPU appears after refresh, the browser notification says: LabGPU - alpha_shi GPU 0 is available.</p>
       <p class="muted" id="watch-status">No browser watch configured.</p>
     </section>
     """
@@ -1970,8 +2008,6 @@ const translations = {{
   "Resume refresh": "继续刷新",
   "Refresh now": "立即刷新",
   "Cached page": "缓存页面",
-  "Opening from local cache.": "正在打开本地缓存。",
-  "Background refresh is running.": "后台正在刷新。",
   "Servers missing cache": "缺少缓存的服务器",
   "Cached data age": "缓存距上次刷新",
   "Scoped": "范围固定",
@@ -2025,6 +2061,10 @@ const translations = {{
   "Disk, SSH, GPU, and process conditions that need attention.": "需要关注的磁盘、SSH、GPU 和进程状态。",
   "Saved Servers": "已保存服务器",
   "These enabled servers are shown on LabGPU Home by default.": "这些启用的服务器会默认显示在 LabGPU Home。",
+  "Server Groups": "服务器分组",
+  "Groups are optional. Create a group by typing the same group name on the servers you want together, then use the group chips on Home, Train Now, My Training, Servers, Alerts, or Assistant.": "分组是可选的。给想放在一起的服务器填写同一个分组名，就可以在主页、现在开跑、我的训练、服务器、告警或助手页面用分组按钮查看。",
+  "Save servers first, then create groups here.": "先保存服务器，然后在这里创建分组。",
+  "Save groups": "保存分组",
   "Choose which SSH GPU servers appear in LabGPU Home.": "选择哪些 SSH GPU 服务器显示在 LabGPU Home。",
   "Server group": "服务器分组",
   "Group": "分组",
@@ -2061,6 +2101,7 @@ const translations = {{
   "Browser notification only": "仅浏览器通知",
   "Notify me": "通知我",
   "Clear watch": "清除监听",
+  "When a matching GPU appears after refresh, the browser notification says: LabGPU - alpha_shi GPU 0 is available.": "刷新后如果出现匹配的 GPU，浏览器通知会显示：LabGPU - alpha_shi GPU 0 is available。",
   "No browser watch configured.": "未配置浏览器监听。",
   "Any": "任意",
   "Healthy": "健康",
@@ -2344,6 +2385,24 @@ if (settingsAddServer) {{
     }}
   }});
 }}
+const settingsGroups = document.getElementById("settings-groups");
+if (settingsGroups) {{
+  settingsGroups.addEventListener("submit", async (event) => {{
+    event.preventDefault();
+    const form = new FormData(settingsGroups);
+    const response = await fetch("/api/settings/groups", {{
+      method: "POST",
+      body: new URLSearchParams(form)
+    }});
+    const payload = await response.json().catch(() => ({{}}));
+    if (response.ok) {{
+      window.alert(`Saved groups for ${{(payload.updated || []).length}} server(s).`);
+      window.location.reload();
+    }} else {{
+      window.alert(payload.message || payload.error || "Saving groups failed.");
+    }}
+  }});
+}}
 const assistantForm = document.getElementById("assistant-form");
 const assistantInput = document.getElementById("assistant-input");
 const assistantChat = document.getElementById("assistant-chat");
@@ -2481,7 +2540,10 @@ function checkGpuWatch() {{
     return free >= minMb && (!model || name.includes(model)) && (!tag || tags.includes(tag));
   }});
   if (hit && !watch.notified) {{
-    const message = `${{hit.dataset.server}} GPU ${{hit.dataset.gpuIndex}} is available`;
+    const freeGb = Number.parseInt(hit.dataset.freeMb || "0", 10) / 1024;
+    const freeText = freeGb ? ` · ${{freeGb.toFixed(1)}}GB free` : "";
+    const modelText = hit.dataset.model ? ` · ${{hit.dataset.model}}` : "";
+    const message = `${{hit.dataset.server}} GPU ${{hit.dataset.gpuIndex}} is available${{modelText}}${{freeText}}`;
     if ("Notification" in window && Notification.permission === "granted") new Notification("LabGPU", {{body: message}});
     else window.alert(message);
     watch.notified = true;
