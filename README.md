@@ -50,6 +50,8 @@ labgpu where
 | Find a usable GPU | `Train Now` and `labgpu pick` rank GPUs across SSH hosts. |
 | Start training quickly | Copy SSH, `CUDA_VISIBLE_DEVICES`, launch snippets, or open an SSH terminal from the GPU card. |
 | Find your own jobs | `My Runs` and `labgpu where` show tracked, adopted, and own GPU processes. |
+| Move a project | `labgpu sync` streams a project from one SSH server to another through your laptop. |
+| Check transfer speed | `labgpu nettest` measures effective copy speed before you move a project. |
 | Recover experiment context | Run capsules save command, log, git, config, env summary, and GPU info. |
 | Debug failures | `diagnose` and Failure Inbox catch OOM, traceback, NCCL, disk full, killed, NaN, and suspected idle. |
 | Ask AI or teammates for help | `labgpu context --copy` exports one redacted Markdown debug context. |
@@ -106,6 +108,16 @@ labgpu diagnose baseline
 labgpu context baseline --copy
 labgpu report baseline
 ```
+
+Move a project to another GPU server:
+
+```bash
+labgpu nettest alpha_liu alpha_shi --mb 64
+labgpu sync alpha_liu:/data/me/project alpha_shi:/data/me/project
+labgpu sync alpha_liu:/data/me/project alpha_shi:/data/me/project --execute --yes
+```
+
+`sync` streams through your laptop by default, so it does not require the two servers to SSH into each other. Add `--direct` to `nettest` only when the source server can SSH into the target server.
 
 ## UI Layout
 
@@ -188,6 +200,8 @@ labgpu ui [--hosts alpha_liu,alpha_shi] [--fake-lab]
 # Browser: /assistant opens LabGPU Assistant.
 labgpu pick [--min-vram 24G] [--prefer A100] [--tag training] [--explain] [--cmd "COMMAND"] [--json]
 labgpu where [--json]
+labgpu nettest SRC_HOST DST_HOST [--mb 64] [--both] [--direct] [--json]
+labgpu sync SRC_HOST:/project DST_HOST:/project [--execute] [--exclude PATTERN]
 
 labgpu run --name NAME --gpu 0|auto [--min-vram 24G] -- COMMAND ...
 labgpu adopt PID --name NAME [--log train.log]

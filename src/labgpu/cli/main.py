@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from labgpu import __version__
-from labgpu.cli import adopt, context as context_cmd, demo, diagnose, doctor, init as init_cmd, kill, list as list_cmd, logs, pick, refresh, report, run as run_cmd, servers, status, ui, web, where
+from labgpu.cli import adopt, context as context_cmd, demo, diagnose, doctor, init as init_cmd, kill, list as list_cmd, logs, nettest, pick, refresh, report, run as run_cmd, servers, status, sync as sync_cmd, ui, web, where
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -78,6 +78,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.add_argument("--fake-lab", action="store_true", help="use built-in multi-server demo data")
     p.set_defaults(handler=where.run)
+
+    p = sub.add_parser("nettest", aliases=["speed"], help="test effective transfer speed between two SSH servers")
+    p.add_argument("source", help="source SSH alias")
+    p.add_argument("target", help="target SSH alias")
+    p.add_argument("--mb", type=int, default=32, help="MiB to stream per test, default: 32")
+    p.add_argument("--timeout", type=int, default=60)
+    p.add_argument("--both", action="store_true", help="also test target -> source")
+    p.add_argument("--direct", action="store_true", help="also try direct source-server -> target-server SSH; requires remote SSH access")
+    p.add_argument("--plan", action="store_true", help="show planned tests without running SSH")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(handler=nettest.run)
+
+    p = sub.add_parser("sync", aliases=["transfer"], help="copy a project between SSH servers through this laptop")
+    p.add_argument("source", help="source project, for example alpha_liu:/data/me/project")
+    p.add_argument("target", help="target project directory, for example alpha_shi:/data/me/project")
+    p.add_argument("--exclude", action="append", default=[], help="additional tar exclude pattern; can be repeated")
+    p.add_argument("--no-default-excludes", action="store_true", help="do not exclude common cache/output directories")
+    p.add_argument("--execute", action="store_true", help="actually stream files; default only prints a plan")
+    p.add_argument("--yes", action="store_true", help="skip overwrite confirmation when --execute is used")
+    p.add_argument("--timeout", type=int, default=3600)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(handler=sync_cmd.run)
 
     p = sub.add_parser("refresh", help="reconcile running runs with current processes")
     p.set_defaults(handler=refresh.run)

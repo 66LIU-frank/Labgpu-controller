@@ -50,6 +50,8 @@ labgpu where
 | 找一张现在能用的 GPU | `Train Now` 和 `labgpu pick` 跨 SSH hosts 排名推荐。 |
 | 快速开跑 | 复制 SSH 命令、`CUDA_VISIBLE_DEVICES`、启动片段，或从 GPU 卡片直接打开 SSH 终端。 |
 | 找回自己的任务 | `My Runs` 和 `labgpu where` 显示 tracked、adopted、自己的 GPU process。 |
+| 在服务器之间搬项目 | `labgpu sync` 通过你的电脑把项目从一台 SSH 服务器流式传到另一台。 |
+| 先测速 | `labgpu nettest` 在搬项目之前测试有效传输速度。 |
 | 保存实验现场 | run capsule 保存命令、日志、git、config、env summary、GPU 信息。 |
 | 诊断失败 | `diagnose` 和 Failure Inbox 识别 OOM、Traceback、NCCL、disk full、killed、NaN、suspected idle。 |
 | 发给 AI/同学求助 | `labgpu context --copy` 复制一份默认脱敏的 Markdown debug context。 |
@@ -106,6 +108,16 @@ labgpu diagnose baseline
 labgpu context baseline --copy
 labgpu report baseline
 ```
+
+把项目搬到另一台 GPU 服务器：
+
+```bash
+labgpu nettest alpha_liu alpha_shi --mb 64
+labgpu sync alpha_liu:/data/me/project alpha_shi:/data/me/project
+labgpu sync alpha_liu:/data/me/project alpha_shi:/data/me/project --execute --yes
+```
+
+`sync` 默认通过你的电脑中转，不要求两台服务器之间能互相 SSH。只有源服务器本身能 SSH 到目标服务器时，才给 `nettest` 加 `--direct` 测直连。
 
 ## UI 首页
 
@@ -188,6 +200,8 @@ labgpu ui [--hosts alpha_liu,alpha_shi] [--fake-lab]
 # 浏览器里打开 /assistant 可使用 LabGPU Assistant。
 labgpu pick [--min-vram 24G] [--prefer A100] [--tag training] [--explain] [--cmd "COMMAND"] [--json]
 labgpu where [--json]
+labgpu nettest SRC_HOST DST_HOST [--mb 64] [--both] [--direct] [--json]
+labgpu sync SRC_HOST:/project DST_HOST:/project [--execute] [--exclude PATTERN]
 
 labgpu run --name NAME --gpu 0|auto [--min-vram 24G] -- COMMAND ...
 labgpu adopt PID --name NAME [--log train.log]
