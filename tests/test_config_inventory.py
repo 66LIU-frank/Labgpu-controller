@@ -17,6 +17,7 @@ safe_mode = true
 [servers.alpha_liu]
 enabled = true
 alias = "alpha_liu"
+group = "AlphaLab"
 tags = ["A100", "training"]
 disk_paths = ["/", "/data"]
 shared_account = true
@@ -25,11 +26,13 @@ allow_stop_own_process = false
         )
         server = config.servers["alpha_liu"]
         self.assertEqual(config.ui.refresh_interval_seconds, 10)
+        self.assertEqual(server.group, "AlphaLab")
         self.assertEqual(server.tags, ["A100", "training"])
         self.assertTrue(server.shared_account)
         self.assertFalse(server.allow_stop_own_process)
         rendered = render_config(config)
         self.assertIn("[servers.alpha_liu]", rendered)
+        self.assertIn('group = "AlphaLab"', rendered)
         self.assertIn('tags = ["A100", "training"]', rendered)
 
     def test_inventory_uses_saved_servers_when_no_hosts_given(self):
@@ -41,6 +44,7 @@ allow_stop_own_process = false
             lab_config.servers["alpha_liu"] = ServerEntry(
                 name="alpha_liu",
                 alias="alpha_liu",
+                group="AlphaLab",
                 tags=["A100"],
                 disk_paths=["/", "/data"],
                 shared_account=True,
@@ -50,6 +54,7 @@ allow_stop_own_process = false
             write_config(lab_config, config_path)
             hosts = load_inventory(ssh_config=ssh_config, config_path=config_path)
             self.assertEqual([host.alias for host in hosts], ["alpha_liu"])
+            self.assertEqual(hosts[0].group, "AlphaLab")
             self.assertEqual(hosts[0].tags, ["A100"])
             self.assertEqual(hosts[0].disk_paths, ["/", "/data"])
             self.assertTrue(hosts[0].shared_account)
@@ -64,9 +69,12 @@ allow_stop_own_process = false
                 ssh_config=ssh_config,
                 names=["alpha_liu"],
                 tags=["A100"],
+                group="AlphaLab",
                 config_path=config_path,
             )
             self.assertEqual([entry.alias for entry in imported], ["alpha_liu"])
+            self.assertEqual(imported[0].group, "AlphaLab")
+            self.assertIn('group = "AlphaLab"', config_path.read_text(encoding="utf-8"))
             self.assertIn('tags = ["A100"]', config_path.read_text(encoding="utf-8"))
 
 

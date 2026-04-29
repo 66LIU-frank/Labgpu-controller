@@ -36,6 +36,7 @@ def sample_data(shared_account: bool = False):
             "remote_hostname": "a100",
             "online": True,
             "mode": "agentless",
+            "group": "AlphaLab",
             "tags": ["A100", "training"],
             "shared_account": shared_account,
             "allow_stop_own_process": True,
@@ -128,6 +129,7 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn('data-open-ssh="alpha_liu"', html)
         filtered = filter_available_gpu_items(data["overview"]["available_gpu_items"], {"min_mem_gb": "80", "model": "A100"})
         self.assertEqual(filtered[0]["server"], "alpha_liu")
+        self.assertEqual(filtered[0]["server_group"], "AlphaLab")
         choices = filter_gpu_items(data["overview"]["gpu_items"], {"availability": "all"})
         self.assertEqual(len(choices), 2)
         self.assertEqual(gpu_recommendation(choices[0])["label"], "Recommended")
@@ -177,6 +179,7 @@ class DashboardPagesTest(unittest.TestCase):
             self.assertIn("Import From SSH Config", html)
             self.assertIn("Add Server", html)
             self.assertIn("settings-add-server", html)
+            self.assertIn("Group", html)
             self.assertIn("Write to SSH config", html)
             self.assertIn("alpha_liu", html)
             self.assertIn("value='alpha_liu' checked", html)
@@ -230,6 +233,15 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn("host_0", html)
         self.assertIn("host_6", html)
         self.assertIn("Choose home servers", html)
+
+    def test_group_bar_filters_home_view(self):
+        data = sample_data()
+        data["server_groups"] = [{"value": "AlphaLab", "label": "AlphaLab"}]
+        data["scope_group"] = "AlphaLab"
+        html = render_index(data)
+        self.assertIn("Server group", html)
+        self.assertIn("AlphaLab", html)
+        self.assertIn("group AlphaLab", html)
 
     def test_offline_cached_server_is_labeled_as_cached(self):
         cached = sample_data()["hosts"][0]

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from labgpu.core.config import ServerEntry, load_config, write_config
 from labgpu.remote.actions import open_ssh_terminal, stop_process
@@ -70,6 +70,7 @@ def collect_servers(
     ssh_config: str | Path | None = None,
     names: list[str] | None = None,
     pattern: str | None = None,
+    group: str | None = None,
     timeout: int = 8,
     fake_lab: bool = False,
     use_cache: bool = False,
@@ -84,6 +85,8 @@ def collect_servers(
         if pattern:
             needle = pattern.lower()
             hosts = [host for host in hosts if isinstance(host, dict) and needle in str(host.get("alias") or "").lower()]
+        if group:
+            hosts = [host for host in hosts if isinstance(host, dict) and group_matches(host.get("group"), group)]
         data["hosts"] = hosts
         data["count"] = len(hosts)
         data["overview"] = build_overview(hosts)
@@ -93,6 +96,7 @@ def collect_servers(
     saved_config = load_config()
     using_saved_inventory = not names and not pattern and any(entry.enabled for entry in saved_config.servers.values())
     hosts = load_inventory(ssh_config=ssh_config, names=names, pattern=pattern)
+    hosts = filter_inventory_group(hosts, group)
     if not hosts:
         return {"hosts": [], "count": 0, "error": "no SSH hosts selected"}
     hosts = [resolve_ssh_host(host) for host in hosts]
@@ -197,6 +201,7 @@ def host_identity(host: SSHHost) -> dict[str, object]:
         "user": host.user,
         "port": host.port,
         "proxyjump": host.proxyjump,
+        "group": host.group,
         "tags": host.tags,
         "disk_paths": host.disk_paths,
         "shared_account": host.shared_account,
@@ -235,6 +240,35 @@ def cache_age_seconds(value: object) -> int | None:
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=timezone.utc)
     return max(0, int((datetime.now(timezone.utc) - timestamp.astimezone(timezone.utc)).total_seconds()))
+
+
+def filter_inventory_group(hosts: list[SSHHost], group: str | None) -> list[SSHHost]:
+    group = str(group or "").strip()
+    if not group or group == "all":
+        return hosts
+    return [host for host in hosts if group_matches(host.group, group)]
+
+
+def group_matches(value: object, selected: str | None) -> bool:
+    selected = str(selected or "").strip()
+    if not selected or selected == "all":
+        return True
+    group = str(value or "").strip()
+    if selected == "__ungrouped__":
+        return not group
+    return group == selected
+
+
+def configured_groups() -> list[dict[str, str]]:
+    config = load_config()
+    groups = sorted({entry.group.strip() for entry in config.servers.values() if entry.group.strip()})
+    if not groups:
+        return []
+    has_ungrouped = any(not entry.group.strip() for entry in config.servers.values())
+    items = [{"value": group, "label": group} for group in groups]
+    if has_ungrouped:
+        items.append({"value": "__ungrouped__", "label": "Ungrouped"})
+    return items
 
 
 class ServerHandler(BaseHTTPRequestHandler):
@@ -321,11 +355,13 @@ class ServerHandler(BaseHTTPRequestHandler):
         pattern = params.get("pattern", [self.pattern])[0]
         if pattern and not scope_mode:
             scope_mode = "pattern"
+        group = params.get("group", [""])[0].strip()
         refresh = truthy(params.get("refresh", ["0"])[0])
         data = collect_servers(
             ssh_config=self.ssh_config,
             names=names,
             pattern=pattern,
+            group=group,
             timeout=self.timeout,
             fake_lab=self.fake_lab,
             use_cache=not refresh,
@@ -334,8 +370,11 @@ class ServerHandler(BaseHTTPRequestHandler):
         data["scope_mode"] = scope_mode
         data["scope_hosts"] = names or []
         data["scope_pattern"] = pattern or ""
+        data["scope_group"] = group
+        data["server_groups"] = configured_groups()
         data["ui"] = {
             "q": params.get("q", [""])[0].strip(),
+            "group": group,
             "min_mem_gb": params.get("min_mem_gb", [""])[0].strip(),
             "model": params.get("model", [""])[0].strip(),
             "tag": params.get("tag", [""])[0].strip(),
@@ -432,6 +471,7 @@ class ServerHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, "no aliases selected")
             return
         tags = split_csv(str(first_value(payload.get("tags")) or ""))
+        group = str(first_value(payload.get("group")) or "").strip()
         disk_paths = split_csv(str(first_value(payload.get("disk_paths")) or "")) or ["/", "/home", "/data", "/scratch", "/mnt", "/nvme"]
         shared_account = truthy(first_value(payload.get("shared_account")))
         allow_stop = truthy(first_value(payload.get("allow_stop_own_process")), default=True)
@@ -442,6 +482,7 @@ class ServerHandler(BaseHTTPRequestHandler):
         for alias in aliases:
             entry = next((item for item in config.servers.values() if item.alias == alias), None) or ServerEntry(name=alias, alias=alias)
             entry.enabled = True
+            entry.group = group
             entry.tags = tags
             entry.disk_paths = disk_paths
             entry.shared_account = shared_account
@@ -466,6 +507,7 @@ class ServerHandler(BaseHTTPRequestHandler):
         identity_file = str(first_value(payload.get("identity_file")) or "").strip()
         write_ssh = truthy(first_value(payload.get("write_ssh_config")), default=True)
         tags = split_csv(str(first_value(payload.get("tags")) or ""))
+        group = str(first_value(payload.get("group")) or "").strip()
         disk_paths = split_csv(str(first_value(payload.get("disk_paths")) or "")) or ["/", "/home", "/data", "/scratch", "/mnt", "/nvme"]
         shared_account = truthy(first_value(payload.get("shared_account")))
         allow_stop = truthy(first_value(payload.get("allow_stop_own_process")), default=True)
@@ -498,6 +540,7 @@ class ServerHandler(BaseHTTPRequestHandler):
         config = load_config()
         entry = config.servers.get(alias) or ServerEntry(name=alias, alias=alias)
         entry.enabled = True
+        entry.group = group
         entry.tags = tags
         entry.disk_paths = disk_paths
         entry.shared_account = shared_account
@@ -572,6 +615,7 @@ def render_index(data: dict[str, object]) -> str:
             <p>Personal GPU workspace for students using shared SSH servers.</p>
           </div>
         </section>
+        {render_group_bar(data, path='/')}
         {render_overview(overview)}
         {render_train_now(overview, limit=4)}
         {render_my_training(training_items(hosts, overview), limit=8, view_all='/me')}
@@ -595,6 +639,7 @@ def render_gpus_page(data: dict[str, object]) -> str:
             <p>Rank GPUs across SSH hosts by GPU availability, free VRAM, model, load, and tags.</p>
           </div>
         </section>
+        {render_group_bar(data, path='/gpus')}
         {render_filters(ui, kind='gpus')}
         {render_gpu_watch_panel(ui)}
         {render_gpu_finder(overview, ui)}
@@ -616,6 +661,7 @@ def render_me_page(data: dict[str, object]) -> str:
             <p>Your LabGPU runs, adopted runs, and agentless GPU processes across SSH servers.</p>
           </div>
         </section>
+        {render_group_bar(data, path='/me')}
         {render_process_filters(ui)}
         {render_my_training(training_items(hosts, overview), ui=ui)}
         {render_my_processes(overview.get('my_process_items') if isinstance(overview, dict) else [], ui=ui, title='Agentless Own GPU Processes')}
@@ -638,6 +684,7 @@ def render_servers_page(data: dict[str, object]) -> str:
             <p>Configured SSH GPU servers, health, disks, and free/busy GPUs.</p>
           </div>
         </section>
+        {render_group_bar(data, path='/servers')}
         {render_server_filters(ui)}
         <section class="grid">{cards}</section>
         """,
@@ -657,6 +704,7 @@ def render_alerts_page(data: dict[str, object]) -> str:
             <p>Disk, SSH, GPU, and process conditions that need attention.</p>
           </div>
         </section>
+        {render_group_bar(data, path='/alerts')}
         {render_alert_filters(ui)}
         {render_alerts(overview.get('all_alert_items') if isinstance(overview, dict) else [], ui=ui, title='All Alerts')}
         """,
@@ -674,9 +722,9 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
         for host in ssh_hosts
     ) or "<tr><td colspan='5' class='muted'>No SSH hosts found.</td></tr>"
     server_rows = "".join(
-        f"<tr><td><code>{esc(entry.alias)}</code></td><td>{esc(entry.enabled)}</td><td>{esc(join_values(entry.tags))}</td><td>{esc(join_values(entry.disk_paths))}</td><td>{esc(entry.shared_account)}</td><td>{esc(entry.allow_stop_own_process)}</td></tr>"
+        f"<tr><td><code>{esc(entry.alias)}</code></td><td>{esc(entry.enabled)}</td><td>{esc(entry.group or '-')}</td><td>{esc(join_values(entry.tags))}</td><td>{esc(join_values(entry.disk_paths))}</td><td>{esc(entry.shared_account)}</td><td>{esc(entry.allow_stop_own_process)}</td></tr>"
         for entry in config.servers.values()
-    ) or "<tr><td colspan='6' class='muted'>No saved LabGPU server inventory yet.</td></tr>"
+    ) or "<tr><td colspan='7' class='muted'>No saved LabGPU server inventory yet.</td></tr>"
     return page(
         "Settings",
         f"""
@@ -689,7 +737,7 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
         <section class="panel">
           <h2>Saved Servers</h2>
           <p class="muted">These enabled servers are shown on LabGPU Home by default.</p>
-          <table><tr><th>Alias</th><th>Enabled</th><th>Tags</th><th>Disk paths</th><th>Shared account</th><th>Stop own process</th></tr>{server_rows}</table>
+          <table><tr><th>Alias</th><th>Enabled</th><th>Group</th><th>Tags</th><th>Disk paths</th><th>Shared account</th><th>Stop own process</th></tr>{server_rows}</table>
         </section>
         <section class="panel">
           <h2>Add Server</h2>
@@ -700,6 +748,7 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
               <label>Alias <input name="alias" required placeholder="alpha_liu"></label>
               <label>HostName or IP <input name="hostname" required placeholder="gpu.example.edu"></label>
               <label>SSH user <input name="user" placeholder="student"></label>
+              <label>Group <input name="group" placeholder="AlphaLab / off-campus"></label>
               <label>Tags <input name="tags" placeholder="A100,training"></label>
               <label><input type="checkbox" name="write_ssh_config" value="1" checked> Write to SSH config</label>
               <button class="button" type="submit">Add server</button>
@@ -725,6 +774,7 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
             <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
             <div class="filters">
               <label>Tags <input name="tags" placeholder="A100,training"></label>
+              <label>Group <input name="group" placeholder="AlphaLab / off-campus"></label>
               <label>Disk paths <input name="disk_paths" value="/,/home,/data,/scratch,/mnt,/nvme"></label>
               <label><input type="checkbox" name="shared_account" value="1"> Shared Linux account</label>
               <label><input type="checkbox" name="allow_stop_own_process" value="1" checked> Allow stop own process</label>
@@ -820,6 +870,34 @@ def render_data_status(data: dict[str, object]) -> str:
     )
 
 
+def render_group_bar(data: dict[str, object], *, path: str) -> str:
+    groups = data.get("server_groups") if isinstance(data.get("server_groups"), list) else []
+    if not groups:
+        return ""
+    current = str(data.get("scope_group") or "").strip()
+    chips = [group_chip("All", path, "", active=not current or current == "all")]
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        value = str(group.get("value") or "").strip()
+        label = str(group.get("label") or value).strip()
+        if not value:
+            continue
+        chips.append(group_chip(label, path, value, active=current == value))
+    return (
+        "<section class='groupbar'>"
+        "<span class='muted'>Server group</span>"
+        f"{''.join(chips)}"
+        "</section>"
+    )
+
+
+def group_chip(label: str, path: str, value: str, *, active: bool) -> str:
+    href = path if not value else f"{path}?group={quote(value)}"
+    active_class = " active" if active else ""
+    return f"<a class='group-chip{active_class}' href='{href}'>{esc(label)}</a>"
+
+
 def scope_note(data: dict[str, object]) -> str:
     mode = str(data.get("scope_mode") or "")
     hosts = data.get("scope_hosts") if isinstance(data.get("scope_hosts"), list) else []
@@ -843,6 +921,7 @@ def render_filters(ui: dict[str, object], *, kind: str = "all") -> str:
     sort = str(ui.get("sort") or "")
     return f"""
     <form class="filters" method="get">
+      {group_hidden(ui)}
       <label>Search <input name="q" value="{esc(q)}" placeholder="alpha, A100, lsg"></label>
       <label>Model <input name="model" value="{esc(model)}" placeholder="A100 / 4090 / H800"></label>
       <label>Min free GB <input name="min_mem_gb" value="{esc(min_mem)}" placeholder="24"></label>
@@ -886,6 +965,7 @@ def render_process_filters(ui: dict[str, object]) -> str:
     health = str(ui.get("health") or "")
     return f"""
     <form class="filters" method="get">
+      {group_hidden(ui)}
       <label>Search <input name="q" value="{esc(q)}" placeholder="command, PID, user"></label>
       <label>Server <input name="server" value="{esc(server)}" placeholder="alpha_liu"></label>
       <label>Health
@@ -912,6 +992,7 @@ def render_server_filters(ui: dict[str, object]) -> str:
     mine = str(ui.get("mine") or "")
     return f"""
     <form class="filters" method="get">
+      {group_hidden(ui)}
       <label>Search <input name="q" value="{esc(q)}" placeholder="alias, model, user"></label>
       <label>Tag <input name="tag" value="{esc(tag)}" placeholder="A100"></label>
       <label><input type="checkbox" name="online" value="1" {checked(online)}> Online only</label>
@@ -930,6 +1011,7 @@ def render_alert_filters(ui: dict[str, object]) -> str:
     status = str(ui.get("alert_status") or "active")
     return f"""
     <form class="filters" method="get">
+      {group_hidden(ui)}
       <label>Search <input name="q" value="{esc(q)}" placeholder="server, message"></label>
       <label>Severity
         <select name="severity">
@@ -951,6 +1033,13 @@ def render_alert_filters(ui: dict[str, object]) -> str:
       <a class="button" href="/alerts">Clear</a>
     </form>
     """
+
+
+def group_hidden(ui: dict[str, object]) -> str:
+    group = str(ui.get("group") or "").strip()
+    if not group or group == "all":
+        return ""
+    return f"<input type='hidden' name='group' value='{esc(group)}'>"
 
 
 def render_train_now(overview: dict[str, object], *, limit: int | None = None) -> str:
@@ -1237,6 +1326,7 @@ def filter_hosts(items: object, ui: dict[str, object]) -> list[dict[str, object]
             [
                 str(item.get("alias") or ""),
                 str(item.get("remote_hostname") or ""),
+                str(item.get("group") or ""),
                 join_values(item.get("tags") or []),
                 " ".join(str(gpu.get("name") or "") for gpu in item.get("gpus") or [] if isinstance(gpu, dict)),
                 top_users(item.get("processes") or []),
@@ -1410,6 +1500,7 @@ def render_host_card(host: object, *, compact: bool = False) -> str:
         <span class="pill {esc(status)} {esc(health)}">{esc(status_label)}</span>
       </div>
       <div class="meta">
+        {f"<span>group {esc(host.get('group'))}</span>" if host.get('group') else ""}
         <span>user {esc(host.get('user') or '-')}</span>
         <span>port {esc(host.get('port') or '22')}</span>
         <span>{esc(mode)}</span>
@@ -1771,6 +1862,9 @@ dialog::backdrop{{background:rgba(0,0,0,.45)}}
 .toolbar{{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:18px}}
 .actions{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
 .button{{border:1px solid var(--border);background:var(--button);border-radius:6px;padding:7px 10px;color:var(--text);text-decoration:none;cursor:pointer}}
+.groupbar{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-4px 0 14px}}
+.group-chip{{border:1px solid var(--border);background:var(--button);border-radius:999px;padding:5px 10px;text-decoration:none;color:var(--link)}}
+.group-chip.active{{border-color:#75c793;background:#ecfdf3;color:#067647}}
 .filters{{display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px}}
 .filters label{{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}}
 .filters input,.filters select{{border:1px solid var(--border);border-radius:6px;padding:7px 8px;min-width:150px;background:var(--button);color:var(--text)}}
@@ -1817,6 +1911,7 @@ table{{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}}
 th,td{{border-top:1px solid var(--row);padding:7px;text-align:left;vertical-align:top}} th{{color:var(--muted)}}
 html[data-theme="dark"] .pill.online{{color:#86efac;background:#143421}} html[data-theme="dark"] .pill.offline{{color:#fca5a5;background:#3a1717}}
 html[data-theme="dark"] .badge.ok{{background:#143421;color:#86efac}} html[data-theme="dark"] .badge.warning{{background:#3b2a0a;color:#facc15}} html[data-theme="dark"] .badge.error{{background:#3a1717;color:#fca5a5}}
+html[data-theme="dark"] .group-chip.active{{background:#143421;color:#86efac;border-color:#75c793}}
 html[data-theme="dark"] .warn-text{{color:#facc15}}
 html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
 @media(max-width:860px){{.topbar{{flex-direction:column}}.top-controls{{justify-content:flex-start;max-width:none}}.cache-message{{max-width:calc(100vw - 96px)}}}}
@@ -1906,6 +2001,10 @@ const translations = {{
   "Saved Servers": "已保存服务器",
   "These enabled servers are shown on LabGPU Home by default.": "这些启用的服务器会默认显示在 LabGPU Home。",
   "Choose which SSH GPU servers appear in LabGPU Home.": "选择哪些 SSH GPU 服务器显示在 LabGPU Home。",
+  "Server group": "服务器分组",
+  "Group": "分组",
+  "Ungrouped": "未分组",
+  "All": "全部",
   "Import From SSH Config": "从 SSH 配置导入",
   "Import SSH hosts and manage the server inventory stored in": "导入 SSH 主机并管理保存在",
   "Select SSH aliases, set defaults, and save them into": "选择 SSH 别名、设置默认值，并保存到",

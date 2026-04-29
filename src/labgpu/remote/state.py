@@ -64,6 +64,7 @@ def build_overview(hosts: list[dict[str, Any]]) -> dict[str, Any]:
                     suspected_idle_gpus += 1
                 item = dict(gpu)
                 item["server"] = host.get("alias")
+                item["server_group"] = host.get("group") or ""
                 item["server_tags"] = host.get("tags") or []
                 item["server_mode"] = host.get("mode")
                 item["tags"] = host.get("tags") or []
@@ -77,6 +78,7 @@ def build_overview(hosts: list[dict[str, Any]]) -> dict[str, Any]:
             if isinstance(proc, dict):
                 item = dict(proc)
                 item["server"] = host.get("alias")
+                item["server_group"] = host.get("group") or ""
                 item["server_mode"] = host.get("mode")
                 item["server_tags"] = host.get("tags") or []
                 processes.append(item)
@@ -170,6 +172,7 @@ def available_gpus(host: dict[str, Any]) -> list[dict[str, Any]]:
         items.append(
             {
                 "server": host.get("alias"),
+                "server_group": host.get("group") or "",
                 "gpu_index": gpu.get("index"),
                 "name": gpu.get("name"),
                 "memory_free_mb": gpu.get("memory_free_mb"),
@@ -195,6 +198,7 @@ def my_processes(host: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         item = dict(proc)
         item["server"] = host.get("alias")
+        item["server_group"] = host.get("group") or ""
         item["remote_hostname"] = host.get("remote_hostname")
         if host.get("shared_account"):
             item["actions_disabled_reason"] = "shared account"

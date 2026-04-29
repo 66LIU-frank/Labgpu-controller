@@ -34,6 +34,7 @@ def import_ssh_hosts(
     names: list[str] | None = None,
     pattern: str | None = None,
     tags: list[str] | None = None,
+    group: str | None = None,
     config_path: str | Path | None = None,
 ) -> tuple[LabGPUConfig, list[ServerEntry]]:
     lab_config = load_config(config_path)
@@ -45,6 +46,8 @@ def import_ssh_hosts(
         entry.enabled = True
         if tags:
             entry.tags = sorted(set(entry.tags).union(tags))
+        if group is not None:
+            entry.group = group.strip()
         if not entry.disk_paths:
             entry.disk_paths = ["/", "/home", "/data", "/scratch", "/mnt", "/nvme"]
         lab_config.servers[entry.name] = entry
@@ -56,6 +59,7 @@ def import_ssh_hosts(
 def apply_server_entry(host: SSHHost, entry: ServerEntry | None) -> SSHHost:
     if not entry:
         return host
+    host.group = entry.group
     host.tags = list(entry.tags)
     host.disk_paths = list(entry.disk_paths)
     host.shared_account = entry.shared_account

@@ -80,6 +80,7 @@ def filter_available_gpu_items(items: object, ui: dict[str, object]) -> list[dic
     q = str(ui.get("q") or "").lower()
     model = str(ui.get("model") or "").lower()
     tag = str(ui.get("tag") or "").lower()
+    group = str(ui.get("group") or "").lower()
     sort = str(ui.get("sort") or "")
     min_mem_mb = requested_vram_mb(ui)
     filtered: list[dict[str, object]] = []
@@ -89,6 +90,7 @@ def filter_available_gpu_items(items: object, ui: dict[str, object]) -> list[dic
         haystack = " ".join(
             [
                 str(item.get("server") or ""),
+                str(item.get("server_group") or ""),
                 str(item.get("name") or ""),
                 join_values(item.get("tags") or []),
             ]
@@ -98,6 +100,8 @@ def filter_available_gpu_items(items: object, ui: dict[str, object]) -> list[dic
         if model and model not in str(item.get("name") or "").lower():
             continue
         if tag and tag not in join_values(item.get("tags") or []).lower():
+            continue
+        if group and not group_matches(item.get("server_group"), group):
             continue
         if min_mem_mb is not None and int(item.get("memory_free_mb") or 0) < min_mem_mb:
             continue
@@ -117,6 +121,7 @@ def filter_gpu_items(items: object, ui: dict[str, object]) -> list[dict[str, obj
     q = str(ui.get("q") or "").lower()
     model = str(ui.get("model") or "").lower()
     tag = str(ui.get("tag") or "").lower()
+    group = str(ui.get("group") or "").lower()
     availability = str(ui.get("availability") or "available")
     min_mem_mb = requested_vram_mb(ui)
     filtered: list[dict[str, object]] = []
@@ -129,6 +134,7 @@ def filter_gpu_items(items: object, ui: dict[str, object]) -> list[dict[str, obj
         haystack = " ".join(
             [
                 str(item.get("server") or ""),
+                str(item.get("server_group") or ""),
                 str(item.get("name") or ""),
                 join_values(item.get("tags") or item.get("server_tags") or []),
                 str(item.get("availability") or ""),
@@ -139,6 +145,8 @@ def filter_gpu_items(items: object, ui: dict[str, object]) -> list[dict[str, obj
         if model and model not in str(item.get("name") or "").lower():
             continue
         if tag and tag not in join_values(item.get("tags") or item.get("server_tags") or []).lower():
+            continue
+        if group and not group_matches(item.get("server_group"), group):
             continue
         if min_mem_mb is not None and int(item.get("memory_free_mb") or 0) < min_mem_mb:
             continue
@@ -159,6 +167,16 @@ def requested_vram_mb(ui: dict[str, object]) -> int | None:
     if value is None:
         return None
     return parse_vram_to_mb(str(value))
+
+
+def group_matches(value: object, selected: str) -> bool:
+    selected = selected.strip().lower()
+    if not selected or selected == "all":
+        return True
+    group = str(value or "").strip().lower()
+    if selected == "__ungrouped__":
+        return not group
+    return selected == group
 
 
 def parse_vram_to_mb(value: str) -> int | None:

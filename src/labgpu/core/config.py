@@ -12,6 +12,7 @@ class ServerEntry:
     name: str
     alias: str
     enabled: bool = True
+    group: str = ""
     tags: list[str] = field(default_factory=list)
     disk_paths: list[str] = field(default_factory=list)
     shared_account: bool = False
@@ -74,6 +75,8 @@ def parse_config(text: str) -> LabGPUConfig:
                 server.alias = value
             elif key == "enabled" and isinstance(value, bool):
                 server.enabled = value
+            elif key == "group" and isinstance(value, str):
+                server.group = value
             elif key == "tags" and isinstance(value, list):
                 server.tags = [str(item) for item in value]
             elif key == "disk_paths" and isinstance(value, list):
@@ -108,6 +111,7 @@ def render_config(config: LabGPUConfig) -> str:
                 f"[servers.{quote_key(name)}]",
                 f"enabled = {render_bool(server.enabled)}",
                 f"alias = {quote_string(server.alias)}",
+                f"group = {quote_string(server.group)}",
                 f"tags = {render_list(server.tags)}",
                 f"disk_paths = {render_list(server.disk_paths)}",
                 f"shared_account = {render_bool(server.shared_account)}",

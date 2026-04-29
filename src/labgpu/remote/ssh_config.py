@@ -17,6 +17,7 @@ class SSHHost:
     proxyjump: str | None = None
     identity_files: list[str] = field(default_factory=list)
     options: dict[str, str] = field(default_factory=dict)
+    group: str = ""
     tags: list[str] = field(default_factory=list)
     disk_paths: list[str] = field(default_factory=list)
     shared_account: bool = False
@@ -106,6 +107,7 @@ def resolve_ssh_host(host: SSHHost, *, timeout: int = 3) -> SSHHost:
         proxyjump=_first_str(parsed.get("proxyjump")) or host.proxyjump,
         identity_files=list(parsed.get("identityfile") or host.identity_files),
         options=options,
+        group=host.group,
         tags=list(host.tags),
         disk_paths=list(host.disk_paths),
         shared_account=host.shared_account,
