@@ -159,6 +159,10 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn("/api/assistant/chat", html)
         self.assertIn("copyable plans", html)
         self.assertIn("data-assistant-example", html)
+        self.assertIn("Assistant API", html)
+        self.assertIn("assistant-use-api", html)
+        self.assertIn("assistant-api-url", html)
+        self.assertIn("assistant-model", html)
 
     def test_settings_page_lists_ssh_hosts(self):
         with tempfile.TemporaryDirectory() as tmp:

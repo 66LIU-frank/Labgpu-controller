@@ -215,15 +215,20 @@ labgpu servers probe alpha_liu
 labgpu demo
 ```
 
-## 未来 TODO：LabGPU Agent
+## LabGPU Assistant
 
-LabGPU 当前的核心是上面这条个人训练工作流。AI Assistant 还没有完善，所以不把它作为主卖点；更适合放在下一阶段路线里：
+Assistant 仍是 alpha，不作为当前主卖点。现在有两种模式：
 
-- 用自然语言问：帮我找一张 24GB+ 的 A100，并生成启动命令
-- 基于当前 GPU 和 run 状态生成安全、可复制的 launch/adopt/rerun 计划
-- 结合日志、config、git、env summary、GPU history 解释失败原因
-- 一键整理脱敏 debug context，方便发给 ChatGPT、Claude、Codex 或同学
-- 未来可以在用户确认后执行 LabGPU allowlist action，但不会给 AI 任意 SSH shell 权限
+- 本地模式：不调用外部 API，只基于当前 LabGPU workspace 做规则型回答。
+- 自带 API 模式：在 Assistant 页面填自己的 OpenAI-compatible chat-completions URL、model 和 API key。
+
+API 模式只会发送脱敏后的 workspace summary 到你配置的 endpoint。助手仍然是只读、只生成可复制命令：可以推荐 GPU、解释可见失败、找任务、生成 launch/adopt/debug-context 命令，但不会执行任意 SSH shell。
+
+后续方向：
+
+- 结合 logs、config、git、env summary、GPU history 给出更好的失败解释
+- 在用户明确确认后执行 LabGPU allowlist action
+- 做移动端/PWA 通知：run failed、suspected idle、GPU 空出来
 
 ## 当前状态
 

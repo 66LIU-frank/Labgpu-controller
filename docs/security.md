@@ -62,6 +62,18 @@ The UI does not display full environment variables by default. `labgpu context`
 uses a safe environment subset unless `--include-env` is explicitly requested,
 and even then redaction remains on unless `--no-redact` is used.
 
+## Assistant API Mode
+
+The Assistant is read-only and copy-only. In local mode it does not call an
+external model. In BYO API mode, the browser sends your API URL, model, and API
+key to the local LabGPU backend for that chat request, and LabGPU sends a
+redacted workspace summary to the configured OpenAI-compatible endpoint.
+
+LabGPU does not save Assistant API keys to `~/.labgpu/config.toml`. If you
+choose "Remember key in this browser", the key is stored in browser
+`localStorage` on that machine. Keep `labgpu ui` bound to `127.0.0.1` for this
+mode.
+
 ## Shared LABGPU_HOME
 
 For a lab-wide run registry, prefer a group-owned directory:

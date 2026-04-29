@@ -215,15 +215,20 @@ labgpu servers probe alpha_liu
 labgpu demo
 ```
 
-## Future TODO: LabGPU Agent
+## LabGPU Assistant
 
-LabGPU's core is the personal GPU training workflow above. The AI assistant is intentionally not the main promise yet. The longer-term direction is:
+The Assistant is alpha and not the main product promise yet. Today it has two modes:
 
-- ask in natural language: "find me a 24GB+ A100 and prepare a launch command"
-- generate safe, copyable launch/adopt/rerun plans from current GPU and run state
-- explain failed runs from logs, configs, git state, env summary, and GPU history
-- produce one redacted debug context for ChatGPT, Claude, Codex, or a teammate
-- optionally run approved LabGPU actions later, but never expose arbitrary SSH shell execution
+- Local mode: no external API, rule-based answers from the current LabGPU workspace.
+- BYO API mode: enter your own OpenAI-compatible chat-completions URL, model, and API key in the Assistant page.
+
+API mode sends a redacted workspace summary to your configured endpoint. It stays read-only and copy-only: it can recommend GPUs, explain visible failures, locate runs, and generate launch/adopt/debug-context commands, but it does not execute arbitrary SSH shell commands.
+
+Future direction:
+
+- better failure explanations from logs, configs, git state, env summary, and GPU history
+- approved LabGPU actions after explicit confirmation
+- mobile/PWA notifications for failed runs, suspected idle runs, and newly free GPUs
 
 ## Status
 

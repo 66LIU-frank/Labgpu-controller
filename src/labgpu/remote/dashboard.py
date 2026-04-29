@@ -560,8 +560,9 @@ class ServerHandler(BaseHTTPRequestHandler):
     def _assistant_chat(self) -> None:
         payload = self._read_body_payload()
         message = str(payload.get("message") or "")
+        options = payload.get("assistant") if isinstance(payload.get("assistant"), dict) else {}
         data = self._data("")
-        self._json(assistant_reply(data, message))
+        self._json(assistant_reply(data, message, options=options))
 
     def _read_body_payload(self) -> dict[str, object]:
         body = self.rfile.read(int(self.headers.get("Content-Length", "0") or "0"))
@@ -802,6 +803,18 @@ def render_assistant_page(data: dict[str, object]) -> str:
             <h1>LabGPU Assistant</h1>
             <p>Chat with your GPU workspace. Read-only and copy-only in this alpha.</p>
           </div>
+        </section>
+        {render_group_bar(data, path='/assistant')}
+        <section class="panel assistant-config">
+          <div class="section-head"><h2>Assistant API</h2><span class="muted">Optional BYO OpenAI-compatible API</span></div>
+          <label class="inline-setting"><input type="checkbox" id="assistant-use-api"> Use my API for answers</label>
+          <div class="filters">
+            <label>API URL <input id="assistant-api-url" placeholder="https://api.openai.com/v1/chat/completions"></label>
+            <label>Model <input id="assistant-model" placeholder="gpt-4o-mini or provider model"></label>
+            <label>API key <input id="assistant-api-key" type="password" placeholder="sk-..."></label>
+            <label><input type="checkbox" id="assistant-remember-key"> Remember key in this browser</label>
+          </div>
+          <p class="muted">Default mode uses local LabGPU rules only. API mode sends redacted workspace context to your configured endpoint and stays read-only/copy-only. LabGPU does not save this key to <code>~/.labgpu/config.toml</code>.</p>
         </section>
         <section class="panel assistant-panel">
           <div class="assistant-examples">
@@ -1969,6 +1982,13 @@ const translations = {{
   "Light": "浅色",
   "LabGPU Home": "LabGPU 主页",
   "LabGPU Assistant": "LabGPU 助手",
+  "Assistant API": "助手 API",
+  "Optional BYO OpenAI-compatible API": "可选：使用你自己的 OpenAI-compatible API",
+  "Use my API for answers": "使用我的 API 回答",
+  "API URL": "API 地址",
+  "API key": "API key",
+  "Remember key in this browser": "在这个浏览器记住 key",
+  "Default mode uses local LabGPU rules only. API mode sends redacted workspace context to your configured endpoint and stays read-only/copy-only. LabGPU does not save this key to": "默认模式只使用本地 LabGPU 规则。API 模式会把脱敏后的工作台上下文发送到你配置的 endpoint，并且仍然只读、只生成可复制计划。LabGPU 不会把这个 key 保存到",
   "Ask LabGPU": "询问 LabGPU",
   "Find a GPU": "找 GPU",
   "Where are my jobs?": "任务在哪",
@@ -2322,6 +2342,46 @@ if (settingsAddServer) {{
 const assistantForm = document.getElementById("assistant-form");
 const assistantInput = document.getElementById("assistant-input");
 const assistantChat = document.getElementById("assistant-chat");
+const assistantUseApi = document.getElementById("assistant-use-api");
+const assistantApiUrl = document.getElementById("assistant-api-url");
+const assistantModel = document.getElementById("assistant-model");
+const assistantApiKey = document.getElementById("assistant-api-key");
+const assistantRememberKey = document.getElementById("assistant-remember-key");
+function loadAssistantSettings() {{
+  if (assistantUseApi) assistantUseApi.checked = localStorage.getItem("labgpu-assistant-use-api") === "1";
+  if (assistantApiUrl) assistantApiUrl.value = localStorage.getItem("labgpu-assistant-api-url") || "";
+  if (assistantModel) assistantModel.value = localStorage.getItem("labgpu-assistant-model") || "";
+  if (assistantRememberKey) assistantRememberKey.checked = localStorage.getItem("labgpu-assistant-remember-key") === "1";
+  if (assistantApiKey && assistantRememberKey && assistantRememberKey.checked) {{
+    assistantApiKey.value = localStorage.getItem("labgpu-assistant-api-key") || "";
+  }}
+}}
+function saveAssistantSettings() {{
+  if (assistantUseApi) localStorage.setItem("labgpu-assistant-use-api", assistantUseApi.checked ? "1" : "0");
+  if (assistantApiUrl) localStorage.setItem("labgpu-assistant-api-url", assistantApiUrl.value.trim());
+  if (assistantModel) localStorage.setItem("labgpu-assistant-model", assistantModel.value.trim());
+  if (assistantRememberKey) localStorage.setItem("labgpu-assistant-remember-key", assistantRememberKey.checked ? "1" : "0");
+  if (assistantApiKey && assistantRememberKey && assistantRememberKey.checked) {{
+    localStorage.setItem("labgpu-assistant-api-key", assistantApiKey.value);
+  }} else {{
+    localStorage.removeItem("labgpu-assistant-api-key");
+  }}
+}}
+function readAssistantSettings() {{
+  saveAssistantSettings();
+  return {{
+    mode: assistantUseApi && assistantUseApi.checked ? "api" : "local",
+    api_url: assistantApiUrl ? assistantApiUrl.value.trim() : "",
+    model: assistantModel ? assistantModel.value.trim() : "",
+    api_key: assistantApiKey ? assistantApiKey.value : ""
+  }};
+}}
+loadAssistantSettings();
+[assistantUseApi, assistantApiUrl, assistantModel, assistantApiKey, assistantRememberKey].forEach((node) => {{
+  if (!node) return;
+  const eventName = node.tagName === "INPUT" && node.type === "text" ? "input" : "change";
+  node.addEventListener(eventName, saveAssistantSettings);
+}});
 function appendAssistantMessage(kind, text, copy) {{
   if (!assistantChat) return;
   const node = document.createElement("div");
@@ -2351,7 +2411,7 @@ async function askAssistant(message) {{
   const response = await fetch("/api/assistant/chat", {{
     method: "POST",
     headers: {{"Content-Type": "application/json"}},
-    body: JSON.stringify({{message}})
+    body: JSON.stringify({{message, assistant: readAssistantSettings()}})
   }});
   const payload = await response.json().catch(() => ({{ok: false, reply: "Assistant request failed."}}));
   if (pending) pending.remove();
