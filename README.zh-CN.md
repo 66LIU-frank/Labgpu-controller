@@ -52,6 +52,8 @@ labgpu where
 | 找一张现在能用的 GPU | `Train Now` 和 `labgpu pick` 跨 SSH hosts 排名推荐。 |
 | 快速开跑 | 复制 SSH 命令、`CUDA_VISIBLE_DEVICES`、启动片段，或从 GPU 卡片直接打开 SSH 终端。 |
 | 找回自己的任务 | `My Runs` 和 `labgpu where` 显示 tracked、adopted、自己的 GPU process。 |
+| 组织服务器 | Settings 里可以保存启用的服务器、编辑分组，并按某个分组查看。 |
+| 不手改文件也能管配置 | 在 UI 里新增/导入 SSH hosts，安全追加 `Host` 配置，并更新 `~/.labgpu/config.toml`。 |
 | 在服务器之间搬项目 | `labgpu sync` 通过你的电脑把项目从一台 SSH 服务器流式传到另一台。 |
 | 先测速 | `labgpu nettest` 在搬项目之前测试有效传输速度。 |
 | 保存实验现场 | run capsule 保存命令、日志、git、config、env summary、GPU 信息。 |
@@ -85,6 +87,14 @@ labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
 ```bash
 labgpu ui
 ```
+
+之后可以在 `Settings` 里调整首页展示和配置：
+
+- 保存哪些 SSH GPU 服务器启用
+- 新增服务器，并可选择追加一个 `Host` block 到 `~/.ssh/config`
+- 从已有 `~/.ssh/config` 导入 SSH aliases
+- 后续再编辑可选分组，比如 `AlphaLab`、`校外服务器`、`H800`
+- LabGPU 的服务器清单保存在 `~/.labgpu/config.toml`
 
 找 GPU：
 
@@ -140,9 +150,14 @@ Problems
 
 Servers
   服务器资源详情放在下面，不作为主入口。
+
+Settings
+  新增/导入 SSH hosts，选择首页服务器，编辑服务器分组，开关 JSON/API 链接。
 ```
 
-UI 支持中文/英文、深色/浅色模式。页面会先用本地快照打开，再后台刷新 SSH 数据，所以切换页面时不用每次都等 SSH probe。
+服务器分组是可选的。你可以先把服务器加进来，之后在 `Settings -> Server Groups` 里再创建分组。Home、Train Now、My Runs、Servers、Alerts、Assistant 页面都会出现分组按钮，可以在全部服务器和 `AlphaLab` 这类服务器池之间切换。
+
+UI 支持中文/英文、深色/浅色模式。页面会先用本地快照打开，再后台刷新 SSH 数据，所以切换页面时不用每次都等 SSH probe。右上角缓存提示会显示当前缓存距上次刷新过了多久。
 
 ## Run Capsule
 

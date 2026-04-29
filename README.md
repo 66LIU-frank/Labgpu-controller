@@ -52,6 +52,8 @@ labgpu where
 | Find a usable GPU | `Train Now` and `labgpu pick` rank GPUs across SSH hosts. |
 | Start training quickly | Copy SSH, `CUDA_VISIBLE_DEVICES`, launch snippets, or open an SSH terminal from the GPU card. |
 | Find your own jobs | `My Runs` and `labgpu where` show tracked, adopted, and own GPU processes. |
+| Organize servers | Settings lets you save enabled servers, edit groups, and view one group at a time. |
+| Manage config without editing files | Add/import SSH hosts, write safe SSH config blocks, and update `~/.labgpu/config.toml` from the UI. |
 | Move a project | `labgpu sync` streams a project from one SSH server to another through your laptop. |
 | Check transfer speed | `labgpu nettest` measures effective copy speed before you move a project. |
 | Recover experiment context | Run capsules save command, log, git, config, env summary, and GPU info. |
@@ -85,6 +87,14 @@ Open the workspace:
 ```bash
 labgpu ui
 ```
+
+Then use `Settings` when you want to adjust what appears on the homepage:
+
+- save which SSH GPU servers are enabled
+- add a new SSH server and optionally append a `Host` block to `~/.ssh/config`
+- import existing SSH aliases from `~/.ssh/config`
+- edit optional server groups such as `AlphaLab`, `off-campus`, or `H800`
+- keep LabGPU's saved inventory in `~/.labgpu/config.toml`
 
 Find a GPU:
 
@@ -140,9 +150,14 @@ Problems
 
 Servers
   Resource details stay below the main workflow.
+
+Settings
+  Add/import SSH hosts, choose the homepage server set, edit server groups, and toggle JSON/API links.
 ```
 
-The UI supports Chinese/English and light/dark mode. Pages load from local snapshots first, then refresh stale SSH data in the background, so moving between pages does not wait on slow SSH probes.
+Server groups are optional. You can add servers first and create groups later in `Settings -> Server Groups`. Group chips appear on Home, Train Now, My Runs, Servers, Alerts, and Assistant, so you can switch between all servers and a specific pool like `AlphaLab`.
+
+The UI supports Chinese/English and light/dark mode. Pages load from local snapshots first, then refresh stale SSH data in the background, so moving between pages does not wait on slow SSH probes. The top-right cache label shows how old the current cached data is.
 
 ## Run Capsule
 
