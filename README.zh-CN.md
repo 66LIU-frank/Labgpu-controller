@@ -12,6 +12,13 @@
 在多台共享 SSH GPU 服务器里找空卡、启动训练、找回自己的任务、诊断失败。
 不需要 daemon，不需要 root，不需要 Slurm，不需要 Kubernetes。
 
+<table>
+  <tr>
+    <td><img src="docs/assets/labgpu-just-ssh.png" alt="LabGPU Just SSH" width="100%"></td>
+    <td><img src="docs/assets/labgpu-track-runs.png" alt="LabGPU Track Runs" width="100%"></td>
+  </tr>
+</table>
+
 <p align="center">
   <img src="docs/assets/labgpu-home-live.png" alt="LabGPU Home demo preview" width="100%">
 </p>

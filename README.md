@@ -12,6 +12,13 @@ Personal GPU workspace for students using shared SSH servers.
 Find a free GPU. Launch training. Track your runs. Diagnose failures.
 No daemon. No root. No Slurm. No Kubernetes.
 
+<table>
+  <tr>
+    <td><img src="docs/assets/labgpu-just-ssh.png" alt="LabGPU Just SSH" width="100%"></td>
+    <td><img src="docs/assets/labgpu-track-runs.png" alt="LabGPU Track Runs" width="100%"></td>
+  </tr>
+</table>
+
 <p align="center">
   <img src="docs/assets/labgpu-home-live.png" alt="LabGPU Home demo preview" width="100%">
 </p>
