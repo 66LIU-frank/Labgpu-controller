@@ -253,18 +253,30 @@ labgpu demo
 
 ## LabGPU Assistant
 
-The Assistant is alpha and not the main product promise yet. Today it has two modes:
+Experimental and unfinished. The Assistant is not the main product promise yet; it is a preview of where LabGPU can go after the core GPU/run/debug workflow is solid.
+
+What works today:
 
 - Local mode: no external API, rule-based answers from the current LabGPU workspace.
 - BYO API mode: enter your own OpenAI-compatible chat-completions URL, model, and API key in the Assistant page.
+- Read-only answers for GPU recommendations, visible failures, run locations, and copyable launch/debug-context commands.
 
-API mode sends a redacted workspace summary to your configured endpoint. It stays read-only and copy-only: it can recommend GPUs, explain visible failures, locate runs, and generate launch/adopt/debug-context commands, but it does not execute arbitrary SSH shell commands.
+What is not finished:
 
-Future direction:
+- no reliable multi-turn planning yet
+- no full tool-call framework
+- no automatic launch/adopt/stop execution
+- no mobile/PWA push notification workflow yet
+- failure explanations are still basic and depend on visible LabGPU context
 
-- better failure explanations from logs, configs, git state, env summary, and GPU history
-- approved LabGPU actions after explicit confirmation
-- mobile/PWA notifications for failed runs, suspected idle runs, and newly free GPUs
+API mode sends a redacted workspace summary to your configured endpoint. It stays read-only and copy-only. It does not execute arbitrary SSH shell commands.
+
+TODO:
+
+- improve failure explanations from logs, configs, git state, env summary, and GPU history
+- add a structured LabGPU tool-call layer instead of free-form shell execution
+- add explicit confirmation cards for future approved LabGPU actions
+- add mobile/PWA notifications for failed runs, suspected idle runs, and newly free GPUs
 
 ## Status
 

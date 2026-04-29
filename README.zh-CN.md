@@ -253,17 +253,29 @@ labgpu demo
 
 ## LabGPU Assistant
 
-Assistant 仍是 alpha，不作为当前主卖点。现在有两种模式：
+实验性功能，还没做完。Assistant 不是当前主卖点，只是展示 LabGPU 在核心找卡、追踪、诊断流程稳定后可以往哪里走。
+
+现在已经能做：
 
 - 本地模式：不调用外部 API，只基于当前 LabGPU workspace 做规则型回答。
 - 自带 API 模式：在 Assistant 页面填自己的 OpenAI-compatible chat-completions URL、model 和 API key。
+- 只读回答：推荐 GPU、解释可见失败、找任务、生成可复制的 launch/debug-context 命令。
 
-API 模式只会发送脱敏后的 workspace summary 到你配置的 endpoint。助手仍然是只读、只生成可复制命令：可以推荐 GPU、解释可见失败、找任务、生成 launch/adopt/debug-context 命令，但不会执行任意 SSH shell。
+还没做完：
 
-后续方向：
+- 还没有可靠的多轮规划
+- 还没有完整 tool-call 框架
+- 还不会自动执行 launch/adopt/stop
+- 还没有移动端/PWA push 通知闭环
+- 失败解释还比较基础，依赖当前 LabGPU 能看到的上下文
+
+API 模式只会发送脱敏后的 workspace summary 到你配置的 endpoint。助手仍然只读、只生成可复制命令，不会执行任意 SSH shell。
+
+TODO：
 
 - 结合 logs、config、git、env summary、GPU history 给出更好的失败解释
-- 在用户明确确认后执行 LabGPU allowlist action
+- 做结构化 LabGPU tool-call 层，而不是让模型自由生成 shell
+- 未来对 approved LabGPU action 增加明确确认卡片
 - 做移动端/PWA 通知：run failed、suspected idle、GPU 空出来
 
 ## 当前状态
