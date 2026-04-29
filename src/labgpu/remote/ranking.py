@@ -50,7 +50,7 @@ def rank_gpus(
 
 def recommendation_from_item(item: dict[str, object], *, command: str = "python train.py", prefer: str | None = None) -> GpuRecommendation:
     rec = gpu_recommendation(item, prefer=prefer)
-    labels = {"Recommended": "recommended", "OK": "ok", "Free but risky": "risky", "Busy": "busy", "Not recommended": "not_recommended"}
+    labels = {"Recommended": "recommended", "OK": "ok", "Busy": "busy", "Not recommended": "not_recommended"}
     gpu = str(item.get("cuda_visible_devices") or item.get("index") or "")
     tags = item.get("tags") or item.get("server_tags") or []
     alerts = item.get("server_alerts") if isinstance(item.get("server_alerts"), list) else []
@@ -180,11 +180,9 @@ def parse_vram_to_mb(value: str) -> int | None:
 
 def gpu_recommendation(item: dict[str, object], *, prefer: object = None) -> dict[str, str]:
     availability = str(item.get("availability") or item.get("status") or "")
-    disk = str(item.get("disk_health") or "unknown")
     free_mb = int(item.get("memory_free_mb") or 0)
     load_ratio = load_ratio_value(item.get("load"))
     score = recommendation_score(item, prefer=prefer)
-    alert_penalty = alert_severity(item)
     if availability == "busy":
         return {"label": "Busy", "class": "busy", "severity": "warning", "reason": "A compute process is using this GPU.", "score": str(score)}
     if availability == "idle_but_occupied":
@@ -195,21 +193,11 @@ def gpu_recommendation(item: dict[str, object], *, prefer: object = None) -> dic
             "reason": "GPU memory is occupied with low current utilization.",
             "score": str(score),
         }
-    if (disk == "critical" or alert_penalty >= 20) and availability in {"free", "probably_available"}:
-        return {
-            "label": "Free but risky",
-            "class": "risky",
-            "severity": "warning",
-            "reason": "GPU is free, but the server has a critical disk or health alert.",
-            "score": str(score),
-        }
-    if disk == "critical" or alert_penalty >= 20:
-        return {"label": "Not recommended", "class": "not-recommended", "severity": "error", "reason": "Server has a critical health alert.", "score": str(score)}
-    if disk == "warning" or load_ratio >= 0.85 or alert_penalty:
-        return {"label": "OK", "class": "ok-choice", "severity": "warning", "reason": "Usable, but server health has warnings.", "score": str(score)}
+    if load_ratio >= 0.85:
+        return {"label": "OK", "class": "ok-choice", "severity": "warning", "reason": "GPU is free, but the server load is high.", "score": str(score)}
     if free_mb >= 40 * 1024:
-        return {"label": "Recommended", "class": "recommended", "severity": "ok", "reason": "High free memory and no major server warning.", "score": str(score)}
-    return {"label": "OK", "class": "ok-choice", "severity": "ok", "reason": "Free GPU with no major warning.", "score": str(score)}
+        return {"label": "Recommended", "class": "recommended", "severity": "ok", "reason": "High free memory for training.", "score": str(score)}
+    return {"label": "OK", "class": "ok-choice", "severity": "ok", "reason": "GPU is free for training.", "score": str(score)}
 
 
 def gpu_recommendation_reasons(item: dict[str, object], recommendation: dict[str, str] | None = None, *, prefer: object = None) -> list[str]:
@@ -228,8 +216,6 @@ def gpu_recommendation_reasons(item: dict[str, object], recommendation: dict[str
             reasons.append(f"matches preferred model: {', '.join(preferred)}")
         else:
             reasons.append(f"does not match preferred model: {', '.join(preferred)}")
-    disk = str(item.get("disk_health") or "unknown")
-    reasons.append(f"disk {disk}")
     load = load_value(item.get("load"))
     if load != "-":
         reasons.append(f"server load {load}")
@@ -239,12 +225,6 @@ def gpu_recommendation_reasons(item: dict[str, object], recommendation: dict[str
     availability = str(item.get("availability") or item.get("status") or "unknown")
     if availability not in {"free", "probably_available"}:
         reasons.append(f"availability: {availability}")
-    alerts = item.get("server_alerts")
-    if isinstance(alerts, list) and alerts:
-        critical = sum(1 for alert in alerts if isinstance(alert, dict) and alert.get("severity") == "error")
-        warnings = sum(1 for alert in alerts if isinstance(alert, dict) and alert.get("severity") == "warning")
-        if critical or warnings:
-            reasons.append(f"server alerts: {critical} critical, {warnings} warning")
     return reasons
 
 
@@ -265,12 +245,6 @@ def recommendation_score(item: dict[str, object], *, prefer: object = None) -> i
     preferred = [part.strip().lower() for part in str(prefer or "").replace("/", ",").split(",") if part.strip()]
     if preferred and any(part in name for part in preferred):
         score += 12
-    disk = str(item.get("disk_health") or "")
-    if disk == "critical":
-        score -= 25
-    elif disk == "warning":
-        score -= 15
-    score -= min(30, alert_severity(item))
     score -= int(load_ratio_value(item.get("load")) * 20)
     if availability == "busy":
         score -= 60
@@ -295,7 +269,7 @@ def alert_severity(item: dict[str, object]) -> int:
 
 def gpu_recommendation_sort_key(item: dict[str, object], *, prefer: object = None) -> tuple[int, int, float, int]:
     recommendation = gpu_recommendation(item, prefer=prefer)
-    rank = {"Recommended": 0, "OK": 1, "Free but risky": 2, "Not recommended": 3, "Busy": 4}.get(recommendation["label"], 5)
+    rank = {"Recommended": 0, "OK": 1, "Not recommended": 2, "Busy": 3}.get(recommendation["label"], 4)
     score = int(recommendation["score"])
     load = load_ratio_value(item.get("load"))
     free = int(item.get("memory_free_mb") or 0)

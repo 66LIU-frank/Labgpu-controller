@@ -113,7 +113,7 @@ LabGPU Home 不是以 server card 为主，而是按训练流程排：
 
 ```text
 Train Now
-  按显存、型号、负载、磁盘、告警、tags 推荐 GPU。
+  按 GPU 是否空闲、显存、型号、负载和 tags 推荐 GPU。
   每张卡都可以复制命令，或打开对应服务器的 SSH 终端。
 
 My Runs

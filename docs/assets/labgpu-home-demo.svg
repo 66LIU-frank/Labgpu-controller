@@ -30,7 +30,7 @@
     <text x="20" y="36" fill="#e6edf3" font-family="Inter,Arial,sans-serif" font-size="19" font-weight="700">Train Now</text>
     <rect x="20" y="58" width="452" height="62" rx="8" fill="#10291b" stroke="#2f8f55"/>
     <text x="38" y="88" fill="#e6edf3" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="700">alpha_liu · GPU 0</text>
-    <text x="38" y="108" fill="#9aa7b7" font-family="Inter,Arial,sans-serif" font-size="13">A100 80GB · 80.0GB free · score 66 · disk warning</text>
+    <text x="38" y="108" fill="#9aa7b7" font-family="Inter,Arial,sans-serif" font-size="13">A100 80GB · 80.0GB free · Recommended · copy CUDA</text>
     <rect x="20" y="134" width="452" height="62" rx="8" fill="#102133" stroke="#406b9f"/>
     <text x="38" y="164" fill="#e6edf3" font-family="Inter,Arial,sans-serif" font-size="15" font-weight="700">song_1 · GPU 0</text>
     <text x="38" y="184" fill="#9aa7b7" font-family="Inter,Arial,sans-serif" font-size="13">RTX 4090 · 23.8GB free · copy CUDA_VISIBLE_DEVICES=0</text>

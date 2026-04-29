@@ -32,7 +32,7 @@ Status should show `free`, `tracked`, `adopted`, `untracked`, and `unknown`, not
 
 ### Cross-Host Pick
 
-`labgpu pick` should recommend a GPU across SSH hosts using free VRAM, model, load, disk health, alerts, and tags. This differs from single-host tools such as `nvidia-smi`, `gpustat`, `nvitop`, or local GPU selectors.
+`labgpu pick` should recommend a GPU across SSH hosts using GPU availability, free VRAM, model, load, and tags. Server health and disk alerts should remain visible in Problems and server details instead of turning a free GPU into a misleading "not recommended" card. This differs from single-host tools such as `nvidia-smi`, `gpustat`, `nvitop`, or local GPU selectors.
 
 ### Adopt Existing Processes
 

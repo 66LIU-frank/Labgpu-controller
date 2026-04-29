@@ -113,7 +113,7 @@ LabGPU Home is training-first:
 
 ```text
 Train Now
-  Recommended GPUs ranked by free VRAM, model, load, disk health, alerts, and tags.
+  Recommended GPUs ranked by GPU availability, free VRAM, model, load, and tags.
   Each card can copy commands or open an SSH terminal for that server.
 
 My Runs

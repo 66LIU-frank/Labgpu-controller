@@ -130,7 +130,7 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertEqual(filtered[0]["server"], "alpha_liu")
         choices = filter_gpu_items(data["overview"]["gpu_items"], {"availability": "all"})
         self.assertEqual(len(choices), 2)
-        self.assertEqual(gpu_recommendation(choices[0])["label"], "OK")
+        self.assertEqual(gpu_recommendation(choices[0])["label"], "Recommended")
 
     def test_my_processes_page_shows_health_and_action_guard(self):
         html = render_me_page(sample_data(shared_account=True))

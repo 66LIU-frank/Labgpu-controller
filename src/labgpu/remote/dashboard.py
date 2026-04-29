@@ -522,7 +522,7 @@ def render_gpus_page(data: dict[str, object]) -> str:
         <section class="toolbar">
           <div>
             <h1>Train Now</h1>
-            <p>Rank GPUs across SSH hosts by free VRAM, model, load, disk health, alerts, and tags.</p>
+            <p>Rank GPUs across SSH hosts by GPU availability, free VRAM, model, load, and tags.</p>
           </div>
           <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/">Overview</a></div>
         </section>
@@ -1005,8 +1005,6 @@ def render_gpu_recommendation_card(item: dict[str, object]) -> str:
     availability = str(item.get("availability") or item.get("status") or "unknown")
     availability_label = "GPU free" if availability in {"free", "probably_available"} else "GPU busy" if availability == "busy" else availability
     availability_class = "ok" if availability in {"free", "probably_available"} else "warning" if availability == "busy" else ""
-    disk_health = str(item.get("disk_health") or "unknown")
-    disk_label = {"critical": "Critical", "warning": "Warning", "ok": "Healthy", "healthy": "Healthy", "unknown": "Unknown"}.get(disk_health, disk_health)
     return f"""
     <article class="gpu-choice {esc(rec['class'])}" data-gpu-choice="1" data-model="{esc(item.get('name') or '')}" data-free-mb="{esc(item.get('memory_free_mb') or 0)}" data-tags="{esc(join_values(item.get('tags') or item.get('server_tags') or []))}" data-server="{esc(item.get('server') or '')}" data-gpu-index="{esc(item.get('index'))}">
       <div class="card-head">
@@ -1022,7 +1020,6 @@ def render_gpu_recommendation_card(item: dict[str, object]) -> str:
         <span><span>Free memory</span> {esc(memory_free)} / {esc(memory_total)}</span>
         <span><span>GPU util</span> {esc(item.get('utilization_gpu'))}%</span>
         <span><span>Temp</span> {esc(item.get('temperature'))} C</span>
-        <span><span>Disk</span> <span>{esc(disk_label)}</span></span>
         <span><span>Load</span> {esc(load_value(item.get('load')))}</span>
         <span><span>Choice score</span> {esc(rec['score'])}</span>
       </div>
@@ -1695,7 +1692,7 @@ dialog::backdrop{{background:rgba(0,0,0,.45)}}
 .gpu-card h3 span{{color:var(--muted);font-weight:500}}
 .gpu-list{{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;margin-top:12px}}
 .gpu-choice{{border:1px solid var(--border-soft);border-radius:8px;padding:12px;background:var(--surface-soft)}}
-.gpu-choice.recommended{{border-color:#75c793}} .gpu-choice.risky{{border-color:#f59e0b}} .gpu-choice.not-recommended{{border-color:#ef4444}} .gpu-choice.busy{{opacity:.86}}
+.gpu-choice.recommended{{border-color:#75c793}} .gpu-choice.not-recommended{{border-color:#ef4444}} .gpu-choice.busy{{opacity:.86}}
 .warn-text{{color:#b54708}}
 .empty-actions{{margin-top:12px}}
 table{{width:100%;border-collapse:collapse;margin-top:12px;font-size:13px}}
@@ -1772,7 +1769,7 @@ const translations = {{
   "Showing SSH hosts from your config. Save selected hosts in Settings to make the home page faster.": "正在显示 SSH 配置中的主机。到设置保存常用服务器后，首页会更快。",
   "View all": "查看全部",
   "My training": "我的训练",
-  "Rank GPUs across SSH hosts by free VRAM, model, load, disk health, alerts, and tags.": "按空闲显存、型号、负载、磁盘健康、告警和标签对 SSH 主机上的 GPU 排序。",
+  "Rank GPUs across SSH hosts by GPU availability, free VRAM, model, load, and tags.": "按 GPU 是否空闲、空闲显存、型号、负载和标签对 SSH 主机上的 GPU 排序。",
   "Your LabGPU runs, adopted runs, and agentless GPU processes across SSH servers.": "你在各 SSH 服务器上的 LabGPU 任务、接管任务和无代理 GPU 进程。",
   "Configured SSH GPU servers, health, disks, and free/busy GPUs.": "已配置的 SSH GPU 服务器、健康状态、磁盘和 GPU 忙闲。",
   "Disk, SSH, GPU, and process conditions that need attention.": "需要关注的磁盘、SSH、GPU 和进程状态。",
@@ -1788,24 +1785,19 @@ const translations = {{
   "Tag": "标签",
   "Sort": "排序",
   "Recommended": "推荐",
-  "Free but risky": "空闲但有风险",
   "GPU free": "GPU 空闲",
   "GPU busy": "GPU 忙碌",
   "Choice score": "选择分",
-  "GPU is free, but the server has a critical disk or health alert.": "GPU 是空闲的，但服务器有严重磁盘或健康告警。",
-  "Server has a critical health alert.": "服务器有严重健康告警。",
   "A compute process is using this GPU.": "有计算进程正在使用这张 GPU。",
   "GPU memory is occupied with low current utilization.": "GPU 显存被占用，但当前利用率很低。",
-  "Usable, but server health has warnings.": "可以使用，但服务器健康状态有警告。",
-  "High free memory and no major server warning.": "空闲显存较高，且服务器没有主要告警。",
-  "Free GPU with no major warning.": "GPU 空闲，且没有主要告警。",
+  "GPU is free, but the server load is high.": "GPU 空闲，但服务器负载较高。",
+  "High free memory for training.": "空闲显存充足，适合训练。",
+  "GPU is free for training.": "GPU 空闲，可以训练。",
   "Why recommended": "推荐原因",
   "Free memory": "空闲显存",
   "GPU util": "GPU 利用率",
   "Temp": "温度",
-  "Disk": "磁盘",
   "Load": "负载",
-  "Unknown": "未知",
   "Server load": "服务器负载",
   "Filter": "过滤",
   "Clear": "清除",
