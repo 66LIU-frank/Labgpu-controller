@@ -31,10 +31,16 @@ find GPU -> run/adopt -> observe -> diagnose -> context/report -> safe action
 
 You run LabGPU on your own laptop. It reads your `~/.ssh/config`, probes the SSH hosts you choose, and opens a local web workspace. You do not need root access, a remote daemon, Slurm, Kubernetes, or a shared tracking server.
 
+Most users follow this path:
+
+```text
+install -> labgpu ui -> Settings add/import servers -> Train Now copy command -> labgpu where
+```
+
 Before using real servers, make sure this works:
 
 - Python 3.10+
-- `ssh YOUR_ALIAS` can reach your GPU server
+- `ssh YOUR_ALIAS` can reach your GPU server, or you know the host/user/key needed to add one
 - NVIDIA servers should have `nvidia-smi`
 
 ### 1. Install
@@ -76,6 +82,8 @@ In `Settings` you can:
 - add a new SSH server and optionally write a `Host` block to `~/.ssh/config`
 - import existing SSH aliases
 - create optional server groups such as `AlphaLab`, `off-campus`, or `H800`
+
+LabGPU does not create SSH keys for you. It uses your normal SSH setup: password login, SSH key, ssh-agent, `IdentityFile`, or `ProxyJump` all stay in SSH config. For automatic background probes, key/agent login is the smoothest because it avoids interactive password prompts.
 
 ### 4. Find a GPU and copy the launch command
 

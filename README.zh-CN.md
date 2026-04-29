@@ -31,10 +31,16 @@
 
 LabGPU 跑在你自己的电脑上。它读取你的 `~/.ssh/config`，通过 SSH 探测你选中的 GPU 服务器，然后打开本地工作台。不需要 root，不需要远端 daemon，不需要 Slurm/Kubernetes，也不需要共享 tracking server。
 
+大多数用户按这条路径用：
+
+```text
+安装 -> labgpu ui -> Settings 新增/导入服务器 -> Train Now 复制命令 -> labgpu where 找任务
+```
+
 接真实服务器前，先确认：
 
 - Python 3.10+
-- `ssh YOUR_ALIAS` 可以连到你的 GPU 服务器
+- `ssh YOUR_ALIAS` 可以连到你的 GPU 服务器，或者你知道新增服务器需要的 host/user/key
 - NVIDIA 服务器上有 `nvidia-smi`
 
 ### 1. 安装
@@ -76,6 +82,8 @@ labgpu ui
 - 新增 SSH 服务器，并可选择写入一个 `Host` block 到 `~/.ssh/config`
 - 从已有 `~/.ssh/config` 导入 SSH aliases
 - 后续再创建可选分组，比如 `AlphaLab`、`校外服务器`、`H800`
+
+LabGPU 不会替你生成 SSH key。它使用你原本的 SSH 配置：密码登录、SSH key、ssh-agent、`IdentityFile`、`ProxyJump` 都还是交给 SSH config。为了让后台自动探测更顺，最好配置好 key/agent，避免每次 probe 都要交互式输入密码。
 
 ### 4. 找卡并复制启动命令
 
