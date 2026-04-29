@@ -311,9 +311,13 @@ class ServerHandler(BaseHTTPRequestHandler):
     def _data(self, query: str) -> dict[str, object]:
         params = parse_qs(query)
         names = self.names
+        scope_mode = "command" if self.names else ""
         if params.get("hosts"):
             names = split_hosts(params["hosts"][0])
+            scope_mode = "url"
         pattern = params.get("pattern", [self.pattern])[0]
+        if pattern and not scope_mode:
+            scope_mode = "pattern"
         refresh = truthy(params.get("refresh", ["0"])[0])
         data = collect_servers(
             ssh_config=self.ssh_config,
@@ -324,6 +328,9 @@ class ServerHandler(BaseHTTPRequestHandler):
             use_cache=not refresh,
             background_refresh=not refresh,
         )
+        data["scope_mode"] = scope_mode
+        data["scope_hosts"] = names or []
+        data["scope_pattern"] = pattern or ""
         data["ui"] = {
             "q": params.get("q", [""])[0].strip(),
             "min_mem_gb": params.get("min_mem_gb", [""])[0].strip(),
@@ -485,7 +492,7 @@ def render_index(data: dict[str, object]) -> str:
     if not cards:
         cards = f"<p class='muted'>{esc(data.get('error') or 'No hosts found.')}</p>"
     mode = str(data.get("inventory_mode") or "ssh_config")
-    server_note = {
+    server_note = scope_note(data) or {
         "saved": "Showing your saved enabled servers. Change this list in Settings.",
         "demo": "Showing built-in demo servers.",
     }.get(mode, "Showing SSH hosts from your config. Save selected hosts in Settings to make the home page faster.")
@@ -711,15 +718,33 @@ def render_data_status(data: dict[str, object]) -> str:
         message = f"Opening from local cache. Background refresh is running for {len(refreshing)} server(s). Oldest snapshot: {age}."
     else:
         message = f"Opening from local cache. Oldest snapshot: {age}."
+    scope = scope_note(data)
+    scope_html = f"<span>{esc(scope)}</span>" if scope else ""
     return (
         "<section class='panel'>"
         "<div class='meta'>"
         "<span class='badge'>Cached page</span>"
         f"<span>{esc(message)}</span>"
+        f"{scope_html}"
         "<button class='button' id='refresh-now' type='button'>Refresh now</button>"
         "</div>"
         "</section>"
     )
+
+
+def scope_note(data: dict[str, object]) -> str:
+    mode = str(data.get("scope_mode") or "")
+    hosts = data.get("scope_hosts") if isinstance(data.get("scope_hosts"), list) else []
+    host_text = ", ".join(str(host) for host in hosts if str(host).strip())
+    if mode == "command":
+        return "Showing hosts fixed by this UI launch. Settings are saved, but this view will stay scoped until you restart without --hosts."
+    if mode == "url":
+        suffix = f": {host_text}" if host_text else ""
+        return f"Showing hosts from the URL filter{suffix}."
+    if mode == "pattern":
+        pattern = str(data.get("scope_pattern") or "")
+        return f"Showing hosts matching pattern: {pattern}."
+    return ""
 
 
 def render_filters(ui: dict[str, object], *, kind: str = "all") -> str:
@@ -1767,6 +1792,7 @@ const translations = {{
   "Showing your saved enabled servers. Change this list in Settings.": "正在显示你保存并启用的服务器。可在设置中修改。",
   "Showing built-in demo servers.": "正在显示内置演示服务器。",
   "Showing SSH hosts from your config. Save selected hosts in Settings to make the home page faster.": "正在显示 SSH 配置中的主机。到设置保存常用服务器后，首页会更快。",
+  "Showing hosts fixed by this UI launch. Settings are saved, but this view will stay scoped until you restart without --hosts.": "当前视图被本次 UI 启动参数固定。设置已经保存，但要不带 --hosts 重启 UI 后才会生效。",
   "View all": "查看全部",
   "My training": "我的训练",
   "Rank GPUs across SSH hosts by GPU availability, free VRAM, model, load, and tags.": "按 GPU 是否空闲、空闲显存、型号、负载和标签对 SSH 主机上的 GPU 排序。",
