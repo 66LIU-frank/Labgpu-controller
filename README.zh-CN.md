@@ -55,7 +55,6 @@ labgpu where
 | 保存实验现场 | run capsule 保存命令、日志、git、config、env summary、GPU 信息。 |
 | 诊断失败 | `diagnose` 和 Failure Inbox 识别 OOM、Traceback、NCCL、disk full、killed、NaN、suspected idle。 |
 | 发给 AI/同学求助 | `labgpu context --copy` 复制一份默认脱敏的 Markdown debug context。 |
-| 和工作台对话 | `LabGPU Assistant` 基于当前 GPU/runs/failure 数据回答，并返回可复制计划。 |
 | 安全停止 | UI 只对自己的进程显示 stop action，并做保守校验。 |
 
 ## 日常用法
@@ -134,9 +133,6 @@ My Runs
 Failed or Suspicious Runs
   OOM、Traceback、NCCL、disk full、killed、NaN、suspected idle、日志不更新。
 
-Assistant
-  只读聊天入口，用来推荐 GPU、回答任务在哪、总结失败项、生成可复制启动/debug 计划。
-
 Problems
   离线/缓存服务器、磁盘告警、probe timeout、process health warning。
 
@@ -197,7 +193,6 @@ LabGPU 是个人工具，不是 scheduler、reservation、quota、admin panel，
 ```text
 labgpu init [--hosts alpha_liu,alpha_shi] [--tags A100,training]
 labgpu ui [--hosts alpha_liu,alpha_shi] [--fake-lab]
-# 浏览器里打开 /assistant 可使用 LabGPU Assistant。
 labgpu pick [--min-vram 24G] [--prefer A100] [--tag training] [--explain] [--cmd "COMMAND"] [--json]
 labgpu where [--json]
 labgpu nettest SRC_HOST DST_HOST [--mb 64] [--both] [--direct] [--json]
@@ -217,6 +212,16 @@ labgpu servers list
 labgpu servers probe alpha_liu
 labgpu demo
 ```
+
+## 未来 TODO：LabGPU Agent
+
+LabGPU 当前的核心是上面这条个人训练工作流。AI Assistant 还没有完善，所以不把它作为主卖点；更适合放在下一阶段路线里：
+
+- 用自然语言问：帮我找一张 24GB+ 的 A100，并生成启动命令
+- 基于当前 GPU 和 run 状态生成安全、可复制的 launch/adopt/rerun 计划
+- 结合日志、config、git、env summary、GPU history 解释失败原因
+- 一键整理脱敏 debug context，方便发给 ChatGPT、Claude、Codex 或同学
+- 未来可以在用户确认后执行 LabGPU allowlist action，但不会给 AI 任意 SSH shell 权限
 
 ## 当前状态
 
