@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from labgpu.remote.ssh_config import SSHHost, parse_ssh_config, resolve_ssh_host, select_hosts
+from labgpu.remote.ssh_config import SSHHost, append_ssh_host, parse_ssh_config, resolve_ssh_host, select_hosts
 
 
 class SSHConfigTest(unittest.TestCase):
@@ -71,6 +71,39 @@ identityfile ~/.ssh/id_ed25519
         self.assertEqual(host.port, "2222")
         self.assertEqual(host.proxyjump, "bastion")
         self.assertEqual(host.identity_files, ["~/.ssh/id_ed25519"])
+
+    def test_append_ssh_host_writes_backup_and_host_block(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config"
+            path.write_text("Host old\n  HostName old.example\n", encoding="utf-8")
+            written, backup = append_ssh_host(
+                alias="alpha_liu",
+                hostname="gpu.example.edu",
+                user="student",
+                port="2222",
+                proxyjump="bastion",
+                identity_file="~/.ssh/id_ed25519",
+                path=path,
+            )
+            text = path.read_text(encoding="utf-8")
+            self.assertEqual(written, path)
+            self.assertIsNotNone(backup)
+            self.assertTrue(backup.exists())
+            self.assertIn("Host old", backup.read_text(encoding="utf-8"))
+            self.assertIn("Host alpha_liu", text)
+            self.assertIn("HostName gpu.example.edu", text)
+            self.assertIn("User student", text)
+            self.assertIn("Port 2222", text)
+            self.assertIn("ProxyJump bastion", text)
+            self.assertIn("IdentityFile ~/.ssh/id_ed25519", text)
+            self.assertEqual([host.alias for host in parse_ssh_config(path)], ["old", "alpha_liu"])
+
+    def test_append_ssh_host_rejects_existing_alias(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "config"
+            path.write_text("Host alpha_liu\n  HostName old.example\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                append_ssh_host(alias="alpha_liu", hostname="gpu.example.edu", path=path)
 
 
 if __name__ == "__main__":

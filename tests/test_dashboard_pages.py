@@ -175,6 +175,9 @@ class DashboardPagesTest(unittest.TestCase):
                 else:
                     os.environ["LABGPU_HOME"] = old_home
             self.assertIn("Import From SSH Config", html)
+            self.assertIn("Add Server", html)
+            self.assertIn("settings-add-server", html)
+            self.assertIn("Write to SSH config", html)
             self.assertIn("alpha_liu", html)
             self.assertIn("value='alpha_liu' checked", html)
             self.assertIn("Save selected hosts", html)

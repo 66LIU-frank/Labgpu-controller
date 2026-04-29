@@ -4,6 +4,7 @@ import glob
 import shlex
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 
@@ -166,3 +167,80 @@ def _first_str(value: str | list[str] | None) -> str | None:
 
 def quote_words(values: list[str]) -> str:
     return " ".join(shlex.quote(value) for value in values)
+
+
+def append_ssh_host(
+    *,
+    alias: str,
+    hostname: str,
+    user: str | None = None,
+    port: str | None = None,
+    proxyjump: str | None = None,
+    identity_file: str | None = None,
+    path: str | Path | None = None,
+) -> tuple[Path, Path | None]:
+    """Append a concrete Host block to an OpenSSH config file.
+
+    Existing files are backed up before appending. Existing aliases are not
+    overwritten because SSH config merging can be surprising and hard to undo.
+    """
+    alias = alias.strip()
+    hostname = hostname.strip()
+    if not _valid_host_token(alias):
+        raise ValueError("alias must be a single SSH Host token without spaces, *, ?, or !")
+    if not hostname:
+        raise ValueError("hostname is required")
+    target = Path(path).expanduser() if path else default_ssh_config_path()
+    existing = {host.alias for host in parse_ssh_config(target)} if target.exists() else set()
+    if alias in existing:
+        raise ValueError(f"SSH alias already exists: {alias}")
+    target.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    backup: Path | None = None
+    if target.exists():
+        backup = target.with_name(f"{target.name}.labgpu-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}")
+        backup.write_text(target.read_text(encoding="utf-8", errors="replace"), encoding="utf-8")
+    block = render_ssh_host_block(
+        alias=alias,
+        hostname=hostname,
+        user=user,
+        port=port,
+        proxyjump=proxyjump,
+        identity_file=identity_file,
+    )
+    prefix = "\n" if target.exists() and target.read_text(encoding="utf-8", errors="replace").strip() else ""
+    with target.open("a", encoding="utf-8") as handle:
+        handle.write(prefix + block)
+    try:
+        target.chmod(0o600)
+    except OSError:
+        pass
+    return target, backup
+
+
+def render_ssh_host_block(
+    *,
+    alias: str,
+    hostname: str,
+    user: str | None = None,
+    port: str | None = None,
+    proxyjump: str | None = None,
+    identity_file: str | None = None,
+) -> str:
+    lines = [
+        "# Added by LabGPU",
+        f"Host {alias.strip()}",
+        f"  HostName {hostname.strip()}",
+    ]
+    if user and user.strip():
+        lines.append(f"  User {user.strip()}")
+    if port and port.strip():
+        lines.append(f"  Port {port.strip()}")
+    if proxyjump and proxyjump.strip():
+        lines.append(f"  ProxyJump {proxyjump.strip()}")
+    if identity_file and identity_file.strip():
+        lines.append(f"  IdentityFile {identity_file.strip()}")
+    return "\n".join(lines) + "\n"
+
+
+def _valid_host_token(value: str) -> bool:
+    return bool(value) and not any(ch.isspace() or ch in "*?!" for ch in value)

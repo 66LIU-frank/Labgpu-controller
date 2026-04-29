@@ -22,7 +22,7 @@ from labgpu.remote.history import append_history, apply_history_evidence, read_h
 from labgpu.remote.inventory import load_inventory
 from labgpu.remote.probe import probe_host
 from labgpu.remote import ranking
-from labgpu.remote.ssh_config import SSHHost, parse_ssh_config, resolve_ssh_host
+from labgpu.remote.ssh_config import SSHHost, append_ssh_host, default_ssh_config_path, parse_ssh_config, resolve_ssh_host
 from labgpu.remote.state import alerts_for_server, annotate_server, build_overview, human_duration
 from labgpu.remote.workspace import failure_inbox_items, training_items
 
@@ -300,6 +300,9 @@ class ServerHandler(BaseHTTPRequestHandler):
         if parts == ["api", "settings", "import-ssh"]:
             self._settings_import()
             return
+        if parts == ["api", "settings", "add-server"]:
+            self._settings_add_server()
+            return
         if parts == ["api", "assistant", "chat"]:
             self._assistant_chat()
             return
@@ -446,6 +449,70 @@ class ServerHandler(BaseHTTPRequestHandler):
             config.servers[entry.name] = entry
         write_config(config)
         self._json({"ok": True, "imported": aliases})
+
+    def _settings_add_server(self) -> None:
+        if not self.action_allowed:
+            self.send_error(HTTPStatus.FORBIDDEN, "actions disabled")
+            return
+        payload = self._read_body_payload()
+        if not self._valid_action_token(payload):
+            self.send_error(HTTPStatus.FORBIDDEN, "invalid action token")
+            return
+        alias = str(first_value(payload.get("alias")) or "").strip()
+        hostname = str(first_value(payload.get("hostname")) or "").strip()
+        user = str(first_value(payload.get("user")) or "").strip()
+        port = str(first_value(payload.get("port")) or "").strip()
+        proxyjump = str(first_value(payload.get("proxyjump")) or "").strip()
+        identity_file = str(first_value(payload.get("identity_file")) or "").strip()
+        write_ssh = truthy(first_value(payload.get("write_ssh_config")), default=True)
+        tags = split_csv(str(first_value(payload.get("tags")) or ""))
+        disk_paths = split_csv(str(first_value(payload.get("disk_paths")) or "")) or ["/", "/home", "/data", "/scratch", "/mnt", "/nvme"]
+        shared_account = truthy(first_value(payload.get("shared_account")))
+        allow_stop = truthy(first_value(payload.get("allow_stop_own_process")), default=True)
+        if not alias:
+            self.send_error(HTTPStatus.BAD_REQUEST, "alias is required")
+            return
+        if write_ssh and not hostname:
+            self.send_error(HTTPStatus.BAD_REQUEST, "hostname is required when writing SSH config")
+            return
+        ssh_config_path = Path(self.ssh_config).expanduser() if self.ssh_config else default_ssh_config_path()
+        written_path: Path | None = None
+        backup_path: Path | None = None
+        if write_ssh:
+            try:
+                written_path, backup_path = append_ssh_host(
+                    alias=alias,
+                    hostname=hostname,
+                    user=user or None,
+                    port=port or None,
+                    proxyjump=proxyjump or None,
+                    identity_file=identity_file or None,
+                    path=ssh_config_path,
+                )
+            except ValueError as exc:
+                self.send_error(HTTPStatus.BAD_REQUEST, str(exc))
+                return
+            except OSError as exc:
+                self.send_error(HTTPStatus.CONFLICT, f"failed to write SSH config: {exc}")
+                return
+        config = load_config()
+        entry = config.servers.get(alias) or ServerEntry(name=alias, alias=alias)
+        entry.enabled = True
+        entry.tags = tags
+        entry.disk_paths = disk_paths
+        entry.shared_account = shared_account
+        entry.allow_stop_own_process = allow_stop
+        config.servers[entry.name] = entry
+        write_config(config)
+        self._json(
+            {
+                "ok": True,
+                "alias": alias,
+                "ssh_config": str(written_path or ssh_config_path),
+                "ssh_config_written": write_ssh,
+                "backup": str(backup_path) if backup_path else "",
+            }
+        )
 
     def _assistant_chat(self) -> None:
         payload = self._read_body_payload()
@@ -600,6 +667,7 @@ def render_alerts_page(data: dict[str, object]) -> str:
 def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
     config = load_config()
     ssh_hosts = parse_ssh_config(ssh_config)
+    ssh_config_path = Path(ssh_config).expanduser() if ssh_config else default_ssh_config_path()
     saved_enabled = {entry.alias for entry in config.servers.values() if entry.enabled}
     host_rows = "".join(
         f"<tr><td><label><input type='checkbox' name='aliases' value='{esc(host.alias)}' {'checked' if host.alias in saved_enabled else ''}> <code>{esc(host.alias)}</code></label></td><td>{esc(host.hostname or '-')}</td><td>{esc(host.user or '-')}</td><td>{esc(host.port or 22)}</td><td><a href='/servers/{esc(host.alias)}'>Test connection</a></td></tr>"
@@ -622,6 +690,28 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
           <h2>Interface</h2>
           <label class="inline-setting"><input type="checkbox" id="show-json-toggle"> Show JSON/API links</label>
           <p class="muted">Show raw JSON/API links in the top-right controls. Most users can leave this off.</p>
+        </section>
+        <section class="panel">
+          <h2>Add Server</h2>
+          <p class="muted">Add a new SSH GPU server for first-time setup. LabGPU can append a Host block to <code>{esc(ssh_config_path)}</code> and save the server to <code>~/.labgpu/config.toml</code>.</p>
+          <form id="settings-add-server">
+            <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
+            <div class="filters">
+              <label>Alias <input name="alias" required placeholder="alpha_liu"></label>
+              <label>HostName <input name="hostname" required placeholder="gpu.example.edu"></label>
+              <label>User <input name="user" placeholder="student"></label>
+              <label>Port <input name="port" placeholder="22"></label>
+              <label>ProxyJump <input name="proxyjump" placeholder="bastion"></label>
+              <label>IdentityFile <input name="identity_file" placeholder="~/.ssh/id_ed25519"></label>
+              <label>Tags <input name="tags" placeholder="A100,training"></label>
+              <label>Disk paths <input name="disk_paths" value="/,/home,/data,/scratch,/mnt,/nvme"></label>
+              <label><input type="checkbox" name="write_ssh_config" value="1" checked> Write to SSH config</label>
+              <label><input type="checkbox" name="shared_account" value="1"> Shared Linux account</label>
+              <label><input type="checkbox" name="allow_stop_own_process" value="1" checked> Allow stop own process</label>
+              <button class="button" type="submit">Add server</button>
+            </div>
+          </form>
+          <p class="muted">If the SSH config file already exists, LabGPU writes a backup before appending. Existing SSH aliases are not overwritten.</p>
         </section>
         <section class="panel">
           <h2>Saved Servers</h2>
@@ -1767,6 +1857,11 @@ const translations = {{
   "Interface": "界面",
   "Show JSON/API links": "显示 JSON/API 链接",
   "Show raw JSON/API links in the top-right controls. Most users can leave this off.": "在右上角控制区显示原始 JSON/API 链接。大多数用户可以保持关闭。",
+  "Add Server": "新增服务器",
+  "Add server": "新增服务器",
+  "Add a new SSH GPU server for first-time setup. LabGPU can append a Host block to": "为首次配置新增一台 SSH GPU 服务器。LabGPU 可以追加一个 Host 配置到",
+  "and save the server to": "并把服务器保存到",
+  "If the SSH config file already exists, LabGPU writes a backup before appending. Existing SSH aliases are not overwritten.": "如果 SSH config 已存在，LabGPU 会先写备份再追加。已有 SSH alias 不会被覆盖。",
   "Dark": "深色",
   "Light": "浅色",
   "LabGPU Home": "LabGPU 主页",
@@ -1876,6 +1971,8 @@ const translations = {{
   "Probe": "探测",
   "Test connection": "测试连接",
   "Save selected hosts": "保存选中主机",
+  "Write to SSH config": "写入 SSH config",
+  "IdentityFile": "IdentityFile",
   "Copy SSH command": "复制 SSH 命令",
   "Copy CUDA_VISIBLE_DEVICES": "复制 CUDA_VISIBLE_DEVICES",
   "Copy launch snippet": "复制启动片段",
@@ -2062,6 +2159,25 @@ if (settingsImport) {{
       window.location.reload();
     }} else {{
       window.alert("Saving settings failed.");
+    }}
+  }});
+}}
+const settingsAddServer = document.getElementById("settings-add-server");
+if (settingsAddServer) {{
+  settingsAddServer.addEventListener("submit", async (event) => {{
+    event.preventDefault();
+    const form = new FormData(settingsAddServer);
+    const response = await fetch("/api/settings/add-server", {{
+      method: "POST",
+      body: new URLSearchParams(form)
+    }});
+    const payload = await response.json().catch(() => ({{}}));
+    if (response.ok) {{
+      const backup = payload.backup ? `\\nBackup: ${{payload.backup}}` : "";
+      window.alert(`Saved ${{payload.alias || "server"}}.\\nSSH config: ${{payload.ssh_config || "-"}}${{backup}}`);
+      window.location.reload();
+    }} else {{
+      window.alert(payload.message || payload.error || "Adding server failed.");
     }}
   }});
 }}
