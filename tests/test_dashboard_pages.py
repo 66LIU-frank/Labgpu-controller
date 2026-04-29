@@ -212,6 +212,7 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertEqual(data["cache_mode"], "snapshot")
         html = render_index(data)
         self.assertIn("Cached page", html)
+        self.assertIn("Cached data age", html)
         self.assertIn("Refresh now", html)
 
     def test_summary_cards_and_empty_gpu_state(self):

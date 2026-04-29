@@ -866,18 +866,19 @@ def render_data_status(data: dict[str, object]) -> str:
     refreshing = data.get("refreshing_hosts") if isinstance(data.get("refreshing_hosts"), list) else []
     oldest = int(data.get("oldest_cache_age_seconds") or 0)
     age = human_duration(oldest) if oldest else "just now"
-    if missing and refreshing:
-        message = f"{missing} server has no cached snapshot yet. Background refresh is running."
-    elif refreshing:
-        message = f"Opening from local cache. Background refresh is running for {len(refreshing)} server(s). Oldest snapshot: {age}."
-    else:
-        message = f"Opening from local cache. Oldest snapshot: {age}."
+    parts = ["<span>Opening from local cache.</span>"]
+    if refreshing:
+        parts.append("<span>Background refresh is running.</span>")
+    if missing:
+        parts.append(f"<span><span>Servers missing cache</span>: {esc(missing)}</span>")
+    parts.append(f"<span><span>Cached data age</span>: {esc(age)}</span>")
+    message = " ".join(parts)
     scope = scope_note(data)
     scope_html = f"<span class='badge warning' title='{esc(scope)}'>Scoped</span>" if scope else ""
     return (
         "<div class='cache-status'>"
         "<span class='badge'>Cached page</span>"
-        f"<span class='cache-message'>{esc(message)}</span>"
+        f"<span class='cache-message'>{message}</span>"
         f"{scope_html}"
         "</div>"
     )
@@ -1969,6 +1970,10 @@ const translations = {{
   "Resume refresh": "继续刷新",
   "Refresh now": "立即刷新",
   "Cached page": "缓存页面",
+  "Opening from local cache.": "正在打开本地缓存。",
+  "Background refresh is running.": "后台正在刷新。",
+  "Servers missing cache": "缺少缓存的服务器",
+  "Cached data age": "缓存距上次刷新",
   "Scoped": "范围固定",
   "Interface": "界面",
   "Show JSON/API links": "显示 JSON/API 链接",
