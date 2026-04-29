@@ -504,12 +504,7 @@ def render_index(data: dict[str, object]) -> str:
             <h1>LabGPU Home</h1>
             <p>Personal GPU workspace for students using shared SSH servers.</p>
           </div>
-          <div class="actions">
-            <button class="button" id="pause-refresh" type="button">Pause refresh</button>
-            <a class="button" href="/api/servers">JSON</a>
-          </div>
         </section>
-        {render_data_status(data)}
         {render_overview(overview)}
         {render_train_now(overview, limit=4)}
         {render_my_training(training_items(hosts, overview), limit=8, view_all='/me')}
@@ -517,6 +512,7 @@ def render_index(data: dict[str, object]) -> str:
         {render_alerts(overview.get('alert_items') if isinstance(overview, dict) else [], limit=8, view_all='/alerts', title='Problems')}
         <section class="panel"><div class="section-head"><h2>Servers</h2><a href="/settings">Choose home servers</a></div><p class="muted">{esc(server_note)}</p><div class="grid compact">{cards}</div></section>
         """,
+        status=render_data_status(data),
     )
 
 
@@ -531,13 +527,12 @@ def render_gpus_page(data: dict[str, object]) -> str:
             <h1>Train Now</h1>
             <p>Rank GPUs across SSH hosts by GPU availability, free VRAM, model, load, and tags.</p>
           </div>
-          <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/">Overview</a></div>
         </section>
-        {render_data_status(data)}
         {render_filters(ui, kind='gpus')}
         {render_gpu_watch_panel(ui)}
         {render_gpu_finder(overview, ui)}
         """,
+        status=render_data_status(data),
     )
 
 
@@ -553,13 +548,12 @@ def render_me_page(data: dict[str, object]) -> str:
             <h1>My Training</h1>
             <p>Your LabGPU runs, adopted runs, and agentless GPU processes across SSH servers.</p>
           </div>
-          <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/">Overview</a></div>
         </section>
-        {render_data_status(data)}
         {render_process_filters(ui)}
         {render_my_training(training_items(hosts, overview), ui=ui)}
         {render_my_processes(overview.get('my_process_items') if isinstance(overview, dict) else [], ui=ui, title='Agentless Own GPU Processes')}
         """,
+        status=render_data_status(data),
     )
 
 
@@ -576,12 +570,11 @@ def render_servers_page(data: dict[str, object]) -> str:
             <h1>Servers</h1>
             <p>Configured SSH GPU servers, health, disks, and free/busy GPUs.</p>
           </div>
-          <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/settings">Settings</a></div>
         </section>
-        {render_data_status(data)}
         {render_server_filters(ui)}
         <section class="grid">{cards}</section>
         """,
+        status=render_data_status(data),
     )
 
 
@@ -596,12 +589,11 @@ def render_alerts_page(data: dict[str, object]) -> str:
             <h1>Alerts</h1>
             <p>Disk, SSH, GPU, and process conditions that need attention.</p>
           </div>
-          <div class="actions"><button class="button" id="pause-refresh" type="button">Pause refresh</button><a class="button" href="/">Overview</a></div>
         </section>
-        {render_data_status(data)}
         {render_alert_filters(ui)}
         {render_alerts(overview.get('all_alert_items') if isinstance(overview, dict) else [], ui=ui, title='All Alerts')}
         """,
+        status=render_data_status(data),
     )
 
 
@@ -625,7 +617,11 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
             <h1>Settings</h1>
             <p>Import SSH hosts and manage the server inventory stored in <code>~/.labgpu/config.toml</code>.</p>
           </div>
-          <div class="actions"><a class="button" href="/">Overview</a><a class="button" href="/servers">Servers</a></div>
+        </section>
+        <section class="panel">
+          <h2>Interface</h2>
+          <label class="inline-setting"><input type="checkbox" id="show-json-toggle"> Show JSON/API links</label>
+          <p class="muted">Show raw JSON/API links in the top-right controls. Most users can leave this off.</p>
         </section>
         <section class="panel">
           <h2>Saved Servers</h2>
@@ -660,9 +656,7 @@ def render_assistant_page(data: dict[str, object]) -> str:
             <h1>LabGPU Assistant</h1>
             <p>Chat with your GPU workspace. Read-only and copy-only in this alpha.</p>
           </div>
-          <div class="actions"><a class="button" href="/">Overview</a><a class="button" href="/gpus">Train Now</a></div>
         </section>
-        {render_data_status(data)}
         <section class="panel assistant-panel">
           <div class="assistant-examples">
             <button class="small" type="button" data-assistant-example="Find me a 24G A100 for python train.py --config configs/sft.yaml">Find a GPU</button>
@@ -683,6 +677,7 @@ def render_assistant_page(data: dict[str, object]) -> str:
         </section>
         {render_train_now(overview, limit=3)}
         """,
+        status=render_data_status(data),
     )
 
 
@@ -719,16 +714,13 @@ def render_data_status(data: dict[str, object]) -> str:
     else:
         message = f"Opening from local cache. Oldest snapshot: {age}."
     scope = scope_note(data)
-    scope_html = f"<span>{esc(scope)}</span>" if scope else ""
+    scope_html = f"<span class='badge warning' title='{esc(scope)}'>Scoped</span>" if scope else ""
     return (
-        "<section class='panel'>"
-        "<div class='meta'>"
+        "<div class='cache-status'>"
         "<span class='badge'>Cached page</span>"
-        f"<span>{esc(message)}</span>"
+        f"<span class='cache-message'>{esc(message)}</span>"
         f"{scope_html}"
-        "<button class='button' id='refresh-now' type='button'>Refresh now</button>"
         "</div>"
-        "</section>"
     )
 
 
@@ -1241,23 +1233,19 @@ def render_detail(data: dict[str, object]) -> str:
     host = hosts[0] if hosts else {}
     if not isinstance(host, dict):
         host = {}
+    json_href = "/api/servers"
     if not host:
         content = "<p class='muted'>Server not found.</p>"
     else:
         host = display_with_cache(host)
+        json_href = f"/api/servers/{esc(host.get('alias'))}"
         content = f"""
         <section class="toolbar">
           <div>
             <h1>{esc(host.get('alias'))}</h1>
             <p>{esc(host.get('remote_hostname') or host.get('hostname') or '')}</p>
           </div>
-          <div class="actions">
-            <button class="button" id="pause-refresh" type="button">Pause refresh</button>
-            <a class="button" href="/">All servers</a>
-            <a class="button" href="/api/servers/{esc(host.get('alias'))}">JSON</a>
-          </div>
         </section>
-        {render_data_status(data)}
         {render_cache_notice(host)}
         {render_health(host)}
         {render_labgpu_runs(host)}
@@ -1265,7 +1253,7 @@ def render_detail(data: dict[str, object]) -> str:
         <section class="panel"><h2>GPUs</h2><div class="gpu-grid">{''.join(render_gpu_card(gpu, server_alias=host.get('alias')) for gpu in host.get('gpus') or [])}</div></section>
         <section class="panel"><h2>Processes</h2>{render_process_table(host.get('processes') or [], server_alias=host.get('alias'))}</section>
         """
-    return page("LabGPU Server", content)
+    return page("LabGPU Server", content, status=render_data_status(data), json_href=json_href)
 
 
 def render_host_card(host: object, *, compact: bool = False) -> str:
@@ -1623,7 +1611,7 @@ def process_evidence_text(proc: dict[str, object]) -> str:
     return "; ".join(parts)
 
 
-def page(title: str, body: str) -> str:
+def page(title: str, body: str, *, status: str = "", json_href: str = "/api/servers") -> str:
     return f"""<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{esc(title)}</title>
@@ -1673,8 +1661,14 @@ body{{font:14px/1.45 system-ui,sans-serif;margin:0;background:var(--bg);color:va
 main{{width:min(1280px,calc(100vw - 32px));margin:0 auto;padding:22px 0 36px}}
 h1,h2,h3,p{{margin:0}} h1{{font-size:28px}} h2{{font-size:18px}} h3{{font-size:15px}} p,.muted{{color:var(--muted)}}
 a{{color:inherit}} code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:var(--code)}}
-.topnav{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:18px}}
-.topnav a,.topnav button{{border:1px solid var(--border);background:var(--button);border-radius:999px;padding:6px 10px;text-decoration:none;color:var(--link);font:inherit;cursor:pointer}}
+.topbar{{display:flex;justify-content:space-between;gap:16px;align-items:flex-start;margin-bottom:24px}}
+.topnav,.top-controls{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
+.top-controls{{justify-content:flex-end;max-width:min(560px,45vw)}}
+.topnav a,.top-controls a,.top-controls button{{border:1px solid var(--border);background:var(--button);border-radius:999px;padding:6px 10px;text-decoration:none;color:var(--link);font:inherit;cursor:pointer;white-space:nowrap}}
+.cache-status{{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex:1 1 100%;min-width:min(420px,100%);color:var(--muted);font-size:12px}}
+.cache-message{{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(300px,24vw)}}
+.json-control{{display:none!important}}
+html.show-json .json-control{{display:inline-flex!important}}
 dialog{{border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);max-width:min(560px,calc(100vw - 32px));padding:18px}}
 dialog::backdrop{{background:rgba(0,0,0,.45)}}
 .modal-actions{{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}}
@@ -1684,6 +1678,7 @@ dialog::backdrop{{background:rgba(0,0,0,.45)}}
 .filters{{display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px}}
 .filters label{{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}}
 .filters input,.filters select{{border:1px solid var(--border);border-radius:6px;padding:7px 8px;min-width:150px;background:var(--button);color:var(--text)}}
+.inline-setting{{display:flex;gap:8px;align-items:center;margin-top:8px}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}}
 .grid.compact{{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}}
 .split{{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px;align-items:start}}
@@ -1726,8 +1721,9 @@ html[data-theme="dark"] .pill.online{{color:#86efac;background:#143421}} html[da
 html[data-theme="dark"] .badge.ok{{background:#143421;color:#86efac}} html[data-theme="dark"] .badge.warning{{background:#3b2a0a;color:#facc15}} html[data-theme="dark"] .badge.error{{background:#3a1717;color:#fca5a5}}
 html[data-theme="dark"] .warn-text{{color:#facc15}}
 html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
+@media(max-width:860px){{.topbar{{flex-direction:column}}.top-controls{{justify-content:flex-start;max-width:none}}.cache-message{{max-width:calc(100vw - 96px)}}}}
 @media(max-width:640px){{main{{width:calc(100vw - 20px)}}.grid,.split{{grid-template-columns:1fr}}.toolbar{{align-items:flex-start;flex-direction:column}}.assistant-form{{grid-template-columns:1fr}}}}
-</style></head><body><main>{render_nav()}{body}</main>
+</style></head><body><main>{render_nav(status=status, json_href=json_href)}{body}</main>
 <dialog id="stop-modal">
   <h2>Stop process?</h2>
   <p class="muted">This stops the single PID shown below. Child processes may continue unless this is a LabGPU-tracked run.</p>
@@ -1753,6 +1749,7 @@ const actionToken = "{esc(ServerHandler.action_token)}";
 let selectedStopButton = null;
 const themeButton = document.getElementById("theme-toggle");
 const languageButton = document.getElementById("language-toggle");
+const jsonToggle = document.getElementById("show-json-toggle");
 const translations = {{
   "Overview": "总览",
   "Train Now": "现在开跑",
@@ -1766,6 +1763,10 @@ const translations = {{
   "Resume refresh": "继续刷新",
   "Refresh now": "立即刷新",
   "Cached page": "缓存页面",
+  "Scoped": "范围固定",
+  "Interface": "界面",
+  "Show JSON/API links": "显示 JSON/API 链接",
+  "Show raw JSON/API links in the top-right controls. Most users can leave this off.": "在右上角控制区显示原始 JSON/API 链接。大多数用户可以保持关闭。",
   "Dark": "深色",
   "Light": "浅色",
   "LabGPU Home": "LabGPU 主页",
@@ -1941,7 +1942,13 @@ function applyTheme(theme) {{
   document.documentElement.dataset.theme = dark ? "dark" : "light";
   updateThemeButton();
 }}
+function applyJsonPreference() {{
+  const enabled = localStorage.getItem("labgpu-show-json") === "1";
+  document.documentElement.classList.toggle("show-json", enabled);
+  if (jsonToggle) jsonToggle.checked = enabled;
+}}
 try {{
+  applyJsonPreference();
   applyTheme(localStorage.getItem("labgpu-theme") || "system");
   applyLanguage(currentLanguage());
   if (themeButton) {{
@@ -1956,6 +1963,12 @@ try {{
       const next = currentLanguage() === "zh" ? "en" : "zh";
       localStorage.setItem("labgpu-language", next);
       applyLanguage(next);
+    }});
+  }}
+  if (jsonToggle) {{
+    jsonToggle.addEventListener("change", () => {{
+      localStorage.setItem("labgpu-show-json", jsonToggle.checked ? "1" : "0");
+      applyJsonPreference();
     }});
   }}
 }} catch (error) {{}}
@@ -2224,18 +2237,26 @@ def known_ssh_aliases(ssh_config: str | Path | None = None) -> set[str]:
     return {alias for alias in aliases if alias}
 
 
-def render_nav() -> str:
-    return """
-    <nav class="topnav">
-      <a href="/">Overview</a>
-      <a href="/gpus">Train Now</a>
-      <a href="/me">My Training</a>
-      <a href="/assistant">Assistant</a>
-      <a href="/servers">Servers</a>
-      <a href="/alerts">Alerts</a>
-      <a href="/settings">Settings</a>
-      <button id="language-toggle" type="button">中文</button>
-      <button id="theme-toggle" type="button">Dark</button>
+def render_nav(*, status: str = "", json_href: str = "/api/servers") -> str:
+    return f"""
+    <nav class="topbar">
+      <div class="topnav" aria-label="Primary navigation">
+        <a href="/">Overview</a>
+        <a href="/gpus">Train Now</a>
+        <a href="/me">My Training</a>
+        <a href="/assistant">Assistant</a>
+        <a href="/servers">Servers</a>
+        <a href="/alerts">Alerts</a>
+        <a href="/settings">Settings</a>
+      </div>
+      <div class="top-controls" aria-label="Display and refresh controls">
+        {status}
+        <button id="refresh-now" type="button">Refresh now</button>
+        <button id="pause-refresh" type="button">Pause refresh</button>
+        <a class="json-control" href="{esc(json_href)}">JSON</a>
+        <button id="language-toggle" type="button">中文</button>
+        <button id="theme-toggle" type="button">Dark</button>
+      </div>
     </nav>
     """
 
