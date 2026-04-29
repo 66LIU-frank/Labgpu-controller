@@ -2058,10 +2058,32 @@ function applyJsonPreference() {{
   document.documentElement.classList.toggle("show-json", enabled);
   if (jsonToggle) jsonToggle.checked = enabled;
 }}
+function setRefreshPaused(value) {{
+  paused = value;
+  if (btn) btn.textContent = translateText(paused ? "Resume refresh" : "Pause refresh", currentLanguage());
+}}
+function stableElementKey(element, index) {{
+  const form = element.closest("form");
+  const anchor = element.id || (form && form.id) || element.dataset.persistKey || "page";
+  const summary = element.querySelector("summary");
+  const label = summary ? summary.textContent.trim() : "";
+  return `labgpu-details:${{window.location.pathname}}:${{anchor}}:${{label || index}}`;
+}}
+function restoreDetailsState() {{
+  document.querySelectorAll("details").forEach((details, index) => {{
+    const key = stableElementKey(details, index);
+    const saved = localStorage.getItem(key);
+    if (saved !== null) details.open = saved === "1";
+    details.addEventListener("toggle", () => {{
+      localStorage.setItem(key, details.open ? "1" : "0");
+    }});
+  }});
+}}
 try {{
   applyJsonPreference();
   applyTheme(localStorage.getItem("labgpu-theme") || "system");
   applyLanguage(currentLanguage());
+  restoreDetailsState();
   if (themeButton) {{
     themeButton.addEventListener("click", () => {{
       const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
@@ -2086,8 +2108,7 @@ try {{
 const btn = document.getElementById("pause-refresh");
 if (btn) {{
   btn.addEventListener("click", () => {{
-    paused = !paused;
-    btn.textContent = translateText(paused ? "Resume refresh" : "Pause refresh", currentLanguage());
+    setRefreshPaused(!paused);
   }});
 }}
 const refreshNow = document.getElementById("refresh-now");
@@ -2101,6 +2122,10 @@ if (refreshNow) {{
 setInterval(() => {{
   if (!paused) window.location.reload();
 }}, 15000);
+document.querySelectorAll("form input, form select, form textarea").forEach((input) => {{
+  input.addEventListener("focus", () => setRefreshPaused(true), {{once: true}});
+  input.addEventListener("input", () => setRefreshPaused(true), {{once: true}});
+}});
 document.querySelectorAll("[data-stop]").forEach((button) => {{
   button.addEventListener("click", async () => {{
     selectedStopButton = button;
