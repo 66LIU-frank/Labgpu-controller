@@ -12,15 +12,17 @@ Personal GPU workspace for students using shared SSH servers.
 Find a free GPU. Launch training. Track your runs. Diagnose failures.
 No daemon. No root. No Slurm. No Kubernetes.
 
-![LabGPU Home demo preview](docs/assets/labgpu-home-demo.svg)
+![LabGPU Home demo preview](docs/assets/labgpu-home-live.png)
 
 ```text
 find GPU -> run/adopt -> observe -> diagnose -> context/report -> safe action
 ```
 
-## Start Fast
+## Get Started in 3 Minutes
 
-Try the fake multi-server demo on any laptop:
+Basic mode runs on your laptop. It reads your `~/.ssh/config`, probes selected SSH hosts, and opens a local workspace. You do not need root access, a remote daemon, Slurm, Kubernetes, or a shared tracking server.
+
+Try the fake multi-server demo first:
 
 ```bash
 pipx install git+https://github.com/66LIU-frank/Labgpu-controller.git
@@ -28,7 +30,7 @@ labgpu demo
 labgpu pick --fake-lab
 ```
 
-Use your real SSH GPU servers:
+Use real SSH GPU servers in three steps:
 
 ```bash
 labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
@@ -36,7 +38,7 @@ labgpu ui
 labgpu pick --min-vram 24G --prefer A100
 ```
 
-On the chosen GPU server:
+Then copy the SSH/CUDA command from `Train Now`, or run LabGPU on the chosen GPU server to save a full run capsule:
 
 ```bash
 labgpu run --name sft --gpu auto --min-vram 24G -- python train.py --config configs/sft.yaml

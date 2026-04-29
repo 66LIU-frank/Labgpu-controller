@@ -12,15 +12,17 @@
 在多台共享 SSH GPU 服务器里找空卡、启动训练、找回自己的任务、诊断失败。
 不需要 daemon，不需要 root，不需要 Slurm，不需要 Kubernetes。
 
-![LabGPU Home demo preview](docs/assets/labgpu-home-demo.svg)
+![LabGPU Home demo preview](docs/assets/labgpu-home-live.png)
 
 ```text
 找卡 -> 启动/接管 -> 观察 -> 诊断 -> 导出 context/report -> 安全处理
 ```
 
-## 快速开始
+## 3 分钟上手
 
-没有 GPU 的电脑也可以先看假数据 demo：
+基础模式只需要在你的电脑上运行 LabGPU。它读取你的 `~/.ssh/config`，通过 SSH 探测你选中的 GPU 服务器，然后打开本地工作台。不需要 root，不需要远端 daemon，不需要 Slurm/Kubernetes，也不需要共享 tracking server。
+
+先用假数据 demo 看效果：
 
 ```bash
 pipx install git+https://github.com/66LIU-frank/Labgpu-controller.git
@@ -28,7 +30,7 @@ labgpu demo
 labgpu pick --fake-lab
 ```
 
-使用你自己的 SSH GPU 服务器：
+接入自己的 SSH GPU 服务器，只要三步：
 
 ```bash
 labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
@@ -36,7 +38,7 @@ labgpu ui
 labgpu pick --min-vram 24G --prefer A100
 ```
 
-在选中的 GPU 服务器上启动训练：
+然后从 `Train Now` 复制 SSH/CUDA 命令直接开跑；如果你也在目标 GPU 服务器上安装了 LabGPU，就可以保存完整 run capsule：
 
 ```bash
 labgpu run --name sft --gpu auto --min-vram 24G -- python train.py --config configs/sft.yaml
