@@ -13,7 +13,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from labgpu.core.config import ServerEntry, load_config, write_config
-from labgpu.remote.actions import stop_process
+from labgpu.remote.actions import open_ssh_terminal, stop_process
 from labgpu.remote.alerts import all_alert_records, apply_alert_state, set_alert_status
 from labgpu.remote.assistant import assistant_reply
 from labgpu.remote.cache import read_server_cache, write_server_cache
@@ -291,6 +291,9 @@ class ServerHandler(BaseHTTPRequestHandler):
                 return
             self._stop_process(unquote(parts[2]), pid, force=parts[5] == "force-stop")
             return
+        if len(parts) == 4 and parts[:2] == ["api", "servers"] and parts[3] == "open-ssh":
+            self._open_ssh_terminal(unquote(parts[2]))
+            return
         if len(parts) == 4 and parts[:2] == ["api", "alerts"] and parts[3] in {"dismiss", "snooze", "activate"}:
             self._alert_action(unquote(parts[2]), parts[3])
             return
@@ -375,6 +378,20 @@ class ServerHandler(BaseHTTPRequestHandler):
             force=force,
             timeout=self.timeout,
         )
+        self._json(result, status=HTTPStatus.OK if result.get("ok") else HTTPStatus.CONFLICT)
+
+    def _open_ssh_terminal(self, alias: str) -> None:
+        if not self.action_allowed:
+            self.send_error(HTTPStatus.FORBIDDEN, "actions disabled")
+            return
+        if not self._valid_action_token():
+            self.send_error(HTTPStatus.FORBIDDEN, "invalid action token")
+            return
+        if alias not in known_ssh_aliases(self.ssh_config):
+            self.send_error(HTTPStatus.NOT_FOUND, "unknown SSH alias")
+            return
+        host = resolve_ssh_host(load_inventory(ssh_config=self.ssh_config, names=[alias])[0])
+        result = open_ssh_terminal(host)
         self._json(result, status=HTTPStatus.OK if result.get("ok") else HTTPStatus.CONFLICT)
 
     def _alert_action(self, key: str, action: str) -> None:
@@ -960,7 +977,7 @@ def render_available_gpus(
             "</div></section>"
         )
     rows = "".join(
-        f"<tr><td><a href='/servers/{esc(item.get('server'))}'>{esc(item.get('server'))}</a></td><td>GPU {esc(item.get('gpu_index'))}</td><td>{esc(short(item.get('name') or '', 34))}</td><td>{esc(item.get('memory_free_mb'))} MB</td><td>{esc(item.get('utilization_gpu'))}%</td><td>{esc(item.get('temperature'))} C</td><td>{esc(item.get('disk_health'))}</td><td><code>{esc(item.get('ssh_command'))}</code><br><code>CUDA_VISIBLE_DEVICES={esc(item.get('cuda_visible_devices'))}</code></td></tr>"
+        f"<tr><td><a href='/servers/{esc(item.get('server'))}'>{esc(item.get('server'))}</a></td><td>GPU {esc(item.get('gpu_index'))}</td><td>{esc(short(item.get('name') or '', 34))}</td><td>{esc(item.get('memory_free_mb'))} MB</td><td>{esc(item.get('utilization_gpu'))}%</td><td>{esc(item.get('temperature'))} C</td><td>{esc(item.get('disk_health'))}</td><td><code>{esc(item.get('ssh_command'))}</code><br><code>CUDA_VISIBLE_DEVICES={esc(item.get('cuda_visible_devices'))}</code><br>{render_open_ssh_button(item.get('server'))}</td></tr>"
         for item in items
         if isinstance(item, dict)
     )
@@ -984,6 +1001,7 @@ def render_gpu_recommendation_card(item: dict[str, object]) -> str:
     ssh_command = str(item.get("ssh_command") or ("ssh " + str(item.get("server") or "")))
     cuda = str(item.get("cuda_visible_devices") or item.get("index") or "")
     snippet = ranking.launch_snippet(item)
+    open_terminal = render_open_ssh_button(item.get("server"))
     return f"""
     <article class="gpu-choice {esc(rec['class'])}" data-gpu-choice="1" data-model="{esc(item.get('name') or '')}" data-free-mb="{esc(item.get('memory_free_mb') or 0)}" data-tags="{esc(join_values(item.get('tags') or item.get('server_tags') or []))}" data-server="{esc(item.get('server') or '')}" data-gpu-index="{esc(item.get('index'))}">
       <div class="card-head">
@@ -1009,6 +1027,7 @@ def render_gpu_recommendation_card(item: dict[str, object]) -> str:
         <button class="small" type="button" data-copy="{esc(ssh_command)}">Copy SSH command</button>
         <button class="small" type="button" data-copy="CUDA_VISIBLE_DEVICES={esc(cuda)}">Copy CUDA_VISIBLE_DEVICES</button>
         <button class="small" type="button" data-copy="{esc(snippet)}">Copy launch snippet</button>
+        {open_terminal}
       </div>
       <details>
         <summary>Why recommended</summary>
@@ -1016,6 +1035,12 @@ def render_gpu_recommendation_card(item: dict[str, object]) -> str:
       </details>
     </article>
     """
+
+
+def render_open_ssh_button(server: object) -> str:
+    if not ServerHandler.action_allowed or ServerHandler.fake_lab or not server:
+        return ""
+    return f'<button class="small" type="button" data-open-ssh="{esc(server)}">Open SSH terminal</button>'
 
 
 def filter_available_gpu_items(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
@@ -1811,6 +1836,9 @@ const translations = {{
   "Copy SSH command": "复制 SSH 命令",
   "Copy CUDA_VISIBLE_DEVICES": "复制 CUDA_VISIBLE_DEVICES",
   "Copy launch snippet": "复制启动片段",
+  "Open SSH terminal": "打开 SSH 终端",
+  "Opening terminal...": "正在打开终端...",
+  "Terminal opened": "终端已打开",
   "Copy command": "复制命令",
   "Copy adopt": "复制接管命令",
   "Copy owner message": "复制询问消息",
@@ -1931,6 +1959,27 @@ document.addEventListener("click", (event) => {{
   const button = target && target.closest ? target.closest("[data-copy]") : null;
   if (!button) return;
   copyTextFromButton(button);
+}});
+document.addEventListener("click", async (event) => {{
+  const target = event.target;
+  const button = target && target.closest ? target.closest("[data-open-ssh]") : null;
+  if (!button) return;
+  const original = button.textContent || "Open SSH terminal";
+  button.textContent = translateText("Opening terminal...", currentLanguage());
+  button.disabled = true;
+  const response = await fetch(`/api/servers/${{encodeURIComponent(button.dataset.openSsh || "")}}/open-ssh`, {{
+    method: "POST",
+    headers: {{"X-LabGPU-Action-Token": actionToken}}
+  }});
+  const payload = await response.json().catch(() => ({{ok: false, message: "Opening terminal failed."}}));
+  button.disabled = false;
+  if (payload.ok) {{
+    button.textContent = translateText("Terminal opened", currentLanguage());
+    setTimeout(() => button.textContent = original, 1400);
+  }} else {{
+    button.textContent = original;
+    window.alert(payload.message || "Opening terminal failed.");
+  }}
 }});
 document.querySelectorAll("[data-alert-action]").forEach((button) => {{
   button.addEventListener("click", async () => {{
@@ -2123,6 +2172,14 @@ def split_hosts(value: str | None) -> list[str] | None:
     if not value:
         return None
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def known_ssh_aliases(ssh_config: str | Path | None = None) -> set[str]:
+    aliases = {host.alias for host in parse_ssh_config(ssh_config)}
+    for entry in load_config().servers.values():
+        aliases.add(entry.alias)
+        aliases.add(entry.name)
+    return {alias for alias in aliases if alias}
 
 
 def render_nav() -> str:

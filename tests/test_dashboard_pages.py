@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from labgpu.core.config import LabGPUConfig, ServerEntry, write_config
 from labgpu.remote.dashboard import (
+    ServerHandler,
     collect_servers,
     filter_available_gpu_items,
     filter_gpu_items,
@@ -110,12 +111,21 @@ def sample_data(shared_account: bool = False):
 class DashboardPagesTest(unittest.TestCase):
     def test_gpus_page_and_filter(self):
         data = sample_data()
-        html = render_gpus_page(data)
+        old_allowed, old_fake = ServerHandler.action_allowed, ServerHandler.fake_lab
+        ServerHandler.action_allowed = True
+        ServerHandler.fake_lab = False
+        try:
+            html = render_gpus_page(data)
+        finally:
+            ServerHandler.action_allowed = old_allowed
+            ServerHandler.fake_lab = old_fake
         self.assertIn("Train Now", html)
         self.assertIn("language-toggle", html)
         self.assertIn("theme-toggle", html)
         self.assertIn("Notify me when GPU is free", html)
         self.assertIn("CUDA_VISIBLE_DEVICES=0", html)
+        self.assertIn("Open SSH terminal", html)
+        self.assertIn('data-open-ssh="alpha_liu"', html)
         filtered = filter_available_gpu_items(data["overview"]["available_gpu_items"], {"min_mem_gb": "80", "model": "A100"})
         self.assertEqual(filtered[0]["server"], "alpha_liu")
         choices = filter_gpu_items(data["overview"]["gpu_items"], {"availability": "all"})

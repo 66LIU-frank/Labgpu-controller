@@ -48,7 +48,7 @@ labgpu where
 | 需求 | LabGPU 做什么 |
 | --- | --- |
 | 找一张现在能用的 GPU | `Train Now` 和 `labgpu pick` 跨 SSH hosts 排名推荐。 |
-| 快速开跑 | 复制 SSH 命令、`CUDA_VISIBLE_DEVICES` 和启动片段。 |
+| 快速开跑 | 复制 SSH 命令、`CUDA_VISIBLE_DEVICES`、启动片段，或从 GPU 卡片直接打开 SSH 终端。 |
 | 找回自己的任务 | `My Runs` 和 `labgpu where` 显示 tracked、adopted、自己的 GPU process。 |
 | 保存实验现场 | run capsule 保存命令、日志、git、config、env summary、GPU 信息。 |
 | 诊断失败 | `diagnose` 和 Failure Inbox 识别 OOM、Traceback、NCCL、disk full、killed、NaN、suspected idle。 |
@@ -114,6 +114,7 @@ LabGPU Home 不是以 server card 为主，而是按训练流程排：
 ```text
 Train Now
   按显存、型号、负载、磁盘、告警、tags 推荐 GPU。
+  每张卡都可以复制命令，或打开对应服务器的 SSH 终端。
 
 My Runs
   我的 LabGPU runs、adopted runs、自己的 untracked GPU processes。

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import re
+import shutil
 import subprocess
+import sys
 import time
 from typing import Any
 
@@ -29,6 +33,8 @@ else
   echo "stopped"
 fi
 """
+
+SAFE_SSH_ALIAS_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
 
 
 def stop_process(
@@ -124,6 +130,84 @@ def finish(
             "user": proc.get("user") if proc else None,
             "command": proc.get("command") if proc else None,
             "signal": signal,
+            "result": result,
+            "ok": ok,
+        }
+    )
+    return payload
+
+
+def open_ssh_terminal(host: SSHHost) -> dict[str, Any]:
+    alias = host.alias
+    if not is_safe_ssh_alias(alias):
+        return {
+            "ok": False,
+            "result": "invalid_alias",
+            "message": "Refusing to open an SSH terminal for an unsafe alias.",
+            "server": alias,
+        }
+    command = f"ssh {alias}"
+    try:
+        if sys.platform == "darwin":
+            result = subprocess.run(
+                [
+                    "osascript",
+                    "-e",
+                    'tell application "Terminal" to activate',
+                    "-e",
+                    f'tell application "Terminal" to do script {json.dumps(command)}',
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=8,
+            )
+            if result.returncode != 0:
+                return terminal_result(host, "open_failed", ok=False, message=result.stderr.strip() or "Opening Terminal failed.", command=command)
+        elif sys.platform.startswith("win"):
+            subprocess.Popen(["cmd", "/c", "start", "LabGPU SSH", "cmd", "/k", "ssh", alias])
+        else:
+            launcher = linux_terminal_launcher(alias)
+            if not launcher:
+                return terminal_result(host, "no_terminal", ok=False, message="No supported terminal emulator found.", command=command)
+            subprocess.Popen(launcher)
+    except subprocess.TimeoutExpired:
+        return terminal_result(host, "timeout", ok=False, message="Opening terminal timed out.", command=command)
+    except OSError as exc:
+        return terminal_result(host, "open_error", ok=False, message=str(exc), command=command)
+
+    return terminal_result(host, "opened", ok=True, message=f"Opening SSH terminal for {alias}.", command=command)
+
+
+def linux_terminal_launcher(alias: str) -> list[str] | None:
+    candidates = [
+        ("x-terminal-emulator", ["x-terminal-emulator", "-e", "ssh", alias]),
+        ("gnome-terminal", ["gnome-terminal", "--", "ssh", alias]),
+        ("konsole", ["konsole", "-e", "ssh", alias]),
+        ("xterm", ["xterm", "-e", "ssh", alias]),
+    ]
+    for binary, command in candidates:
+        if shutil.which(binary):
+            return command
+    return None
+
+
+def is_safe_ssh_alias(alias: str) -> bool:
+    return bool(alias and not alias.startswith("-") and SAFE_SSH_ALIAS_RE.fullmatch(alias))
+
+
+def terminal_result(host: SSHHost, result: str, *, ok: bool, message: str, command: str) -> dict[str, Any]:
+    payload = {
+        "ok": ok,
+        "result": result,
+        "message": message,
+        "server": host.alias,
+        "command": command,
+    }
+    append_audit(
+        {
+            "action": "open_ssh_terminal",
+            "server": host.alias,
             "result": result,
             "ok": ok,
         }

@@ -48,7 +48,7 @@ labgpu where
 | Need | LabGPU gives you |
 | --- | --- |
 | Find a usable GPU | `Train Now` and `labgpu pick` rank GPUs across SSH hosts. |
-| Start training quickly | Copy SSH, `CUDA_VISIBLE_DEVICES`, or launch snippets. |
+| Start training quickly | Copy SSH, `CUDA_VISIBLE_DEVICES`, launch snippets, or open an SSH terminal from the GPU card. |
 | Find your own jobs | `My Runs` and `labgpu where` show tracked, adopted, and own GPU processes. |
 | Recover experiment context | Run capsules save command, log, git, config, env summary, and GPU info. |
 | Debug failures | `diagnose` and Failure Inbox catch OOM, traceback, NCCL, disk full, killed, NaN, and suspected idle. |
@@ -114,6 +114,7 @@ LabGPU Home is training-first:
 ```text
 Train Now
   Recommended GPUs ranked by free VRAM, model, load, disk health, alerts, and tags.
+  Each card can copy commands or open an SSH terminal for that server.
 
 My Runs
   LabGPU runs, adopted runs, and own untracked GPU processes.

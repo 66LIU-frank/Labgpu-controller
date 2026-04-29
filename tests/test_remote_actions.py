@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from labgpu.remote.actions import stop_process
+from labgpu.remote.actions import is_safe_ssh_alias, open_ssh_terminal, stop_process
 from labgpu.remote.ssh_config import SSHHost
 
 
@@ -76,6 +76,36 @@ class RemoteActionsTest(unittest.TestCase):
         self.assertEqual(result["result"], "shared_account_disabled")
         probe.assert_not_called()
         run.assert_not_called()
+
+    def test_open_ssh_terminal_uses_macos_terminal_without_shell(self):
+        host = SSHHost(alias="alpha_liu")
+
+        class Result:
+            returncode = 0
+            stderr = ""
+
+        with (
+            patch("labgpu.remote.actions.sys.platform", "darwin"),
+            patch("labgpu.remote.actions.subprocess.run", return_value=Result()) as run,
+            patch("labgpu.remote.actions.append_audit"),
+        ):
+            result = open_ssh_terminal(host)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["command"], "ssh alpha_liu")
+        args = run.call_args.args[0]
+        self.assertEqual(args[0], "osascript")
+        self.assertIn("ssh alpha_liu", " ".join(args))
+
+    def test_open_ssh_terminal_rejects_unsafe_alias(self):
+        self.assertFalse(is_safe_ssh_alias("-oProxyCommand=bad"))
+        self.assertFalse(is_safe_ssh_alias("alpha;rm"))
+        with patch("labgpu.remote.actions.subprocess.run") as run, patch("labgpu.remote.actions.subprocess.Popen") as popen:
+            result = open_ssh_terminal(SSHHost(alias="-oProxyCommand=bad"))
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["result"], "invalid_alias")
+        run.assert_not_called()
+        popen.assert_not_called()
 
 
 if __name__ == "__main__":
