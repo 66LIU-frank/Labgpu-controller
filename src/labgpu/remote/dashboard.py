@@ -683,39 +683,40 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
         <section class="toolbar">
           <div>
             <h1>Settings</h1>
-            <p>Import SSH hosts and manage the server inventory stored in <code>~/.labgpu/config.toml</code>.</p>
+            <p>Choose which SSH GPU servers appear in LabGPU Home.</p>
           </div>
         </section>
         <section class="panel">
-          <h2>Interface</h2>
-          <label class="inline-setting"><input type="checkbox" id="show-json-toggle"> Show JSON/API links</label>
-          <p class="muted">Show raw JSON/API links in the top-right controls. Most users can leave this off.</p>
+          <h2>Saved Servers</h2>
+          <p class="muted">These enabled servers are shown on LabGPU Home by default.</p>
+          <table><tr><th>Alias</th><th>Enabled</th><th>Tags</th><th>Disk paths</th><th>Shared account</th><th>Stop own process</th></tr>{server_rows}</table>
         </section>
         <section class="panel">
           <h2>Add Server</h2>
-          <p class="muted">Add a new SSH GPU server for first-time setup. LabGPU can append a Host block to <code>{esc(ssh_config_path)}</code> and save the server to <code>~/.labgpu/config.toml</code>.</p>
+          <p class="muted">For a new student setup, fill the basics below. LabGPU can add the SSH alias to <code>{esc(ssh_config_path)}</code> and save it to <code>~/.labgpu/config.toml</code>.</p>
           <form id="settings-add-server">
             <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
             <div class="filters">
               <label>Alias <input name="alias" required placeholder="alpha_liu"></label>
-              <label>HostName <input name="hostname" required placeholder="gpu.example.edu"></label>
-              <label>User <input name="user" placeholder="student"></label>
-              <label>Port <input name="port" placeholder="22"></label>
-              <label>ProxyJump <input name="proxyjump" placeholder="bastion"></label>
-              <label>IdentityFile <input name="identity_file" placeholder="~/.ssh/id_ed25519"></label>
+              <label>HostName or IP <input name="hostname" required placeholder="gpu.example.edu"></label>
+              <label>SSH user <input name="user" placeholder="student"></label>
               <label>Tags <input name="tags" placeholder="A100,training"></label>
-              <label>Disk paths <input name="disk_paths" value="/,/home,/data,/scratch,/mnt,/nvme"></label>
               <label><input type="checkbox" name="write_ssh_config" value="1" checked> Write to SSH config</label>
-              <label><input type="checkbox" name="shared_account" value="1"> Shared Linux account</label>
-              <label><input type="checkbox" name="allow_stop_own_process" value="1" checked> Allow stop own process</label>
               <button class="button" type="submit">Add server</button>
             </div>
+            <details>
+              <summary>Advanced SSH options</summary>
+              <div class="filters">
+                <label>Port <input name="port" placeholder="22"></label>
+                <label>ProxyJump <input name="proxyjump" placeholder="bastion"></label>
+                <label>IdentityFile <input name="identity_file" placeholder="~/.ssh/id_ed25519"></label>
+                <label>Disk paths <input name="disk_paths" value="/,/home,/data,/scratch,/mnt,/nvme"></label>
+                <label><input type="checkbox" name="shared_account" value="1"> Shared Linux account</label>
+                <label><input type="checkbox" name="allow_stop_own_process" value="1" checked> Allow stop own process</label>
+              </div>
+            </details>
           </form>
-          <p class="muted">If the SSH config file already exists, LabGPU writes a backup before appending. Existing SSH aliases are not overwritten.</p>
-        </section>
-        <section class="panel">
-          <h2>Saved Servers</h2>
-          <table><tr><th>Alias</th><th>Enabled</th><th>Tags</th><th>Disk paths</th><th>Shared account</th><th>Stop own process</th></tr>{server_rows}</table>
+          <p class="muted">SSH auth is still handled by your normal SSH setup. For automatic probing, <code>ssh ALIAS</code> should work without an interactive password prompt, usually through an SSH key or ssh-agent. IdentityFile is optional and only needed if you use a specific private key. Existing SSH aliases are not overwritten, and LabGPU writes a backup before appending to an existing SSH config.</p>
         </section>
         <section class="panel">
           <h2>Import From SSH Config</h2>
@@ -731,6 +732,11 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
             </div>
             <table><tr><th>Alias</th><th>HostName</th><th>User</th><th>Port</th><th>Probe</th></tr>{host_rows}</table>
           </form>
+        </section>
+        <section class="panel">
+          <h2>Interface</h2>
+          <label class="inline-setting"><input type="checkbox" id="show-json-toggle"> Show JSON/API links</label>
+          <p class="muted">Show raw JSON/API links in the top-right controls. Most users can leave this off.</p>
         </section>
         """,
     )
@@ -1769,6 +1775,8 @@ dialog::backdrop{{background:rgba(0,0,0,.45)}}
 .filters label{{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}}
 .filters input,.filters select{{border:1px solid var(--border);border-radius:6px;padding:7px 8px;min-width:150px;background:var(--button);color:var(--text)}}
 .inline-setting{{display:flex;gap:8px;align-items:center;margin-top:8px}}
+details{{margin-top:10px}}
+summary{{cursor:pointer;color:var(--link);font-weight:600}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}}
 .grid.compact{{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}}
 .split{{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px;align-items:start}}
@@ -1896,6 +1904,8 @@ const translations = {{
   "Configured SSH GPU servers, health, disks, and free/busy GPUs.": "已配置的 SSH GPU 服务器、健康状态、磁盘和 GPU 忙闲。",
   "Disk, SSH, GPU, and process conditions that need attention.": "需要关注的磁盘、SSH、GPU 和进程状态。",
   "Saved Servers": "已保存服务器",
+  "These enabled servers are shown on LabGPU Home by default.": "这些启用的服务器会默认显示在 LabGPU Home。",
+  "Choose which SSH GPU servers appear in LabGPU Home.": "选择哪些 SSH GPU 服务器显示在 LabGPU Home。",
   "Import From SSH Config": "从 SSH 配置导入",
   "Import SSH hosts and manage the server inventory stored in": "导入 SSH 主机并管理保存在",
   "Select SSH aliases, set defaults, and save them into": "选择 SSH 别名、设置默认值，并保存到",
@@ -1972,6 +1982,10 @@ const translations = {{
   "Test connection": "测试连接",
   "Save selected hosts": "保存选中主机",
   "Write to SSH config": "写入 SSH config",
+  "HostName or IP": "主机名或 IP",
+  "SSH user": "SSH 用户",
+  "Advanced SSH options": "高级 SSH 选项",
+  "ProxyJump": "ProxyJump",
   "IdentityFile": "IdentityFile",
   "Copy SSH command": "复制 SSH 命令",
   "Copy CUDA_VISIBLE_DEVICES": "复制 CUDA_VISIBLE_DEVICES",
