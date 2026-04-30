@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from labgpu.remote.ccswitch import read_ccswitch_summary
+from labgpu.remote.ccswitch import read_ccswitch_summary, switch_ccswitch_provider
 
 
 class CcSwitchTest(unittest.TestCase):
@@ -30,8 +30,32 @@ class CcSwitchTest(unittest.TestCase):
 
         self.assertTrue(summary["available"])
         self.assertEqual(summary["providers"]["codex"]["current"], "pro")
+        self.assertEqual(summary["providers"]["codex"]["current_id"], "codex-pro")
+        self.assertEqual(summary["providers"]["codex"]["choices_detail"][0]["id"], "codex-pro")
         self.assertEqual(summary["providers"]["claude"]["current"], "main")
         self.assertEqual(summary["proxy"]["codex"]["listen_port"], 15721)
+        self.assertNotIn("SECRET", str(summary))
+
+    def test_switches_current_provider_without_reading_secrets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_dir = Path(tmp) / ".cc-switch"
+            db_dir.mkdir()
+            db_path = db_dir / "cc-switch.db"
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                "CREATE TABLE providers (id TEXT, app_type TEXT, name TEXT, settings_config TEXT, is_current BOOLEAN DEFAULT 0, PRIMARY KEY(id, app_type))"
+            )
+            conn.execute("INSERT INTO providers VALUES ('codex-pro', 'codex', 'pro', 'SECRET', 1)")
+            conn.execute("INSERT INTO providers VALUES ('codex-alt', 'codex', 'alt', 'SECRET', 0)")
+            conn.commit()
+            conn.close()
+
+            switched = switch_ccswitch_provider("codex", "codex-alt", tmp)
+            summary = read_ccswitch_summary(tmp)
+
+        self.assertEqual(switched["provider"], "alt")
+        self.assertEqual(summary["providers"]["codex"]["current"], "alt")
+        self.assertEqual(summary["providers"]["codex"]["current_id"], "codex-alt")
         self.assertNotIn("SECRET", str(summary))
 
 

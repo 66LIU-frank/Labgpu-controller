@@ -132,6 +132,7 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn('value="gemini"', html)
         self.assertIn('value="openclaw"', html)
         self.assertIn("ssh-ccswitch-status", html)
+        self.assertIn("ssh-ccswitch-provider", html)
         filtered = filter_available_gpu_items(data["overview"]["available_gpu_items"], {"min_mem_gb": "80", "model": "A100"})
         self.assertEqual(filtered[0]["server"], "alpha_liu")
         self.assertEqual(filtered[0]["server_group"], "AlphaLab")

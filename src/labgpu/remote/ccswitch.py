@@ -11,6 +11,10 @@ CCSWITCH_APP = "/Applications/CC Switch.app"
 SUPPORTED_APPS = ("codex", "claude", "gemini", "openclaw")
 
 
+class CcSwitchError(RuntimeError):
+    pass
+
+
 def ccswitch_db_path(home: str | Path | None = None) -> Path:
     base = Path(home) if home is not None else Path(os.environ.get("HOME") or "~").expanduser()
     return base / CCSWITCH_DB
@@ -53,18 +57,60 @@ def read_provider_state(conn: sqlite3.Connection) -> dict[str, Any]:
         return providers
     for app_type in SUPPORTED_APPS:
         rows = conn.execute(
-            "SELECT name, is_current FROM providers WHERE app_type = ? ORDER BY is_current DESC, name COLLATE NOCASE",
+            "SELECT id, name, is_current FROM providers WHERE app_type = ? ORDER BY is_current DESC, name COLLATE NOCASE",
             (app_type,),
         ).fetchall()
         if not rows:
             continue
-        choices = [str(row[0] or "") for row in rows if row[0]]
-        current = next((str(row[0]) for row in rows if row[1]), "")
+        choices = [str(row[1] or "") for row in rows if row[1]]
+        choice_items = [
+            {"id": str(row[0] or ""), "name": str(row[1] or ""), "current": bool(row[2])}
+            for row in rows
+            if row[0] and row[1]
+        ]
+        current = next((str(row[1]) for row in rows if row[2]), "")
+        current_id = next((str(row[0]) for row in rows if row[2]), "")
         providers[app_type] = {
             "current": current,
+            "current_id": current_id,
             "choices": choices,
+            "choices_detail": choice_items,
         }
     return providers
+
+
+def switch_ccswitch_provider(app_type: str, provider_id: str, home: str | Path | None = None) -> dict[str, Any]:
+    """Switch CC Switch's current provider for one app without reading secret settings."""
+    app = str(app_type or "").strip().lower()
+    selected_id = str(provider_id or "").strip()
+    if app not in SUPPORTED_APPS:
+        raise CcSwitchError("Unsupported CC Switch app type.")
+    if not selected_id:
+        raise CcSwitchError("Provider id is required.")
+    db_path = ccswitch_db_path(home)
+    if not db_path.exists():
+        raise CcSwitchError("CC Switch database was not found.")
+    try:
+        conn = sqlite3.connect(db_path, timeout=1.0)
+    except sqlite3.Error as exc:
+        raise CcSwitchError(f"Could not open CC Switch database: {exc}") from exc
+    try:
+        if not table_exists(conn, "providers"):
+            raise CcSwitchError("CC Switch providers table was not found.")
+        row = conn.execute(
+            "SELECT name FROM providers WHERE app_type = ? AND id = ?",
+            (app, selected_id),
+        ).fetchone()
+        if not row:
+            raise CcSwitchError("Selected provider was not found.")
+        with conn:
+            conn.execute("UPDATE providers SET is_current = 0 WHERE app_type = ?", (app,))
+            conn.execute("UPDATE providers SET is_current = 1 WHERE app_type = ? AND id = ?", (app, selected_id))
+        return {"app": app, "provider_id": selected_id, "provider": str(row[0] or "")}
+    except sqlite3.Error as exc:
+        raise CcSwitchError(f"Could not update CC Switch provider: {exc}") from exc
+    finally:
+        conn.close()
 
 
 def read_proxy_state(conn: sqlite3.Connection) -> dict[str, Any]:

@@ -17,7 +17,7 @@ from labgpu.remote.actions import open_ssh_terminal, stop_process
 from labgpu.remote.alerts import all_alert_records, apply_alert_state, set_alert_status
 from labgpu.remote.assistant import assistant_reply
 from labgpu.remote.cache import read_server_cache, write_server_cache
-from labgpu.remote.ccswitch import read_ccswitch_summary
+from labgpu.remote.ccswitch import CcSwitchError, read_ccswitch_summary, switch_ccswitch_provider
 from labgpu.remote.demo import fake_lab_data
 from labgpu.remote.history import append_history, apply_history_evidence, read_history
 from labgpu.remote.inventory import load_inventory
@@ -356,6 +356,9 @@ class ServerHandler(BaseHTTPRequestHandler):
         if parts == ["api", "settings", "groups", "delete"]:
             self._settings_delete_groups()
             return
+        if parts == ["api", "integrations", "ccswitch", "switch"]:
+            self._ccswitch_switch()
+            return
         if parts == ["api", "assistant", "chat"]:
             self._assistant_chat()
             return
@@ -461,9 +464,36 @@ class ServerHandler(BaseHTTPRequestHandler):
         payload = self._read_body_payload()
         proxy_port = first_value(payload.get("proxy_port"))
         agent = str(first_value(payload.get("agent")) or "none")
+        ccswitch_provider_id = str(first_value(payload.get("ccswitch_provider_id")) or "").strip()
+        ccswitch_switch = None
+        if ccswitch_provider_id:
+            try:
+                ccswitch_switch = switch_ccswitch_provider(agent, ccswitch_provider_id)
+            except CcSwitchError as exc:
+                self._json({"ok": False, "result": "ccswitch_switch_failed", "message": str(exc)}, status=HTTPStatus.CONFLICT)
+                return
         host = resolve_ssh_host(load_inventory(ssh_config=self.ssh_config, names=[alias])[0])
         result = open_ssh_terminal(host, proxy_port=proxy_port, agent=agent)
+        if ccswitch_switch:
+            result["ccswitch"] = ccswitch_switch
         self._json(result, status=HTTPStatus.OK if result.get("ok") else HTTPStatus.CONFLICT)
+
+    def _ccswitch_switch(self) -> None:
+        if not self.action_allowed:
+            self.send_error(HTTPStatus.FORBIDDEN, "actions disabled")
+            return
+        if not self._valid_action_token():
+            self.send_error(HTTPStatus.FORBIDDEN, "invalid action token")
+            return
+        payload = self._read_body_payload()
+        app = str(first_value(payload.get("app")) or "").strip()
+        provider_id = str(first_value(payload.get("provider_id")) or "").strip()
+        try:
+            switched = switch_ccswitch_provider(app, provider_id)
+        except CcSwitchError as exc:
+            self._json({"ok": False, "message": str(exc)}, status=HTTPStatus.CONFLICT)
+            return
+        self._json({"ok": True, "switched": switched, "summary": read_ccswitch_summary()})
 
     def _alert_action(self, key: str, action: str) -> None:
         if not self._valid_action_token():
@@ -2146,6 +2176,11 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
       <option value="openclaw">OpenClaw Agent</option>
     </select>
   </label>
+  <label id="ssh-ccswitch-provider-wrap" hidden>CC Switch provider
+    <select id="ssh-ccswitch-provider">
+      <option value="">Use current local selection</option>
+    </select>
+  </label>
   <p class="muted" id="ssh-ccswitch-status">Checking CC Switch...</p>
   <p class="muted" id="ssh-modal-hint">Opening from a GPU card does not set <code>CUDA_VISIBLE_DEVICES</code>. It only chooses the server to SSH into.</p>
   <p id="ssh-modal-result" class="muted"></p>
@@ -2364,6 +2399,8 @@ const translations = {{
   "Reverse local port 33210": "反向转发本地 33210",
   "Custom local port": "自定义本地端口",
   "Open after SSH": "SSH 后打开",
+  "CC Switch provider": "CC Switch 供应商",
+  "Use current local selection": "使用本机当前选择",
   "Shell only": "只打开 Shell",
   "Codex CLI": "Codex CLI",
   "Claude Code": "Claude Code",
@@ -2535,6 +2572,12 @@ function selectedAgent() {{
   const agentSelect = document.getElementById("ssh-agent");
   return agentSelect ? agentSelect.value : "none";
 }}
+function selectedCcswitchProviderId() {{
+  const proxySelect = document.getElementById("ssh-proxy");
+  const providerSelect = document.getElementById("ssh-ccswitch-provider");
+  if (!proxySelect || proxySelect.value !== "ccswitch" || !providerSelect) return "";
+  return providerSelect.value || "";
+}}
 function ccswitchProxyPort(agent) {{
   const proxy = ccswitchSummary && ccswitchSummary.proxy ? ccswitchSummary.proxy : {{}};
   const preferred = agent && agent !== "none" ? proxy[agent] : null;
@@ -2554,6 +2597,32 @@ function describeCcswitch(summary) {{
   const proxyText = proxyConfig && proxyConfig.listen_port ? `proxy ${{proxyConfig.listen_address || "127.0.0.1"}}:${{proxyConfig.listen_port}}${{proxyConfig.enabled || proxyConfig.proxy_enabled ? "" : " (disabled)"}}` : "proxy: -";
   return `${{providerText}} · ${{proxyText}}`;
 }}
+function updateCcswitchProviderOptions() {{
+  const proxySelect = document.getElementById("ssh-proxy");
+  const providerWrap = document.getElementById("ssh-ccswitch-provider-wrap");
+  const providerSelect = document.getElementById("ssh-ccswitch-provider");
+  const agent = selectedAgent();
+  const enabled = !!(proxySelect && proxySelect.value === "ccswitch" && agent !== "none");
+  if (providerWrap) providerWrap.hidden = !enabled;
+  if (!providerSelect || !enabled) return;
+  const currentValue = providerSelect.value;
+  const providers = ccswitchSummary && ccswitchSummary.providers ? ccswitchSummary.providers : {{}};
+  const provider = providers[agent] || {{}};
+  const choices = provider.choices_detail || [];
+  providerSelect.innerHTML = "";
+  const keepCurrent = document.createElement("option");
+  keepCurrent.value = "";
+  keepCurrent.textContent = provider.current ? `Use current: ${{provider.current}}` : translateText("Use current local selection", currentLanguage());
+  providerSelect.appendChild(keepCurrent);
+  choices.forEach((item) => {{
+    if (!item || !item.id || !item.name) return;
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = item.current ? `${{item.name}} (current)` : item.name;
+    providerSelect.appendChild(option);
+  }});
+  if (Array.from(providerSelect.options).some((option) => option.value === currentValue)) providerSelect.value = currentValue;
+}}
 async function loadCcswitchSummary() {{
   const status = document.getElementById("ssh-ccswitch-status");
   try {{
@@ -2562,6 +2631,7 @@ async function loadCcswitchSummary() {{
   }} catch (error) {{
     ccswitchSummary = {{available: false, message: "CC Switch not detected."}};
   }}
+  updateCcswitchProviderOptions();
   if (status) status.textContent = describeCcswitch(ccswitchSummary);
   return ccswitchSummary;
 }}
@@ -2578,6 +2648,7 @@ function updateSshProxyFields() {{
   const proxySelect = document.getElementById("ssh-proxy");
   const customWrap = document.getElementById("ssh-custom-proxy-wrap");
   if (customWrap && proxySelect) customWrap.hidden = proxySelect.value !== "custom";
+  updateCcswitchProviderOptions();
 }}
 async function runOpenSsh(button) {{
   const original = button.textContent || "Open SSH terminal";
@@ -2586,7 +2657,7 @@ async function runOpenSsh(button) {{
   const response = await fetch(`/api/servers/${{encodeURIComponent(button.dataset.openSsh || "")}}/open-ssh`, {{
     method: "POST",
     headers: {{"X-LabGPU-Action-Token": actionToken, "Content-Type": "application/json"}},
-    body: JSON.stringify({{proxy_port: selectedProxyPort(), agent: selectedAgent()}})
+    body: JSON.stringify({{proxy_port: selectedProxyPort(), agent: selectedAgent(), ccswitch_provider_id: selectedCcswitchProviderId()}})
   }});
   const payload = await response.json().catch(() => ({{ok: false, message: "Opening terminal failed."}}));
   button.disabled = false;
@@ -2617,6 +2688,7 @@ document.addEventListener("click", async (event) => {{
   if (serverCell) serverCell.textContent = button.dataset.openSsh || "";
   if (result) result.textContent = "";
   updateSshProxyFields();
+  loadCcswitchSummary();
   setRefreshPaused(true);
   dialog.showModal();
 }});
