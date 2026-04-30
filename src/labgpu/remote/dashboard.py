@@ -597,6 +597,9 @@ class ServerHandler(BaseHTTPRequestHandler):
             aliases = [aliases]
         aliases = [str(alias).strip() for alias in aliases if str(alias).strip()]
         group_name = str(first_value(payload.get("group_name")) or "").strip()
+        if not group_name and not aliases:
+            self.send_error(HTTPStatus.BAD_REQUEST, "group name is required")
+            return
         config = load_config()
         if group_name:
             add_config_group(config, group_name)
@@ -817,10 +820,6 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
           <table><tr><th>Alias</th><th>Enabled</th><th>Group</th><th>Tags</th><th>Disk paths</th><th>Shared account</th><th>Stop own process</th></tr>{server_rows}</table>
         </section>
         <section class="panel">
-          <div class="section-head"><h2>Server Groups</h2><a href="/groups">Manage groups</a></div>
-          <p class="muted">Create groups after servers are saved. Groups let you switch Home, Train Now, My Training, Servers, Alerts, and Assistant between all servers and a custom pool.</p>
-        </section>
-        <section class="panel">
           <h2>Add Server</h2>
           <p class="muted">For a new student setup, fill the basics below. LabGPU can add the SSH alias to <code>{esc(ssh_config_path)}</code> and save it to <code>~/.labgpu/config.toml</code>.</p>
           <form id="settings-add-server">
@@ -889,6 +888,7 @@ def render_groups_page() -> str:
         f"<tr><td><label><input type='checkbox' name='aliases' value='{esc(entry.alias)}'> <code>{esc(entry.alias)}</code></label></td><td>{esc('enabled' if entry.enabled else 'disabled')}</td><td>{esc(entry.group or '-')}</td><td>{esc(join_values(entry.tags))}</td></tr>"
         for entry in saved_entries
     ) or "<tr><td colspan='4' class='muted'>Save servers in Settings first, then create groups here.</td></tr>"
+    group_options = "<option value=''>Ungrouped</option>" + "".join(f"<option value='{esc(group)}'>{esc(group)}</option>" for group in groups)
     return page(
         "Server Groups",
         f"""
@@ -902,19 +902,31 @@ def render_groups_page() -> str:
           <div class="section-head"><h2>Existing Groups</h2><a href="/settings">Add servers</a></div>
           <div class="groupbar">{group_summary}</div>
         </section>
-        <section class="panel">
-          <h2>Create or Update Group</h2>
-          <p class="muted">Example: create <code>AlphaLab</code>, select alpha servers, then use the group chips on Home, Train Now, My Training, Servers, Alerts, or Assistant.</p>
-          <form id="settings-groups">
-            <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
-            <div class="filters">
-              <label>Group name <input name="group_name" placeholder="AlphaLab / off-campus / H800"></label>
-              <button class="button" type="submit">Create group / Assign selected servers</button>
-            </div>
-            <p class="muted">You can create an empty group first. If you select servers, they join the named group. Leave the group name blank to remove selected servers from their group.</p>
-            <table><tr><th>Select</th><th>Status</th><th>Current group</th><th>Tags</th></tr>{group_rows}</table>
-          </form>
-        </section>
+        <div class="split">
+          <section class="panel">
+            <h2>Create Group</h2>
+            <p class="muted">Create a group name first, even if you do not want to add servers yet.</p>
+            <form class="settings-groups-form">
+              <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
+              <div class="filters">
+                <label>Group name <input name="group_name" required placeholder="liusuu / AlphaLab / off-campus"></label>
+                <button class="button" type="submit">Create group</button>
+              </div>
+            </form>
+          </section>
+          <section class="panel">
+            <h2>Update Group Members</h2>
+            <p class="muted">Choose an existing group or Ungrouped, then select saved servers to move there.</p>
+            <form class="settings-groups-form">
+              <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
+              <div class="filters">
+                <label>Target group <select name="group_name">{group_options}</select></label>
+                <button class="button" type="submit">Move selected servers</button>
+              </div>
+              <table><tr><th>Select</th><th>Status</th><th>Current group</th><th>Tags</th></tr>{group_rows}</table>
+            </form>
+          </section>
+        </div>
         <section class="panel">
           <h2>Delete Group Names</h2>
           <p class="muted">Deleting a group name does not delete servers. Servers in that group are moved back to ungrouped.</p>
@@ -2195,8 +2207,15 @@ const translations = {{
   "These enabled servers are shown on LabGPU Home by default.": "这些启用的服务器会默认显示在 LabGPU Home。",
   "Server Groups": "服务器分组",
   "Existing Groups": "已有分组",
+  "Create Group": "创建分组",
+  "Update Group Members": "更新分组成员",
   "Create or Update Group": "创建或更新分组",
   "Create a group name, select existing saved servers, and switch views by group when you train.": "创建分组名，勾选已保存的服务器，训练时就可以按分组切换视图。",
+  "Create a group name first, even if you do not want to add servers yet.": "先创建一个分组名，即使现在还不想加入服务器也可以。",
+  "Choose an existing group or Ungrouped, then select saved servers to move there.": "选择一个已有分组或未分组，然后勾选已保存服务器移动进去。",
+  "Target group": "目标分组",
+  "Move selected servers": "移动选中的服务器",
+  "Create group": "创建分组",
   "Example: create ": "例如：创建 ",
   "Add servers": "添加服务器",
   "Manage groups": "管理分组",
@@ -2611,8 +2630,7 @@ if (settingsAddServer) {{
     }}
   }});
 }}
-const settingsGroups = document.getElementById("settings-groups");
-if (settingsGroups) {{
+document.querySelectorAll(".settings-groups-form").forEach((settingsGroups) => {{
   settingsGroups.addEventListener("submit", async (event) => {{
     event.preventDefault();
     const form = new FormData(settingsGroups);
@@ -2630,7 +2648,7 @@ if (settingsGroups) {{
       window.alert(payload.message || payload.error || "Saving groups failed.");
     }}
   }});
-}}
+}});
 const settingsDeleteGroups = document.getElementById("settings-delete-groups");
 if (settingsDeleteGroups) {{
   settingsDeleteGroups.addEventListener("submit", async (event) => {{
