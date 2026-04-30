@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 
 from labgpu.core.config import ServerEntry, config_group_names, load_config, write_config
 from labgpu.remote.actions import open_ssh_terminal, stop_process
@@ -677,6 +677,7 @@ class ServerHandler(BaseHTTPRequestHandler):
 def render_index(data: dict[str, object]) -> str:
     hosts = data.get("hosts") or []
     overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
+    ui = data.get("ui") if isinstance(data.get("ui"), dict) else {}
     cards = "".join(render_host_card(host, compact=True) for host in preview_list(hosts, len(hosts) if isinstance(hosts, list) else 0))
     if not cards:
         cards = f"<p class='muted'>{esc(data.get('error') or 'No hosts found.')}</p>"
@@ -696,10 +697,10 @@ def render_index(data: dict[str, object]) -> str:
         </section>
         {render_group_bar(data, path='/')}
         {render_overview(overview)}
-        {render_train_now(overview, limit=4)}
-        {render_my_training(training_items(hosts, overview), limit=8, view_all='/me')}
-        {render_failure_inbox(failure_inbox_items(hosts, overview), limit=8)}
-        {render_alerts(overview.get('alert_items') if isinstance(overview, dict) else [], limit=8, view_all='/alerts', title='Problems')}
+        {render_train_now(overview, ui=ui, limit=4)}
+        {render_my_training(training_items(hosts, overview), limit=8, view_all=page_url('/me', ui))}
+        {render_failure_inbox(failure_inbox_items(hosts, overview), ui=ui, limit=8)}
+        {render_alerts(overview.get('alert_items') if isinstance(overview, dict) else [], limit=8, view_all=page_url('/alerts', ui), title='Problems')}
         <section class="panel"><div class="section-head"><h2>Servers</h2><a href="/settings">Choose home servers</a></div><p class="muted">{esc(server_note)}</p><div class="grid compact">{cards}</div></section>
         """,
         status=render_data_status(data),
@@ -984,7 +985,7 @@ def render_assistant_page(data: dict[str, object]) -> str:
             <button class="button" type="submit">Ask LabGPU</button>
           </form>
         </section>
-        {render_train_now(overview, limit=3)}
+        {render_train_now(overview, ui=data.get("ui") if isinstance(data.get("ui"), dict) else {}, limit=3)}
         """,
         status=render_data_status(data),
     )
@@ -1097,7 +1098,7 @@ def render_filters(ui: dict[str, object], *, kind: str = "all") -> str:
         </select>
       </label>
       <button class="button" type="submit">Filter</button>
-      <a class="button" href="/{esc(kind if kind != 'all' else '')}">Clear</a>
+      <a class="button" href="{esc(page_url('/' + kind if kind != 'all' else '/', ui))}">Clear</a>
     </form>
     """
 
@@ -1141,7 +1142,7 @@ def render_process_filters(ui: dict[str, object]) -> str:
         </select>
       </label>
       <button class="button" type="submit">Filter</button>
-      <a class="button" href="/me">Clear</a>
+      <a class="button" href="{esc(page_url('/me', ui))}">Clear</a>
     </form>
     """
 
@@ -1163,7 +1164,7 @@ def render_server_filters(ui: dict[str, object]) -> str:
       <label><input type="checkbox" name="alerts" value="1" {checked(alerts)}> Has alerts</label>
       <label><input type="checkbox" name="mine" value="1" {checked(mine)}> Has my processes</label>
       <button class="button" type="submit">Filter</button>
-      <a class="button" href="/servers">Clear</a>
+      <a class="button" href="{esc(page_url('/servers', ui))}">Clear</a>
     </form>
     """
 
@@ -1193,7 +1194,7 @@ def render_alert_filters(ui: dict[str, object]) -> str:
         </select>
       </label>
       <button class="button" type="submit">Filter</button>
-      <a class="button" href="/alerts">Clear</a>
+      <a class="button" href="{esc(page_url('/alerts', ui))}">Clear</a>
     </form>
     """
 
@@ -1205,17 +1206,18 @@ def group_hidden(ui: dict[str, object]) -> str:
     return f"<input type='hidden' name='group' value='{esc(group)}'>"
 
 
-def render_train_now(overview: dict[str, object], *, limit: int | None = None) -> str:
-    ui = {"availability": "available"}
-    items = filter_gpu_items(overview.get("gpu_items") or [], ui)
+def render_train_now(overview: dict[str, object], *, ui: dict[str, object] | None = None, limit: int | None = None) -> str:
+    filter_ui = dict(ui or {})
+    filter_ui["availability"] = "available"
+    items = filter_gpu_items(overview.get("gpu_items") or [], filter_ui)
     if limit is not None:
         items = items[:limit]
     if not items:
-        return render_available_gpus([], ui, title="Train Now / Recommended GPUs", counts=overview)
+        return render_available_gpus([], filter_ui, title="Train Now / Recommended GPUs", counts=overview)
     cards = "".join(render_gpu_recommendation_card(item) for item in items)
     return (
         "<section class='panel'>"
-        "<div class='section-head'><h2>Train Now / Recommended GPUs</h2><a href='/gpus'>View all</a></div>"
+        f"<div class='section-head'><h2>Train Now / Recommended GPUs</h2><a href='{esc(page_url('/gpus', filter_ui))}'>View all</a></div>"
         "<p class='muted'>Copy an SSH command, CUDA_VISIBLE_DEVICES value, or LabGPU launch snippet.</p>"
         f"<div class='gpu-list'>{cards}</div></section>"
     )
@@ -1243,7 +1245,7 @@ def render_my_training(
     return f"<section class='panel'>{head}<table><tr><th>Name</th><th>Host</th><th>GPU</th><th>PID</th><th>Runtime</th><th>Last log</th><th>Status</th><th>Health</th><th>Diagnosis</th><th>Action</th></tr>{body}</table></section>"
 
 
-def render_failure_inbox(items: object, *, limit: int | None = None) -> str:
+def render_failure_inbox(items: object, *, ui: dict[str, object] | None = None, limit: int | None = None) -> str:
     rows = [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
     if limit is not None:
         rows = rows[:limit]
@@ -1253,7 +1255,7 @@ def render_failure_inbox(items: object, *, limit: int | None = None) -> str:
         f"<tr><td>{esc(item.get('source') or item.get('kind') or '-')}</td><td>{esc(item.get('name') or '-')}</td><td>{esc(item.get('host') or '-')}</td><td>{esc(item.get('gpu') or '-')}</td><td>{esc(item.get('pid') or '-')}</td><td><span class='badge {esc(health_badge(item.get('status')))}'>{esc(item.get('status') or '-')}</span></td><td>{esc(short(item.get('diagnosis') or '-', 120))}</td><td>{render_training_actions(item)}</td></tr>"
         for item in rows
     )
-    return f"<section class='panel'><div class='section-head'><h2>Failed or Suspicious Runs</h2><a href='/me'>My training</a></div><table><tr><th>Source</th><th>Name</th><th>Host</th><th>GPU</th><th>PID</th><th>Status</th><th>Signal</th><th>Action</th></tr>{body}</table></section>"
+    return f"<section class='panel'><div class='section-head'><h2>Failed or Suspicious Runs</h2><a href='{esc(page_url('/me', ui or {}))}'>My training</a></div><table><tr><th>Source</th><th>Name</th><th>Host</th><th>GPU</th><th>PID</th><th>Status</th><th>Signal</th><th>Action</th></tr>{body}</table></section>"
 
 
 def filter_training_items(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
@@ -1330,15 +1332,16 @@ def render_available_gpus(
         busy = int((counts or {}).get("busy_gpus") or 0)
         idle = int((counts or {}).get("suspected_idle_gpus") or 0)
         total = int((counts or {}).get("total_gpus") or 0)
+        ui_state = ui or {}
         return (
             f"<section class='panel'>{head}"
             "<p><strong>No clearly free GPU found.</strong></p>"
             f"<p class='muted'>{esc(busy)} GPUs are busy.</p>"
             f"<p class='muted'>{esc(idle)} GPUs look idle but occupied.</p>"
             "<div class='actions empty-actions'>"
-            "<a class='button' href='/gpus?availability=busy'>View busy GPUs</a>"
-            "<a class='button' href='/gpus?availability=idle'>View suspected idle GPUs</a>"
-            f"<a class='button' href='/gpus?availability=all'>View all GPUs ({esc(total)})</a>"
+            f"<a class='button' href='{esc(page_url('/gpus', ui_state, availability='busy'))}'>View busy GPUs</a>"
+            f"<a class='button' href='{esc(page_url('/gpus', ui_state, availability='idle'))}'>View suspected idle GPUs</a>"
+            f"<a class='button' href='{esc(page_url('/gpus', ui_state, availability='all'))}'>View all GPUs ({esc(total)})</a>"
             "</div></section>"
         )
     rows = "".join(
@@ -1354,7 +1357,7 @@ def render_gpu_finder(overview: dict[str, object], ui: dict[str, object]) -> str
     if not items:
         return render_available_gpus([], ui, title="Train Now / Recommended GPUs", counts=overview)
     cards = "".join(render_gpu_recommendation_card(item) for item in items)
-    return f"<section class='panel'><div class='section-head'><h2>Train Now Recommendations</h2><a href='/gpus?availability=all'>View all</a></div><div class='gpu-list'>{cards}</div></section>"
+    return f"<section class='panel'><div class='section-head'><h2>Train Now Recommendations</h2><a href='{esc(page_url('/gpus', ui, availability='all'))}'>View all</a></div><div class='gpu-list'>{cards}</div></section>"
 
 
 def render_gpu_recommendation_card(item: dict[str, object]) -> str:
@@ -2118,13 +2121,14 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
 </dialog>
 <dialog id="ssh-modal">
   <h2>Open SSH terminal</h2>
-  <p class="muted">Choose a local proxy tunnel if you need one, then optionally start Codex or Claude Code in the SSH terminal.</p>
+  <p class="muted">Choose a local proxy tunnel if you need one, then optionally start Codex, Claude Code, Gemini, or OpenClaw in the SSH terminal.</p>
   <table>
     <tr><th>Server</th><td id="ssh-modal-server"></td></tr>
   </table>
   <label>Proxy tunnel
     <select id="ssh-proxy">
       <option value="">No proxy</option>
+      <option value="ccswitch">CC Switch proxy</option>
       <option value="7890">Reverse local port 7890</option>
       <option value="33210">Reverse local port 33210</option>
       <option value="custom">Custom local port</option>
@@ -2138,8 +2142,11 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
       <option value="none">Shell only</option>
       <option value="codex">Codex CLI</option>
       <option value="claude">Claude Code</option>
+      <option value="gemini">Gemini CLI</option>
+      <option value="openclaw">OpenClaw Agent</option>
     </select>
   </label>
+  <p class="muted" id="ssh-ccswitch-status">Checking CC Switch...</p>
   <p class="muted" id="ssh-modal-hint">Opening from a GPU card does not set <code>CUDA_VISIBLE_DEVICES</code>. It only chooses the server to SSH into.</p>
   <p id="ssh-modal-result" class="muted"></p>
   <div class="modal-actions">
@@ -2349,9 +2356,10 @@ const translations = {{
   "Open SSH terminal": "打开 SSH 终端",
   "Opening terminal...": "正在打开终端...",
   "Terminal opened": "终端已打开",
-  "Choose a local proxy tunnel if you need one, then optionally start Codex or Claude Code in the SSH terminal.": "如果需要可以选择本地代理隧道，然后可选在 SSH 终端里直接启动 Codex 或 Claude Code。",
+  "Choose a local proxy tunnel if you need one, then optionally start Codex, Claude Code, Gemini, or OpenClaw in the SSH terminal.": "如果需要可以选择本地代理隧道，然后可选在 SSH 终端里直接启动 Codex、Claude Code、Gemini 或 OpenClaw。",
   "Proxy tunnel": "代理隧道",
   "No proxy": "不使用代理",
+  "CC Switch proxy": "CC Switch 代理",
   "Reverse local port 7890": "反向转发本地 7890",
   "Reverse local port 33210": "反向转发本地 33210",
   "Custom local port": "自定义本地端口",
@@ -2359,6 +2367,9 @@ const translations = {{
   "Shell only": "只打开 Shell",
   "Codex CLI": "Codex CLI",
   "Claude Code": "Claude Code",
+  "Gemini CLI": "Gemini CLI",
+  "OpenClaw Agent": "OpenClaw Agent",
+  "Checking CC Switch...": "正在检查 CC Switch...",
   "Opening from a GPU card does not set ": "从 GPU 卡片打开不会设置 ",
   ". It only chooses the server to SSH into.": "。它只用来选择要 SSH 进去的服务器。",
   "Checking...": "检查中...",
@@ -2520,20 +2531,27 @@ document.addEventListener("click", (event) => {{
   if (!button) return;
   copyTextFromButton(button);
 }});
-function ccswitchProxyPort() {{
+function selectedAgent() {{
+  const agentSelect = document.getElementById("ssh-agent");
+  return agentSelect ? agentSelect.value : "none";
+}}
+function ccswitchProxyPort(agent) {{
   const proxy = ccswitchSummary && ccswitchSummary.proxy ? ccswitchSummary.proxy : {{}};
-  const codex = proxy.codex || proxy.claude || proxy.gemini;
-  return codex && codex.listen_port ? String(codex.listen_port) : "15721";
+  const preferred = agent && agent !== "none" ? proxy[agent] : null;
+  const proxyConfig = preferred || proxy.codex || proxy.claude || proxy.gemini || proxy.openclaw;
+  return proxyConfig && proxyConfig.listen_port ? String(proxyConfig.listen_port) : "15721";
 }}
 function describeCcswitch(summary) {{
   if (!summary || !summary.available) return summary && summary.message ? summary.message : "CC Switch not detected.";
   const providers = summary.providers || {{}};
   const proxy = summary.proxy || {{}};
-  const codex = providers.codex && providers.codex.current ? `Codex: ${{providers.codex.current}}` : "Codex: -";
-  const claude = providers.claude && providers.claude.current ? `Claude: ${{providers.claude.current}}` : "Claude: -";
-  const proxyConfig = proxy.codex || proxy.claude || proxy.gemini;
+  const providerText = ["codex", "claude", "gemini", "openclaw"].map((name) => {{
+    const current = providers[name] && providers[name].current ? providers[name].current : "-";
+    return `${{name}}: ${{current}}`;
+  }}).join(" · ");
+  const proxyConfig = proxy[selectedAgent()] || proxy.codex || proxy.claude || proxy.gemini || proxy.openclaw;
   const proxyText = proxyConfig && proxyConfig.listen_port ? `proxy ${{proxyConfig.listen_address || "127.0.0.1"}}:${{proxyConfig.listen_port}}${{proxyConfig.enabled || proxyConfig.proxy_enabled ? "" : " (disabled)"}}` : "proxy: -";
-  return `${{codex}} · ${{claude}} · ${{proxyText}}`;
+  return `${{providerText}} · ${{proxyText}}`;
 }}
 async function loadCcswitchSummary() {{
   const status = document.getElementById("ssh-ccswitch-status");
@@ -2551,6 +2569,7 @@ function selectedProxyPort() {{
   const customInput = document.getElementById("ssh-custom-proxy");
   const value = proxySelect ? proxySelect.value : "";
   if (!value) return "";
+  if (value === "ccswitch") return ccswitchProxyPort(selectedAgent());
   if (value === "custom") return customInput ? customInput.value.trim() : "";
   return value;
 }}
@@ -2563,11 +2582,10 @@ async function runOpenSsh(button) {{
   const original = button.textContent || "Open SSH terminal";
   button.textContent = translateText("Opening terminal...", currentLanguage());
   button.disabled = true;
-  const agentSelect = document.getElementById("ssh-agent");
   const response = await fetch(`/api/servers/${{encodeURIComponent(button.dataset.openSsh || "")}}/open-ssh`, {{
     method: "POST",
     headers: {{"X-LabGPU-Action-Token": actionToken, "Content-Type": "application/json"}},
-    body: JSON.stringify({{proxy_port: selectedProxyPort(), agent: agentSelect ? agentSelect.value : "none"}})
+    body: JSON.stringify({{proxy_port: selectedProxyPort(), agent: selectedAgent()}})
   }});
   const payload = await response.json().catch(() => ({{ok: false, message: "Opening terminal failed."}}));
   button.disabled = false;
@@ -2855,6 +2873,9 @@ if (sshModalOpen) sshModalOpen.addEventListener("click", async () => {{
 }});
 const sshProxySelect = document.getElementById("ssh-proxy");
 if (sshProxySelect) sshProxySelect.addEventListener("change", updateSshProxyFields);
+const sshAgentSelect = document.getElementById("ssh-agent");
+if (sshAgentSelect) sshAgentSelect.addEventListener("change", loadCcswitchSummary);
+if (sshProxySelect || sshAgentSelect) loadCcswitchSummary();
 function fillStopModal(button) {{
   const pairs = {{
     "modal-server": button.dataset.server || "-",
@@ -2943,6 +2964,20 @@ def render_nav(*, status: str = "", json_href: str = "/api/servers") -> str:
 def section_head(title: str, view_all: str | None = None) -> str:
     link = f"<a href='{esc(view_all)}'>View all</a>" if view_all else ""
     return f"<div class='section-head'><h2>{esc(title)}</h2>{link}</div>"
+
+
+def page_url(path: str, ui: dict[str, object] | None = None, **params: object) -> str:
+    query: dict[str, str] = {}
+    group = str((ui or {}).get("group") or "").strip()
+    if group and group != "all":
+        query["group"] = group
+    for key, value in params.items():
+        text = str(value or "").strip()
+        if text:
+            query[key] = text
+    if not query:
+        return path
+    return f"{path}?{urlencode(query)}"
 
 
 def preview_list(values: object, limit: int) -> list[object]:

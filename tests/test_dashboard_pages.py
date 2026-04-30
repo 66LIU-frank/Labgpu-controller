@@ -128,6 +128,10 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn("CUDA_VISIBLE_DEVICES=0", html)
         self.assertIn("Open SSH terminal", html)
         self.assertIn('data-open-ssh="alpha_liu"', html)
+        self.assertIn('value="ccswitch"', html)
+        self.assertIn('value="gemini"', html)
+        self.assertIn('value="openclaw"', html)
+        self.assertIn("ssh-ccswitch-status", html)
         filtered = filter_available_gpu_items(data["overview"]["available_gpu_items"], {"min_mem_gb": "80", "model": "A100"})
         self.assertEqual(filtered[0]["server"], "alpha_liu")
         self.assertEqual(filtered[0]["server_group"], "AlphaLab")
@@ -263,11 +267,22 @@ class DashboardPagesTest(unittest.TestCase):
         data = sample_data()
         data["overview"]["available_gpu_items"] = []
         data["overview"]["available_gpus"] = 0
+        data["ui"] = {"group": "AlphaLab"}
         html = render_index(data)
         self.assertIn("summary-card warning", html)
-        empty = render_available_gpus([], {}, counts=data["overview"])
+        self.assertIn("/gpus?group=AlphaLab", html)
+        empty = render_available_gpus([], {"group": "AlphaLab"}, counts=data["overview"])
         self.assertIn("No clearly free GPU found.", empty)
         self.assertIn("View busy GPUs", empty)
+        self.assertIn("group=AlphaLab&amp;availability=busy", empty)
+        self.assertIn("group=AlphaLab&amp;availability=all", empty)
+
+    def test_train_now_links_keep_group_scope(self):
+        data = sample_data()
+        data["ui"] = {"group": "AlphaLab"}
+        html = render_gpus_page(data)
+        self.assertIn("href=\"/gpus?group=AlphaLab\"", html)
+        self.assertIn("group=AlphaLab&amp;availability=all", html)
 
     def test_home_server_list_is_not_capped_at_six(self):
         data = sample_data()
