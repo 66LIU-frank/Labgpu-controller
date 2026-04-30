@@ -2176,7 +2176,7 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
     <input id="ssh-custom-proxy" inputmode="numeric" placeholder="15721">
   </label>
   <label id="ssh-remote-proxy-wrap" hidden>Remote tunnel port
-    <input id="ssh-remote-proxy" inputmode="numeric" value="43310" placeholder="43310">
+    <input id="ssh-remote-proxy" inputmode="numeric" placeholder="auto">
   </label>
   <label>Open after SSH
     <select id="ssh-agent">
@@ -2414,7 +2414,7 @@ const translations = {{
   "Use local port 7890": "使用本机 7890",
   "Use local port 33210": "使用本机 33210",
   "Custom local proxy port": "自定义本机代理端口",
-  "Remote tunnel port": "远端隧道端口",
+  "Remote tunnel port": "远端隧道端口（留空自动）",
   "Open after SSH": "SSH 后打开",
   "CC Switch provider": "CC Switch 供应商",
   "Agent provider": "Agent 供应商",

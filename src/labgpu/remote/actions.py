@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 import re
 import shlex
 import shutil
@@ -276,15 +277,26 @@ def normalize_proxy_ports(
     local_proxy_port: str | int | None = None,
     remote_proxy_port: str | int | None = None,
 ) -> tuple[int | None, int | None]:
-    local_value = local_proxy_port if str(local_proxy_port or "").strip() else proxy_port
-    remote_value = remote_proxy_port if str(remote_proxy_port or "").strip() else proxy_port
+    legacy_value = str(proxy_port or "").strip()
+    local_explicit = str(local_proxy_port or "").strip()
+    remote_explicit = str(remote_proxy_port or "").strip()
+    local_value = local_explicit or legacy_value
     local_port = normalize_proxy_port(local_value)
-    remote_port = normalize_proxy_port(remote_value)
+    if remote_explicit:
+        remote_port = normalize_proxy_port(remote_explicit)
+    elif legacy_value and not local_explicit:
+        remote_port = normalize_proxy_port(legacy_value)
+    elif local_port:
+        remote_port = choose_remote_proxy_port()
+    else:
+        remote_port = None
     if remote_port and not local_port:
         raise ValueError("Local proxy port is required when remote tunnel port is set.")
-    if local_port and not remote_port:
-        remote_port = local_port
     return local_port, remote_port
+
+
+def choose_remote_proxy_port() -> int:
+    return random.randint(41000, 60999)
 
 
 def terminal_remote_command(proxy_port: int | None, agent: str, *, local_proxy_port: int | None = None) -> str:

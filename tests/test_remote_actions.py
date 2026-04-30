@@ -123,6 +123,12 @@ class RemoteActionsTest(unittest.TestCase):
         self.assertIn("HTTP_PROXY=http://127.0.0.1:43310", argv[7])
         self.assertIn("local 127.0.0.1:33210", argv[7])
 
+    def test_build_ssh_terminal_command_auto_selects_remote_proxy_port(self):
+        with patch("labgpu.remote.actions.random.randint", return_value=51234):
+            argv = build_ssh_terminal_argv("alpha_liu", local_proxy_port="15721", agent="codex")
+        self.assertEqual(argv[:6], ["ssh", "-o", "ExitOnForwardFailure=yes", "-R", "127.0.0.1:51234:127.0.0.1:15721", "-t"])
+        self.assertIn("HTTP_PROXY=http://127.0.0.1:51234", argv[7])
+
     def test_build_ssh_terminal_command_supports_agent_launchers(self):
         gemini = build_ssh_terminal_argv("alpha_liu", agent="gemini")
         self.assertEqual(gemini[:3], ["ssh", "-t", "alpha_liu"])
