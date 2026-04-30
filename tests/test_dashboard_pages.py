@@ -215,10 +215,22 @@ class DashboardPagesTest(unittest.TestCase):
             self.assertIn("Create Group", html)
             self.assertIn("Update Group Members", html)
             self.assertIn("Target group", html)
+            self.assertIn("Move selected servers to this group", html)
             self.assertIn("value='AlphaLab'", html)
             self.assertIn("settings-delete-groups", html)
             self.assertIn("Group name", html)
             self.assertIn("Song-1", html)
+
+    def test_alerts_page_scopes_persisted_alerts_to_current_hosts(self):
+        data = sample_data()
+        data["overview"]["all_alert_items"] = [
+            {"server": "alpha_liu", "type": "disk_warning", "severity": "warning", "status": "active", "message": "alpha alert"},
+            {"server": "beta_lab", "type": "disk_critical", "severity": "error", "status": "active", "message": "beta alert"},
+        ]
+        html = render_alerts_page(data)
+        self.assertIn("alpha alert", html)
+        self.assertNotIn("beta alert", html)
+        self.assertNotIn("beta_lab", html)
 
     def test_cached_ui_collection_does_not_probe_before_rendering(self):
         with tempfile.TemporaryDirectory() as tmp:
