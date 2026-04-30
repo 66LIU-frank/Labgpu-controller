@@ -2682,7 +2682,7 @@ function selectedRemoteProxyPort() {{
   const localPort = selectedLocalProxyPort();
   if (!localPort) return "";
   const remoteInput = document.getElementById("ssh-remote-proxy");
-  return remoteInput && remoteInput.value.trim() ? remoteInput.value.trim() : localPort;
+  return remoteInput ? remoteInput.value.trim() : "";
 }}
 function updateSshProxyFields() {{
   const proxySelect = document.getElementById("ssh-proxy");
