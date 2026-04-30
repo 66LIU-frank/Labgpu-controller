@@ -28,6 +28,7 @@ class UIConfig:
 @dataclass
 class LabGPUConfig:
     ui: UIConfig = field(default_factory=UIConfig)
+    groups: list[str] = field(default_factory=list)
     servers: dict[str, ServerEntry] = field(default_factory=dict)
 
 
@@ -69,6 +70,9 @@ def parse_config(text: str) -> LabGPUConfig:
                 config.ui.refresh_interval_seconds = value
             elif key == "safe_mode" and isinstance(value, bool):
                 config.ui.safe_mode = value
+        elif section == "groups":
+            if key == "names" and isinstance(value, list):
+                config.groups = unique_strings(value)
         elif server_name:
             server = config.servers[server_name]
             if key == "alias" and isinstance(value, str):
@@ -103,6 +107,9 @@ def render_config(config: LabGPUConfig) -> str:
         f"refresh_interval_seconds = {config.ui.refresh_interval_seconds}",
         f"safe_mode = {render_bool(config.ui.safe_mode)}",
         "",
+        "[groups]",
+        f"names = {render_list(config_group_names(config))}",
+        "",
     ]
     for name in sorted(config.servers):
         server = config.servers[name]
@@ -120,6 +127,15 @@ def render_config(config: LabGPUConfig) -> str:
             ]
         )
     return "\n".join(lines)
+
+
+def config_group_names(config: LabGPUConfig) -> list[str]:
+    names = unique_strings(config.groups)
+    for server in config.servers.values():
+        group = server.group.strip()
+        if group and group not in names:
+            names.append(group)
+    return sorted(names, key=str.lower)
 
 
 def parse_value(raw: str) -> Any:
@@ -162,3 +178,15 @@ def render_list(values: list[str]) -> str:
 
 def render_bool(value: bool) -> str:
     return "true" if value else "false"
+
+
+def unique_strings(values: list[object]) -> list[str]:
+    items: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value).strip()
+        if not text or text in seen:
+            continue
+        items.append(text)
+        seen.add(text)
+    return items

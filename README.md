@@ -123,7 +123,7 @@ labgpu adopt 23891 --name old_baseline --log ./train.log
 | Find a usable GPU | `Train Now` and `labgpu pick` rank GPUs across SSH hosts. |
 | Start training quickly | Copy SSH, `CUDA_VISIBLE_DEVICES`, launch snippets, or open an SSH terminal from the GPU card. |
 | Find your own jobs | `My Runs` and `labgpu where` show tracked, adopted, and own GPU processes. |
-| Organize servers | Settings lets you save enabled servers, edit groups, and view one group at a time. |
+| Organize servers | Save enabled servers in Settings, then create optional empty or populated groups in Groups. |
 | Manage config without editing files | Add/import SSH hosts, write safe SSH config blocks, and update `~/.labgpu/config.toml` from the UI. |
 | Move a project | `labgpu sync` streams a project from one SSH server to another through your laptop. |
 | Check transfer speed | `labgpu nettest` measures effective copy speed before you move a project. |
@@ -193,10 +193,10 @@ Settings
   Add/import SSH hosts, choose the homepage server set, and toggle JSON/API links.
 
 Groups
-  Create a group name, select existing saved servers, and view only that server pool.
+  Create empty groups, assign saved servers later, delete group names without deleting servers.
 ```
 
-Server groups are optional. You can add servers first and create groups later in `Groups`. Group chips appear on Home, Train Now, My Runs, Servers, Alerts, and Assistant, so you can switch between all servers and a specific pool like `AlphaLab`.
+Server groups are optional. You can create an empty group such as `liusuu`, add servers later, or delete a group name without deleting the saved servers. Group chips appear on Home, Train Now, My Runs, Servers, Alerts, and Assistant, so you can switch between all servers and a specific pool like `AlphaLab`.
 
 The UI supports Chinese/English and light/dark mode. Pages load from local snapshots first, then refresh stale SSH data in the background, so moving between pages does not wait on slow SSH probes. The top-right cache label shows how old the current cached data is.
 

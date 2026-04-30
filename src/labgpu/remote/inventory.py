@@ -48,6 +48,8 @@ def import_ssh_hosts(
             entry.tags = sorted(set(entry.tags).union(tags))
         if group is not None:
             entry.group = group.strip()
+            if entry.group and entry.group not in lab_config.groups:
+                lab_config.groups.append(entry.group)
         if not entry.disk_paths:
             entry.disk_paths = ["/", "/home", "/data", "/scratch", "/mnt", "/nvme"]
         lab_config.servers[entry.name] = entry

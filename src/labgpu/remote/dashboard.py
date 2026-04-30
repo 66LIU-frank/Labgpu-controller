@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from labgpu.core.config import ServerEntry, load_config, write_config
+from labgpu.core.config import ServerEntry, config_group_names, load_config, write_config
 from labgpu.remote.actions import open_ssh_terminal, stop_process
 from labgpu.remote.alerts import all_alert_records, apply_alert_state, set_alert_status
 from labgpu.remote.assistant import assistant_reply
@@ -262,7 +262,7 @@ def group_matches(value: object, selected: str | None) -> bool:
 
 def configured_groups() -> list[dict[str, str]]:
     config = load_config()
-    groups = sorted({entry.group.strip() for entry in config.servers.values() if entry.group.strip()})
+    groups = config_group_names(config)
     if not groups:
         return []
     has_ungrouped = any(not entry.group.strip() for entry in config.servers.values())
@@ -270,6 +270,14 @@ def configured_groups() -> list[dict[str, str]]:
     if has_ungrouped:
         items.append({"value": "__ungrouped__", "label": "Ungrouped"})
     return items
+
+
+def add_config_group(config: object, group: str) -> None:
+    groups = getattr(config, "groups", None)
+    if not isinstance(groups, list):
+        return
+    if group and group not in groups:
+        groups.append(group)
 
 
 class ServerHandler(BaseHTTPRequestHandler):
@@ -344,6 +352,9 @@ class ServerHandler(BaseHTTPRequestHandler):
             return
         if parts == ["api", "settings", "groups"]:
             self._settings_groups()
+            return
+        if parts == ["api", "settings", "groups", "delete"]:
+            self._settings_delete_groups()
             return
         if parts == ["api", "assistant", "chat"]:
             self._assistant_chat()
@@ -489,6 +500,8 @@ class ServerHandler(BaseHTTPRequestHandler):
         allow_stop = truthy(first_value(payload.get("allow_stop_own_process")), default=True)
 
         config = load_config()
+        if group:
+            add_config_group(config, group)
         for entry in config.servers.values():
             entry.enabled = False
         for alias in aliases:
@@ -552,6 +565,8 @@ class ServerHandler(BaseHTTPRequestHandler):
                 self.send_error(HTTPStatus.CONFLICT, f"failed to write SSH config: {exc}")
                 return
         config = load_config()
+        if group:
+            add_config_group(config, group)
         entry = config.servers.get(alias) or ServerEntry(name=alias, alias=alias)
         entry.enabled = True
         if group_value is not None:
@@ -583,6 +598,8 @@ class ServerHandler(BaseHTTPRequestHandler):
         aliases = [str(alias).strip() for alias in aliases if str(alias).strip()]
         group_name = str(first_value(payload.get("group_name")) or "").strip()
         config = load_config()
+        if group_name:
+            add_config_group(config, group_name)
         updated: list[str] = []
         for alias in aliases:
             entry = next((item for item in config.servers.values() if item.alias == alias), None)
@@ -592,6 +609,28 @@ class ServerHandler(BaseHTTPRequestHandler):
             updated.append(alias)
         write_config(config)
         self._json({"ok": True, "updated": updated, "group": group_name})
+
+    def _settings_delete_groups(self) -> None:
+        payload = self._read_body_payload()
+        if not self._valid_action_token(payload):
+            self.send_error(HTTPStatus.FORBIDDEN, "invalid action token")
+            return
+        names = payload.get("groups") or []
+        if isinstance(names, str):
+            names = [names]
+        groups = {str(name).strip() for name in names if str(name).strip()}
+        if not groups:
+            self.send_error(HTTPStatus.BAD_REQUEST, "no groups selected")
+            return
+        config = load_config()
+        config.groups = [name for name in config.groups if name not in groups]
+        unassigned: list[str] = []
+        for entry in config.servers.values():
+            if entry.group in groups:
+                entry.group = ""
+                unassigned.append(entry.alias)
+        write_config(config)
+        self._json({"ok": True, "deleted": sorted(groups), "unassigned": unassigned})
 
     def _assistant_chat(self) -> None:
         payload = self._read_body_payload()
@@ -835,9 +874,17 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
 def render_groups_page() -> str:
     config = load_config()
     saved_entries = sorted(config.servers.values(), key=lambda entry: entry.alias.lower())
-    groups = sorted({entry.group.strip() for entry in saved_entries if entry.group.strip()})
-    group_links = "".join(f"<a class='group-chip' href='/?group={quote(group)}'>{esc(group)}</a>" for group in groups)
+    groups = config_group_names(config)
+    group_counts = {group: 0 for group in groups}
+    for entry in saved_entries:
+        if entry.group in group_counts:
+            group_counts[entry.group] += 1
+    group_links = "".join(f"<a class='group-chip' href='/?group={quote(group)}'>{esc(group)} · {esc(group_counts.get(group, 0))}</a>" for group in groups)
     group_summary = group_links or "<span class='muted'>No groups yet.</span>"
+    delete_rows = "".join(
+        f"<tr><td><label><input type='checkbox' name='groups' value='{esc(group)}'> <code>{esc(group)}</code></label></td><td>{esc(group_counts.get(group, 0))} server(s)</td><td><a href='/?group={quote(group)}'>View group</a></td></tr>"
+        for group in groups
+    ) or "<tr><td colspan='3' class='muted'>No groups to delete.</td></tr>"
     group_rows = "".join(
         f"<tr><td><label><input type='checkbox' name='aliases' value='{esc(entry.alias)}'> <code>{esc(entry.alias)}</code></label></td><td>{esc('enabled' if entry.enabled else 'disabled')}</td><td>{esc(entry.group or '-')}</td><td>{esc(join_values(entry.tags))}</td></tr>"
         for entry in saved_entries
@@ -862,10 +909,19 @@ def render_groups_page() -> str:
             <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
             <div class="filters">
               <label>Group name <input name="group_name" placeholder="AlphaLab / off-campus / H800"></label>
-              <button class="button" type="submit">Save group</button>
+              <button class="button" type="submit">Create group / Assign selected servers</button>
             </div>
-            <p class="muted">Leave the group name blank to remove the selected servers from their group.</p>
+            <p class="muted">You can create an empty group first. If you select servers, they join the named group. Leave the group name blank to remove selected servers from their group.</p>
             <table><tr><th>Select</th><th>Status</th><th>Current group</th><th>Tags</th></tr>{group_rows}</table>
+          </form>
+        </section>
+        <section class="panel">
+          <h2>Delete Group Names</h2>
+          <p class="muted">Deleting a group name does not delete servers. Servers in that group are moved back to ungrouped.</p>
+          <form id="settings-delete-groups">
+            <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
+            <table><tr><th>Group</th><th>Members</th><th>View</th></tr>{delete_rows}</table>
+            <div class="actions" style="margin-top:10px"><button class="button danger" type="submit">Delete selected group names</button></div>
           </form>
         </section>
         """,
@@ -2032,7 +2088,7 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
 </dialog>
 <dialog id="ssh-modal">
   <h2>Open SSH terminal</h2>
-  <p class="muted">Choose a local proxy tunnel if you need one. LabGPU will not auto-run Codex or Claude; type the command after login.</p>
+  <p class="muted">Choose a local proxy tunnel if you need one, then optionally start Codex or Claude Code in the SSH terminal.</p>
   <table>
     <tr><th>Server</th><td id="ssh-modal-server"></td></tr>
   </table>
@@ -2047,14 +2103,14 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
   <label id="ssh-custom-proxy-wrap" hidden>Custom local port
     <input id="ssh-custom-proxy" inputmode="numeric" placeholder="15721">
   </label>
-  <label>After login hint
+  <label>Open after SSH
     <select id="ssh-agent">
-      <option value="none">No hint</option>
-      <option value="codex">Show Codex hint</option>
-      <option value="claude">Show Claude Code hint</option>
+      <option value="none">Shell only</option>
+      <option value="codex">Codex CLI</option>
+      <option value="claude">Claude Code</option>
     </select>
   </label>
-  <p class="muted" id="ssh-modal-hint">If Codex or Claude is installed only in your login shell, this avoids false “not found” errors. SSH first, then type <code>codex</code> or <code>claude</code>.</p>
+  <p class="muted" id="ssh-modal-hint">Opening from a GPU card does not set <code>CUDA_VISIBLE_DEVICES</code>. It only chooses the server to SSH into.</p>
   <p id="ssh-modal-result" class="muted"></p>
   <div class="modal-actions">
     <button class="button" id="ssh-modal-cancel" type="button">Cancel</button>
@@ -2144,6 +2200,14 @@ const translations = {{
   "Example: create ": "例如：创建 ",
   "Add servers": "添加服务器",
   "Manage groups": "管理分组",
+  "No groups yet.": "还没有分组。",
+  "Create group / Assign selected servers": "创建分组 / 加入选中服务器",
+  "You can create an empty group first. If you select servers, they join the named group. Leave the group name blank to remove selected servers from their group.": "你可以先创建一个空分组。如果选中服务器，它们会加入这个分组。分组名留空可以把选中的服务器移出当前分组。",
+  "Delete Group Names": "删除分组名",
+  "Deleting a group name does not delete servers. Servers in that group are moved back to ungrouped.": "删除分组名不会删除服务器。属于该分组的服务器会回到未分组。",
+  "Delete selected group names": "删除选中的分组名",
+  "No groups to delete.": "没有可删除的分组。",
+  "Members": "成员",
   "Create groups after servers are saved. Groups let you switch Home, Train Now, My Training, Servers, Alerts, and Assistant between all servers and a custom pool.": "服务器保存后再创建分组。分组可以让 Home、现在开跑、我的训练、服务器、告警和助手在全部服务器与自定义资源池之间切换。",
   "Groups are optional. Create a group by typing the same group name on the servers you want together, then use the group chips on Home, Train Now, My Training, Servers, Alerts, or Assistant.": "分组是可选的。给想放在一起的服务器填写同一个分组名，就可以在主页、现在开跑、我的训练、服务器、告警或助手页面用分组按钮查看。",
   "Groups are optional. Type a group name, select existing saved servers, and save. Use groups when you want to view only AlphaLab, off-campus, H800, or any custom server set.": "分组是可选的。输入分组名，勾选已经保存的服务器，然后保存。需要只看 AlphaLab、校外服务器、H800 或其他自定义服务器集合时使用分组。",
@@ -2247,17 +2311,18 @@ const translations = {{
   "Open SSH terminal": "打开 SSH 终端",
   "Opening terminal...": "正在打开终端...",
   "Terminal opened": "终端已打开",
-  "Choose a local proxy tunnel if you need one. LabGPU will not auto-run Codex or Claude; type the command after login.": "如果需要可以选择本地代理隧道。LabGPU 不会自动运行 Codex 或 Claude；登录后你自己输入命令即可。",
+  "Choose a local proxy tunnel if you need one, then optionally start Codex or Claude Code in the SSH terminal.": "如果需要可以选择本地代理隧道，然后可选在 SSH 终端里直接启动 Codex 或 Claude Code。",
   "Proxy tunnel": "代理隧道",
   "No proxy": "不使用代理",
   "Reverse local port 7890": "反向转发本地 7890",
   "Reverse local port 33210": "反向转发本地 33210",
   "Custom local port": "自定义本地端口",
-  "After login hint": "登录后提示",
-  "No hint": "不提示",
-  "Show Codex hint": "提示 Codex",
-  "Show Claude Code hint": "提示 Claude Code",
-  "If Codex or Claude is installed only in your login shell, this avoids false “not found” errors. SSH first, then type ": "如果 Codex 或 Claude 只在登录 shell 里可用，这样可以避免误报找不到。先 SSH 登录，然后输入 ",
+  "Open after SSH": "SSH 后打开",
+  "Shell only": "只打开 Shell",
+  "Codex CLI": "Codex CLI",
+  "Claude Code": "Claude Code",
+  "Opening from a GPU card does not set ": "从 GPU 卡片打开不会设置 ",
+  ". It only chooses the server to SSH into.": "。它只用来选择要 SSH 进去的服务器。",
   "Checking...": "检查中...",
   "Copy command": "复制命令",
   "Copy adopt": "复制接管命令",
@@ -2558,10 +2623,35 @@ if (settingsGroups) {{
     const payload = await response.json().catch(() => ({{}}));
     if (response.ok) {{
       const groupText = payload.group ? ` to "${{payload.group}}"` : "";
-      window.alert(`Saved ${{(payload.updated || []).length}} server(s)${{groupText}}.`);
+      const count = (payload.updated || []).length;
+      window.alert(count ? `Saved ${{count}} server(s)${{groupText}}.` : `Saved group "${{payload.group || "ungrouped"}}".`);
       window.location.reload();
     }} else {{
       window.alert(payload.message || payload.error || "Saving groups failed.");
+    }}
+  }});
+}}
+const settingsDeleteGroups = document.getElementById("settings-delete-groups");
+if (settingsDeleteGroups) {{
+  settingsDeleteGroups.addEventListener("submit", async (event) => {{
+    event.preventDefault();
+    const form = new FormData(settingsDeleteGroups);
+    const names = form.getAll("groups");
+    if (!names.length) {{
+      window.alert("Select at least one group name.");
+      return;
+    }}
+    if (!window.confirm(`Delete selected group name(s)? Servers will stay saved and move to ungrouped.`)) return;
+    const response = await fetch("/api/settings/groups/delete", {{
+      method: "POST",
+      body: new URLSearchParams(form)
+    }});
+    const payload = await response.json().catch(() => ({{}}));
+    if (response.ok) {{
+      window.alert(`Deleted ${{(payload.deleted || []).length}} group name(s).`);
+      window.location.reload();
+    }} else {{
+      window.alert(payload.message || payload.error || "Deleting groups failed.");
     }}
   }});
 }}

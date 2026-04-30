@@ -197,6 +197,7 @@ class DashboardPagesTest(unittest.TestCase):
             old_home = os.environ.get("LABGPU_HOME")
             os.environ["LABGPU_HOME"] = tmp
             config = LabGPUConfig()
+            config.groups = ["AlphaLab", "liusuu"]
             config.servers["alpha_liu"] = ServerEntry(name="alpha_liu", alias="alpha_liu", group="AlphaLab", tags=["A100"])
             config.servers["Song-1"] = ServerEntry(name="Song-1", alias="Song-1", tags=["4090"])
             write_config(config)
@@ -209,7 +210,10 @@ class DashboardPagesTest(unittest.TestCase):
                     os.environ["LABGPU_HOME"] = old_home
             self.assertIn("Existing Groups", html)
             self.assertIn("AlphaLab", html)
+            self.assertIn("liusuu", html)
+            self.assertIn("0 server(s)", html)
             self.assertIn("settings-groups", html)
+            self.assertIn("settings-delete-groups", html)
             self.assertIn("Group name", html)
             self.assertIn("Song-1", html)
 

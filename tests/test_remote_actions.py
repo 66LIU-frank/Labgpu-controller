@@ -112,7 +112,8 @@ class RemoteActionsTest(unittest.TestCase):
         self.assertEqual(argv[:4], ["ssh", "-R", "127.0.0.1:7890:127.0.0.1:7890", "-t"])
         self.assertEqual(argv[4], "alpha_liu")
         self.assertIn("HTTP_PROXY=http://127.0.0.1:7890", argv[5])
-        self.assertIn("type codex", argv[5])
+        self.assertIn("codex", argv[5])
+        self.assertIn("-lc", argv[5])
         self.assertNotIn("ALL_PROXY", argv[5])
 
     def test_build_ssh_terminal_rejects_bad_options(self):

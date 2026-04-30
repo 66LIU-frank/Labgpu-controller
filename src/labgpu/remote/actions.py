@@ -234,9 +234,13 @@ def terminal_remote_command(proxy_port: int | None, agent: str) -> str:
         parts.append(f"export HTTP_PROXY={shlex.quote(proxy_url)} HTTPS_PROXY={shlex.quote(proxy_url)}")
         parts.append(f"echo 'LabGPU proxy: remote HTTP_PROXY/HTTPS_PROXY -> local 127.0.0.1:{proxy_port}'")
     if agent == "codex":
-        parts.append("echo 'Tip: type codex after the shell opens.'")
+        parts.append("exec ${SHELL:-/bin/sh} -lc 'codex; exec ${SHELL:-/bin/sh} -l'")
     elif agent == "claude":
-        parts.append("echo 'Tip: type claude or claude-code after the shell opens.'")
+        parts.append(
+            "exec ${SHELL:-/bin/sh} -lc 'if command -v claude >/dev/null 2>&1; then claude; "
+            "elif command -v claude-code >/dev/null 2>&1; then claude-code; "
+            "else echo \"Claude Code CLI was not found.\"; fi; exec ${SHELL:-/bin/sh} -l'"
+        )
     if proxy_port or agent != "none":
         parts.append('if [ -n "${SHELL:-}" ]; then exec "$SHELL" -l; fi; exec /bin/sh')
     return "; ".join(parts)

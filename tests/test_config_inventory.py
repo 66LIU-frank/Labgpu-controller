@@ -14,6 +14,9 @@ class ConfigInventoryTest(unittest.TestCase):
 refresh_interval_seconds = 10
 safe_mode = true
 
+[groups]
+names = ["AlphaLab", "liusuu"]
+
 [servers.alpha_liu]
 enabled = true
 alias = "alpha_liu"
@@ -26,11 +29,13 @@ allow_stop_own_process = false
         )
         server = config.servers["alpha_liu"]
         self.assertEqual(config.ui.refresh_interval_seconds, 10)
+        self.assertEqual(config.groups, ["AlphaLab", "liusuu"])
         self.assertEqual(server.group, "AlphaLab")
         self.assertEqual(server.tags, ["A100", "training"])
         self.assertTrue(server.shared_account)
         self.assertFalse(server.allow_stop_own_process)
         rendered = render_config(config)
+        self.assertIn('[groups]\nnames = ["AlphaLab", "liusuu"]', rendered)
         self.assertIn("[servers.alpha_liu]", rendered)
         self.assertIn('group = "AlphaLab"', rendered)
         self.assertIn('tags = ["A100", "training"]', rendered)
@@ -74,6 +79,7 @@ allow_stop_own_process = false
             )
             self.assertEqual([entry.alias for entry in imported], ["alpha_liu"])
             self.assertEqual(imported[0].group, "AlphaLab")
+            self.assertIn('names = ["AlphaLab"]', config_path.read_text(encoding="utf-8"))
             self.assertIn('group = "AlphaLab"', config_path.read_text(encoding="utf-8"))
             self.assertIn('tags = ["A100"]', config_path.read_text(encoding="utf-8"))
 
