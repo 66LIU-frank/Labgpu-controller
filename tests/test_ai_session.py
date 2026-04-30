@@ -31,6 +31,7 @@ class AISessionTest(unittest.TestCase):
         self.assertIn("LABGPU_CLAUDE_SETTINGS", remote)
         self.assertIn('exec "$LABGPU_REAL_CLAUDE" --settings "$LABGPU_CLAUDE_SETTINGS" "$@"', remote)
         self.assertIn('export PATH="$LABGPU_AI_TMPDIR:$PATH"', remote)
+        self.assertIn('--rcfile "$LABGPU_AI_TMPDIR/bashrc"', remote)
         self.assertIn("ANTHROPIC_BASE_URL=http://127.0.0.1:27183", remote)
         self.assertIn(f"ANTHROPIC_API_KEY={SESSION_TOKEN}", remote)
         self.assertIn("CUDA_VISIBLE_DEVICES=0", remote)

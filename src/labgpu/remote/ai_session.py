@@ -108,7 +108,7 @@ def build_remote_shell_command(
         exports.append(build_claude_wrapper_setup(remote_env))
     if remote_cwd is not None:
         exports.append(f"cd {shlex.quote(remote_cwd)} || exit 1")
-    exports.append('exec "${SHELL:-/bin/sh}" -i')
+    exports.append(build_interactive_shell_exec(setup_claude_wrapper=setup_claude_wrapper))
     return "; ".join(exports)
 
 
@@ -123,6 +123,16 @@ def build_claude_wrapper_setup(remote_env: dict[str, str]) -> str:
         separators=(",", ":"),
     )
     wrapper = '#!/bin/sh\nexec "$LABGPU_REAL_CLAUDE" --settings "$LABGPU_CLAUDE_SETTINGS" "$@"\n'
+    bashrc = (
+        'if [ -r "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n'
+        'export PATH="$LABGPU_AI_TMPDIR:$PATH"\n'
+        'if [ -n "$LABGPU_REMOTE_CWD" ]; then cd "$LABGPU_REMOTE_CWD" 2>/dev/null || true; fi\n'
+    )
+    zshrc = (
+        'if [ -r "$HOME/.zshrc" ]; then . "$HOME/.zshrc"; fi\n'
+        'export PATH="$LABGPU_AI_TMPDIR:$PATH"\n'
+        'if [ -n "$LABGPU_REMOTE_CWD" ]; then cd "$LABGPU_REMOTE_CWD" 2>/dev/null || true; fi\n'
+    )
     return " ".join(
         [
             'LABGPU_REAL_CLAUDE="${LABGPU_AI_CLAUDE_COMMAND:-}"',
@@ -152,10 +162,26 @@ def build_claude_wrapper_setup(remote_env: dict[str, str]) -> str:
             "&&",
             'ln -sf "$LABGPU_AI_TMPDIR/claude" "$LABGPU_AI_TMPDIR/claude-code"',
             "&&",
+            f"printf %s {shlex.quote(bashrc)} > \"$LABGPU_AI_TMPDIR/bashrc\"",
+            "&&",
+            f"printf %s {shlex.quote(zshrc)} > \"$LABGPU_AI_TMPDIR/.zshrc\"",
+            "&&",
             'export PATH="$LABGPU_AI_TMPDIR:$PATH"',
             ";",
             "fi",
         ]
+    )
+
+
+def build_interactive_shell_exec(*, setup_claude_wrapper: bool) -> str:
+    if not setup_claude_wrapper:
+        return 'exec "${SHELL:-/bin/sh}" -i'
+    return (
+        'case "$(basename "${SHELL:-/bin/sh}")" in '
+        'bash) exec "${SHELL:-/bin/bash}" --rcfile "$LABGPU_AI_TMPDIR/bashrc" -i ;; '
+        'zsh) export ZDOTDIR="$LABGPU_AI_TMPDIR"; exec "${SHELL:-/bin/zsh}" -i ;; '
+        '*) export PATH="$LABGPU_AI_TMPDIR:$PATH"; exec "${SHELL:-/bin/sh}" -i ;; '
+        "esac"
     )
 
 
