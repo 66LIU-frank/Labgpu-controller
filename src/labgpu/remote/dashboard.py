@@ -904,17 +904,28 @@ def render_groups_page() -> str:
           <div class="groupbar">{group_summary}</div>
         </section>
         <div class="group-actions">
-          <section class="panel group-create">
-            <h2>Create Group</h2>
-            <p class="muted">Create a group name first, even if you do not want to add servers yet.</p>
-            <form class="settings-groups-form">
-              <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
-              <div class="filters">
-                <label>Group name <input name="group_name" required placeholder="liusuu / AlphaLab / off-campus"></label>
-                <button class="button" type="submit">Create group</button>
-              </div>
-            </form>
-          </section>
+          <div class="group-side">
+            <section class="panel group-create">
+              <h2>Create Group</h2>
+              <p class="muted">Create a group name first, even if you do not want to add servers yet.</p>
+              <form class="settings-groups-form">
+                <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
+                <div class="filters">
+                  <label>Group name <input name="group_name" required placeholder="liusuu / AlphaLab / off-campus"></label>
+                  <button class="button" type="submit">Create group</button>
+                </div>
+              </form>
+            </section>
+            <section class="panel group-delete">
+              <h2>Delete Group Names</h2>
+              <p class="muted">Deleting a group name does not delete servers. Servers in that group are moved back to ungrouped.</p>
+              <form id="settings-delete-groups">
+                <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
+                <table><tr><th>Group</th><th>Members</th><th>View</th></tr>{delete_rows}</table>
+                <div class="actions" style="margin-top:10px"><button class="button danger" type="submit">Delete selected group names</button></div>
+              </form>
+            </section>
+          </div>
           <section class="panel group-update">
             <h2>Update Group Members</h2>
             <p class="muted">Choose an existing group or Ungrouped, then select saved servers to move there.</p>
@@ -925,15 +936,6 @@ def render_groups_page() -> str:
                 <button class="button" type="submit">Move selected servers to this group</button>
               </div>
               <table><tr><th>Select</th><th>Status</th><th>Current group</th><th>Tags</th></tr>{group_rows}</table>
-            </form>
-          </section>
-          <section class="panel group-delete">
-            <h2>Delete Group Names</h2>
-            <p class="muted">Deleting a group name does not delete servers. Servers in that group are moved back to ungrouped.</p>
-            <form id="settings-delete-groups">
-              <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
-              <table><tr><th>Group</th><th>Members</th><th>View</th></tr>{delete_rows}</table>
-              <div class="actions" style="margin-top:10px"><button class="button danger" type="submit">Delete selected group names</button></div>
             </form>
           </section>
         </div>
@@ -2040,7 +2042,8 @@ dialog select,dialog input{{border:1px solid var(--border);border-radius:6px;pad
 .groupbar{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:-4px 0 14px}}
 .group-chip{{border:1px solid var(--border);background:var(--button);border-radius:999px;padding:5px 10px;text-decoration:none;color:var(--link)}}
 .group-chip.active{{border-color:#75c793;background:#ecfdf3;color:#067647}}
-.group-actions{{display:grid;grid-template-columns:minmax(240px,.8fr) minmax(460px,1.6fr) minmax(260px,.9fr);gap:14px;align-items:start}}
+.group-actions{{display:grid;grid-template-columns:minmax(260px,.8fr) minmax(560px,1.8fr);gap:14px;align-items:start}}
+.group-side{{display:grid;gap:14px}}
 .filters{{display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px}}
 .filters label{{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}}
 .filters input,.filters select{{border:1px solid var(--border);border-radius:6px;padding:7px 8px;min-width:150px;background:var(--button);color:var(--text)}}
