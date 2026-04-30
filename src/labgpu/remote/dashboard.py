@@ -2596,10 +2596,23 @@ function selectedCcswitchProviderId() {{
   return providerSelect.value || "";
 }}
 function ccswitchProxyPort(agent) {{
+  const proxyConfig = activeCcswitchProxyConfig(agent);
+  return proxyConfig && proxyConfig.listen_port ? String(proxyConfig.listen_port) : "";
+}}
+function activeCcswitchProxyConfig(agent) {{
   const proxy = ccswitchSummary && ccswitchSummary.proxy ? ccswitchSummary.proxy : {{}};
   const preferred = agent && agent !== "none" ? proxy[agent] : null;
   const proxyConfig = preferred || proxy.codex || proxy.claude || proxy.gemini || proxy.openclaw;
-  return proxyConfig && proxyConfig.listen_port ? String(proxyConfig.listen_port) : "15721";
+  if (!proxyConfig || !proxyConfig.listen_port) return null;
+  return proxyConfig.enabled || proxyConfig.proxy_enabled ? proxyConfig : null;
+}}
+function ccswitchProxyStatus(agent) {{
+  const proxy = ccswitchSummary && ccswitchSummary.proxy ? ccswitchSummary.proxy : {{}};
+  const preferred = agent && agent !== "none" ? proxy[agent] : null;
+  const proxyConfig = preferred || proxy.codex || proxy.claude || proxy.gemini || proxy.openclaw;
+  if (!proxyConfig || !proxyConfig.listen_port) return "proxy: -";
+  const state = proxyConfig.enabled || proxyConfig.proxy_enabled ? "enabled" : "disabled";
+  return `proxy ${{proxyConfig.listen_address || "127.0.0.1"}}:${{proxyConfig.listen_port}} (${{state}})`;
 }}
 function describeCcswitch(summary) {{
   if (!summary || !summary.available) return summary && summary.message ? summary.message : "CC Switch not detected.";
@@ -2610,8 +2623,7 @@ function describeCcswitch(summary) {{
     const current = providers[name] && providers[name].current ? providers[name].current : "-";
     return `${{labels[name]}}: ${{current}}`;
   }}).join(" · ");
-  const proxyConfig = proxy[selectedAgent()] || proxy.codex || proxy.claude || proxy.gemini || proxy.openclaw;
-  const proxyText = proxyConfig && proxyConfig.listen_port ? `proxy ${{proxyConfig.listen_address || "127.0.0.1"}}:${{proxyConfig.listen_port}}${{proxyConfig.enabled || proxyConfig.proxy_enabled ? "" : " (disabled)"}}` : "proxy: -";
+  const proxyText = ccswitchProxyStatus(selectedAgent());
   return `${{providerText}} · ${{proxyText}}`;
 }}
 function updateCcswitchProviderOptions() {{
@@ -2676,6 +2688,12 @@ function updateSshProxyFields() {{
 }}
 async function runOpenSsh(button) {{
   const original = button.textContent || "Open SSH terminal";
+  const proxySelect = document.getElementById("ssh-proxy");
+  const result = document.getElementById("ssh-modal-result");
+  if (proxySelect && proxySelect.value === "ccswitch" && !activeCcswitchProxyConfig(selectedAgent())) {{
+    if (result) result.textContent = "CC Switch proxy is disabled or not configured. Start CC Switch proxy first, or choose local port 33210.";
+    return;
+  }}
   button.textContent = translateText("Opening terminal...", currentLanguage());
   button.disabled = true;
   const response = await fetch(`/api/servers/${{encodeURIComponent(button.dataset.openSsh || "")}}/open-ssh`, {{
@@ -2697,7 +2715,6 @@ async function runOpenSsh(button) {{
     if (dialog && dialog.open) dialog.close();
   }} else {{
     button.textContent = original;
-    const result = document.getElementById("ssh-modal-result");
     if (result) result.textContent = payload.message || "Opening terminal failed.";
     else window.alert(payload.message || "Opening terminal failed.");
   }}
