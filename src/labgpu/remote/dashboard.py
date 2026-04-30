@@ -2545,9 +2545,10 @@ function describeCcswitch(summary) {{
   if (!summary || !summary.available) return summary && summary.message ? summary.message : "CC Switch not detected.";
   const providers = summary.providers || {{}};
   const proxy = summary.proxy || {{}};
+  const labels = {{codex: "Codex", claude: "Claude", gemini: "Gemini", openclaw: "OpenClaw"}};
   const providerText = ["codex", "claude", "gemini", "openclaw"].map((name) => {{
     const current = providers[name] && providers[name].current ? providers[name].current : "-";
-    return `${{name}}: ${{current}}`;
+    return `${{labels[name]}}: ${{current}}`;
   }}).join(" · ");
   const proxyConfig = proxy[selectedAgent()] || proxy.codex || proxy.claude || proxy.gemini || proxy.openclaw;
   const proxyText = proxyConfig && proxyConfig.listen_port ? `proxy ${{proxyConfig.listen_address || "127.0.0.1"}}:${{proxyConfig.listen_port}}${{proxyConfig.enabled || proxyConfig.proxy_enabled ? "" : " (disabled)"}}` : "proxy: -";

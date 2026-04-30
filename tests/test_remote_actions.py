@@ -116,6 +116,19 @@ class RemoteActionsTest(unittest.TestCase):
         self.assertIn("-lc", argv[5])
         self.assertNotIn("ALL_PROXY", argv[5])
 
+    def test_build_ssh_terminal_command_supports_agent_launchers(self):
+        gemini = build_ssh_terminal_argv("alpha_liu", agent="gemini")
+        self.assertEqual(gemini[:3], ["ssh", "-t", "alpha_liu"])
+        self.assertIn("gemini", gemini[3])
+        self.assertIn("Gemini CLI was not found.", gemini[3])
+
+        openclaw = build_ssh_terminal_argv("alpha_liu", agent="openclaw")
+        self.assertIn("openclaw agent", openclaw[3])
+        self.assertIn("OpenClaw CLI was not found.", openclaw[3])
+
+        claude = build_ssh_terminal_argv("alpha_liu", agent="claude-code")
+        self.assertIn("claude-code", claude[3])
+
     def test_build_ssh_terminal_rejects_bad_options(self):
         with self.assertRaises(ValueError):
             build_ssh_terminal_argv("alpha_liu", proxy_port="99999")

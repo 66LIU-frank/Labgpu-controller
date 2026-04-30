@@ -36,7 +36,7 @@ fi
 """
 
 SAFE_SSH_ALIAS_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
-SUPPORTED_TERMINAL_AGENTS = {"none", "codex", "claude"}
+SUPPORTED_TERMINAL_AGENTS = {"none", "codex", "claude", "gemini", "openclaw"}
 
 
 def stop_process(
@@ -208,8 +208,14 @@ def build_ssh_terminal_argv(alias: str, *, proxy_port: str | int | None = None, 
 
 def normalize_terminal_agent(value: str | None) -> str:
     agent = str(value or "none").strip().lower()
-    if agent == "claudecode":
-        agent = "claude"
+    aliases = {
+        "claudecode": "claude",
+        "claude-code": "claude",
+        "gemini-cli": "gemini",
+        "open-claw": "openclaw",
+        "claw": "openclaw",
+    }
+    agent = aliases.get(agent, agent)
     if agent not in SUPPORTED_TERMINAL_AGENTS:
         raise ValueError("Unsupported terminal launcher.")
     return agent
@@ -233,17 +239,29 @@ def terminal_remote_command(proxy_port: int | None, agent: str) -> str:
         proxy_url = f"http://127.0.0.1:{proxy_port}"
         parts.append(f"export HTTP_PROXY={shlex.quote(proxy_url)} HTTPS_PROXY={shlex.quote(proxy_url)}")
         parts.append(f"echo 'LabGPU proxy: remote HTTP_PROXY/HTTPS_PROXY -> local 127.0.0.1:{proxy_port}'")
-    if agent == "codex":
-        parts.append("exec ${SHELL:-/bin/sh} -lc 'codex; exec ${SHELL:-/bin/sh} -l'")
-    elif agent == "claude":
-        parts.append(
-            "exec ${SHELL:-/bin/sh} -lc 'if command -v claude >/dev/null 2>&1; then claude; "
-            "elif command -v claude-code >/dev/null 2>&1; then claude-code; "
-            "else echo \"Claude Code CLI was not found.\"; fi; exec ${SHELL:-/bin/sh} -l'"
-        )
-    if proxy_port or agent != "none":
+    if agent != "none":
+        parts.append(agent_launcher_command(agent))
+    elif proxy_port:
         parts.append('if [ -n "${SHELL:-}" ]; then exec "$SHELL" -l; fi; exec /bin/sh')
     return "; ".join(parts)
+
+
+def agent_launcher_command(agent: str) -> str:
+    launchers = {
+        "codex": ('command -v codex >/dev/null 2>&1', "codex", "Codex CLI was not found."),
+        "claude": (
+            "command -v claude >/dev/null 2>&1 || command -v claude-code >/dev/null 2>&1",
+            'if command -v claude >/dev/null 2>&1; then claude; else claude-code; fi',
+            "Claude Code CLI was not found.",
+        ),
+        "gemini": ('command -v gemini >/dev/null 2>&1', "gemini", "Gemini CLI was not found."),
+        "openclaw": ('command -v openclaw >/dev/null 2>&1', "openclaw agent", "OpenClaw CLI was not found."),
+    }
+    if agent not in launchers:
+        raise ValueError("Unsupported terminal launcher.")
+    check, command, missing = launchers[agent]
+    script = f'if {check}; then {command}; else echo "{missing}"; fi; exec ${{SHELL:-/bin/sh}} -l'
+    return f"exec ${{SHELL:-/bin/sh}} -lc {shlex.quote(script)}"
 
 
 def linux_terminal_launcher(argv: list[str]) -> list[str] | None:
