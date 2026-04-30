@@ -260,8 +260,8 @@ def agent_launcher_command(agent: str) -> str:
     if agent not in launchers:
         raise ValueError("Unsupported terminal launcher.")
     check, command, missing = launchers[agent]
-    script = f'if {check}; then {command}; else echo "{missing}"; fi; exec ${{SHELL:-/bin/sh}} -l'
-    return f"exec ${{SHELL:-/bin/sh}} -lc {shlex.quote(script)}"
+    script = f'if {check}; then {command}; else echo "{missing}"; fi; exec ${{SHELL:-/bin/sh}} -il'
+    return f"exec ${{SHELL:-/bin/sh}} -ilc {shlex.quote(script)}"
 
 
 def linux_terminal_launcher(argv: list[str]) -> list[str] | None:
