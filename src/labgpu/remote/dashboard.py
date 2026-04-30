@@ -2165,7 +2165,7 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
   </table>
   <label>Local proxy
     <select id="ssh-proxy">
-      <option value="">No proxy</option>
+      <option value="">No proxy (server network)</option>
       <option value="ccswitch">CC Switch proxy</option>
       <option value="7890">Use local port 7890</option>
       <option value="33210">Use local port 33210</option>
@@ -2407,6 +2407,7 @@ const translations = {{
   "Proxy tunnel": "代理隧道",
   "Local proxy": "本机代理",
   "No proxy": "不使用代理",
+  "No proxy (server network)": "不使用代理（服务器自己的网络）",
   "CC Switch proxy": "CC Switch 代理",
   "Reverse local port 7890": "反向转发本地 7890",
   "Reverse local port 33210": "反向转发本地 33210",
@@ -2591,8 +2592,9 @@ function selectedAgent() {{
   return agentSelect ? agentSelect.value : "none";
 }}
 function selectedCcswitchProviderId() {{
+  const proxySelect = document.getElementById("ssh-proxy");
   const providerSelect = document.getElementById("ssh-ccswitch-provider");
-  if (selectedAgent() === "none" || !providerSelect) return "";
+  if (!proxySelect || proxySelect.value !== "ccswitch" || selectedAgent() === "none" || !providerSelect) return "";
   return providerSelect.value || "";
 }}
 function ccswitchProxyPort(agent) {{
@@ -2627,12 +2629,16 @@ function describeCcswitch(summary) {{
   return `${{providerText}} · ${{proxyText}}`;
 }}
 function updateCcswitchProviderOptions() {{
+  const proxySelect = document.getElementById("ssh-proxy");
   const providerWrap = document.getElementById("ssh-ccswitch-provider-wrap");
   const providerSelect = document.getElementById("ssh-ccswitch-provider");
   const agent = selectedAgent();
-  const enabled = agent !== "none";
+  const enabled = !!(proxySelect && proxySelect.value === "ccswitch" && agent !== "none");
   if (providerWrap) providerWrap.hidden = !enabled;
-  if (!providerSelect || !enabled) return;
+  if (!providerSelect || !enabled) {{
+    if (providerSelect) providerSelect.value = "";
+    return;
+  }}
   const currentValue = providerSelect.value;
   const providers = ccswitchSummary && ccswitchSummary.providers ? ccswitchSummary.providers : {{}};
   const provider = providers[agent] || {{}};
