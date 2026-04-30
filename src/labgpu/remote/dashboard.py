@@ -579,16 +579,17 @@ class ServerHandler(BaseHTTPRequestHandler):
         if isinstance(aliases, str):
             aliases = [aliases]
         aliases = [str(alias).strip() for alias in aliases if str(alias).strip()]
+        group_name = str(first_value(payload.get("group_name")) or "").strip()
         config = load_config()
         updated: list[str] = []
         for alias in aliases:
             entry = next((item for item in config.servers.values() if item.alias == alias), None)
             if not entry:
                 continue
-            entry.group = str(first_value(payload.get(f"group:{alias}")) or "").strip()
+            entry.group = group_name
             updated.append(alias)
         write_config(config)
-        self._json({"ok": True, "updated": updated})
+        self._json({"ok": True, "updated": updated, "group": group_name})
 
     def _assistant_chat(self) -> None:
         payload = self._read_body_payload()
@@ -761,7 +762,7 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
         for entry in saved_entries
     ) or "<tr><td colspan='7' class='muted'>No saved LabGPU server inventory yet.</td></tr>"
     group_rows = "".join(
-        f"<tr><td><code>{esc(entry.alias)}</code><input type='hidden' name='aliases' value='{esc(entry.alias)}'></td><td>{esc('enabled' if entry.enabled else 'disabled')}</td><td><input name='group:{esc(entry.alias)}' value='{esc(entry.group)}' placeholder='AlphaLab / off-campus / H800'></td><td>{esc(join_values(entry.tags))}</td></tr>"
+        f"<tr><td><label><input type='checkbox' name='aliases' value='{esc(entry.alias)}'> <code>{esc(entry.alias)}</code></label></td><td>{esc('enabled' if entry.enabled else 'disabled')}</td><td>{esc(entry.group or '-')}</td><td>{esc(join_values(entry.tags))}</td></tr>"
         for entry in saved_entries
     ) or "<tr><td colspan='4' class='muted'>Save servers first, then create groups here.</td></tr>"
     return page(
@@ -780,11 +781,15 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
         </section>
         <section class="panel">
           <h2>Server Groups</h2>
-          <p class="muted">Groups are optional. Create a group by typing the same group name on the servers you want together, then use the group chips on Home, Train Now, My Training, Servers, Alerts, or Assistant.</p>
+          <p class="muted">Groups are optional. Type a group name, select existing saved servers, and save. Use groups when you want to view only AlphaLab, off-campus, H800, or any custom server set.</p>
           <form id="settings-groups">
             <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
-            <table><tr><th>Alias</th><th>Status</th><th>Group</th><th>Tags</th></tr>{group_rows}</table>
-            <div class="actions" style="margin-top:10px"><button class="button" type="submit">Save groups</button></div>
+            <div class="filters">
+              <label>Group name <input name="group_name" placeholder="AlphaLab / off-campus / H800"></label>
+              <button class="button" type="submit">Save group</button>
+            </div>
+            <p class="muted">Leave the group name blank to remove the selected servers from their group.</p>
+            <table><tr><th>Select</th><th>Status</th><th>Current group</th><th>Tags</th></tr>{group_rows}</table>
           </form>
         </section>
         <section class="panel">
@@ -1998,31 +2003,29 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
 </dialog>
 <dialog id="ssh-modal">
   <h2>Open SSH terminal</h2>
-  <p class="muted">Choose a local proxy tunnel and optional AI CLI. LabGPU opens a normal SSH terminal with safe fixed options.</p>
+  <p class="muted">Choose a local proxy tunnel if you need one. LabGPU will not auto-run Codex or Claude; type the command after login.</p>
   <table>
     <tr><th>Server</th><td id="ssh-modal-server"></td></tr>
-    <tr><th>CC Switch</th><td id="ssh-ccswitch-status" class="muted">Checking...</td></tr>
   </table>
   <label>Proxy tunnel
     <select id="ssh-proxy">
       <option value="">No proxy</option>
       <option value="7890">Reverse local port 7890</option>
       <option value="32210">Reverse local port 32210</option>
-      <option value="ccswitch">CC Switch local proxy</option>
       <option value="custom">Custom local port</option>
     </select>
   </label>
   <label id="ssh-custom-proxy-wrap" hidden>Custom local port
     <input id="ssh-custom-proxy" inputmode="numeric" placeholder="15721">
   </label>
-  <label>Start after SSH
+  <label>After login hint
     <select id="ssh-agent">
-      <option value="none">Shell only</option>
-      <option value="codex">Codex CLI</option>
-      <option value="claude">Claude Code</option>
+      <option value="none">No hint</option>
+      <option value="codex">Show Codex hint</option>
+      <option value="claude">Show Claude Code hint</option>
     </select>
   </label>
-  <p class="muted" id="ssh-modal-hint">Provider switching in CC Switch is read-only for now. Pick the provider in CC Switch first, then jump from LabGPU.</p>
+  <p class="muted" id="ssh-modal-hint">If Codex or Claude is installed only in your login shell, this avoids false “not found” errors. SSH first, then type <code>codex</code> or <code>claude</code>.</p>
   <p id="ssh-modal-result" class="muted"></p>
   <div class="modal-actions">
     <button class="button" id="ssh-modal-cancel" type="button">Cancel</button>
@@ -2106,6 +2109,12 @@ const translations = {{
   "These enabled servers are shown on LabGPU Home by default.": "这些启用的服务器会默认显示在 LabGPU Home。",
   "Server Groups": "服务器分组",
   "Groups are optional. Create a group by typing the same group name on the servers you want together, then use the group chips on Home, Train Now, My Training, Servers, Alerts, or Assistant.": "分组是可选的。给想放在一起的服务器填写同一个分组名，就可以在主页、现在开跑、我的训练、服务器、告警或助手页面用分组按钮查看。",
+  "Groups are optional. Type a group name, select existing saved servers, and save. Use groups when you want to view only AlphaLab, off-campus, H800, or any custom server set.": "分组是可选的。输入分组名，勾选已经保存的服务器，然后保存。需要只看 AlphaLab、校外服务器、H800 或其他自定义服务器集合时使用分组。",
+  "Group name": "分组名",
+  "Save group": "保存分组",
+  "Leave the group name blank to remove the selected servers from their group.": "分组名留空可以把选中的服务器移出当前分组。",
+  "Select": "选择",
+  "Current group": "当前分组",
   "Save servers first, then create groups here.": "先保存服务器，然后在这里创建分组。",
   "Save groups": "保存分组",
   "Choose which SSH GPU servers appear in LabGPU Home.": "选择哪些 SSH GPU 服务器显示在 LabGPU Home。",
@@ -2201,18 +2210,17 @@ const translations = {{
   "Open SSH terminal": "打开 SSH 终端",
   "Opening terminal...": "正在打开终端...",
   "Terminal opened": "终端已打开",
-  "Choose a local proxy tunnel and optional AI CLI. LabGPU opens a normal SSH terminal with safe fixed options.": "选择本地代理隧道和可选 AI CLI。LabGPU 会用固定安全选项打开普通 SSH 终端。",
+  "Choose a local proxy tunnel if you need one. LabGPU will not auto-run Codex or Claude; type the command after login.": "如果需要可以选择本地代理隧道。LabGPU 不会自动运行 Codex 或 Claude；登录后你自己输入命令即可。",
   "Proxy tunnel": "代理隧道",
   "No proxy": "不使用代理",
   "Reverse local port 7890": "反向转发本地 7890",
   "Reverse local port 32210": "反向转发本地 32210",
-  "CC Switch local proxy": "CC Switch 本地代理",
   "Custom local port": "自定义本地端口",
-  "Start after SSH": "SSH 后启动",
-  "Shell only": "只打开 Shell",
-  "Codex CLI": "Codex CLI",
-  "Claude Code": "Claude Code",
-  "Provider switching in CC Switch is read-only for now. Pick the provider in CC Switch first, then jump from LabGPU.": "目前 LabGPU 只读取 CC Switch 状态，不切换 provider。请先在 CC Switch 里选好 provider，再从 LabGPU 跳转。",
+  "After login hint": "登录后提示",
+  "No hint": "不提示",
+  "Show Codex hint": "提示 Codex",
+  "Show Claude Code hint": "提示 Claude Code",
+  "If Codex or Claude is installed only in your login shell, this avoids false “not found” errors. SSH first, then type ": "如果 Codex 或 Claude 只在登录 shell 里可用，这样可以避免误报找不到。先 SSH 登录，然后输入 ",
   "Checking...": "检查中...",
   "Copy command": "复制命令",
   "Copy adopt": "复制接管命令",
@@ -2403,7 +2411,6 @@ function selectedProxyPort() {{
   const customInput = document.getElementById("ssh-custom-proxy");
   const value = proxySelect ? proxySelect.value : "";
   if (!value) return "";
-  if (value === "ccswitch") return ccswitchProxyPort();
   if (value === "custom") return customInput ? customInput.value.trim() : "";
   return value;
 }}
@@ -2451,8 +2458,8 @@ document.addEventListener("click", async (event) => {{
   if (serverCell) serverCell.textContent = button.dataset.openSsh || "";
   if (result) result.textContent = "";
   updateSshProxyFields();
+  setRefreshPaused(true);
   dialog.showModal();
-  await loadCcswitchSummary();
 }});
 document.querySelectorAll("[data-alert-action]").forEach((button) => {{
   button.addEventListener("click", async () => {{
@@ -2513,7 +2520,8 @@ if (settingsGroups) {{
     }});
     const payload = await response.json().catch(() => ({{}}));
     if (response.ok) {{
-      window.alert(`Saved groups for ${{(payload.updated || []).length}} server(s).`);
+      const groupText = payload.group ? ` to "${{payload.group}}"` : "";
+      window.alert(`Saved ${{(payload.updated || []).length}} server(s)${{groupText}}.`);
       window.location.reload();
     }} else {{
       window.alert(payload.message || payload.error || "Saving groups failed.");

@@ -231,18 +231,14 @@ def terminal_remote_command(proxy_port: int | None, agent: str) -> str:
     parts: list[str] = []
     if proxy_port:
         proxy_url = f"http://127.0.0.1:{proxy_port}"
-        socks_url = f"socks5h://127.0.0.1:{proxy_port}"
-        parts.append(f"export HTTP_PROXY={shlex.quote(proxy_url)} HTTPS_PROXY={shlex.quote(proxy_url)} ALL_PROXY={shlex.quote(socks_url)}")
+        parts.append(f"export HTTP_PROXY={shlex.quote(proxy_url)} HTTPS_PROXY={shlex.quote(proxy_url)}")
         parts.append(f"echo 'LabGPU proxy: remote HTTP_PROXY/HTTPS_PROXY -> local 127.0.0.1:{proxy_port}'")
     if agent == "codex":
-        parts.append("if command -v codex >/dev/null 2>&1; then exec codex; fi")
-        parts.append("echo 'Codex CLI was not found on this server. Opening a shell instead.'")
+        parts.append("echo 'Tip: type codex after the shell opens.'")
     elif agent == "claude":
-        parts.append("if command -v claude >/dev/null 2>&1; then exec claude; fi")
-        parts.append("if command -v claude-code >/dev/null 2>&1; then exec claude-code; fi")
-        parts.append("echo 'Claude Code CLI was not found on this server. Opening a shell instead.'")
+        parts.append("echo 'Tip: type claude or claude-code after the shell opens.'")
     if proxy_port or agent != "none":
-        parts.append('exec "${SHELL:-/bin/sh}"')
+        parts.append('if [ -n "${SHELL:-}" ]; then exec "$SHELL" -l; fi; exec /bin/sh')
     return "; ".join(parts)
 
 
