@@ -4,6 +4,7 @@ import json
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -139,7 +140,14 @@ def finish(
     return payload
 
 
-def open_ssh_terminal(host: SSHHost, *, proxy_port: str | int | None = None, agent: str = "none") -> dict[str, Any]:
+def open_ssh_terminal(
+    host: SSHHost,
+    *,
+    proxy_port: str | int | None = None,
+    local_proxy_port: str | int | None = None,
+    remote_proxy_port: str | int | None = None,
+    agent: str = "none",
+) -> dict[str, Any]:
     alias = host.alias
     if not is_safe_ssh_alias(alias):
         return {
@@ -149,7 +157,25 @@ def open_ssh_terminal(host: SSHHost, *, proxy_port: str | int | None = None, age
             "server": alias,
         }
     try:
-        argv = build_ssh_terminal_argv(alias, proxy_port=proxy_port, agent=agent)
+        local_port, _remote_port = normalize_proxy_ports(
+            proxy_port=proxy_port,
+            local_proxy_port=local_proxy_port,
+            remote_proxy_port=remote_proxy_port,
+        )
+        if local_port and not is_local_tcp_port_open(local_port):
+            return {
+                "ok": False,
+                "result": "local_proxy_not_listening",
+                "message": f"Local proxy port 127.0.0.1:{local_port} is not listening.",
+                "server": alias,
+            }
+        argv = build_ssh_terminal_argv(
+            alias,
+            proxy_port=proxy_port,
+            local_proxy_port=local_proxy_port,
+            remote_proxy_port=remote_proxy_port,
+            agent=agent,
+        )
     except ValueError as exc:
         return {
             "ok": False,
@@ -190,15 +216,26 @@ def open_ssh_terminal(host: SSHHost, *, proxy_port: str | int | None = None, age
     return terminal_result(host, "opened", ok=True, message=f"Opening SSH terminal for {alias}.", command=command)
 
 
-def build_ssh_terminal_argv(alias: str, *, proxy_port: str | int | None = None, agent: str = "none") -> list[str]:
+def build_ssh_terminal_argv(
+    alias: str,
+    *,
+    proxy_port: str | int | None = None,
+    local_proxy_port: str | int | None = None,
+    remote_proxy_port: str | int | None = None,
+    agent: str = "none",
+) -> list[str]:
     if not is_safe_ssh_alias(alias):
         raise ValueError("Unsafe SSH alias.")
     normalized_agent = normalize_terminal_agent(agent)
-    port = normalize_proxy_port(proxy_port)
-    remote_command = terminal_remote_command(port, normalized_agent)
+    local_port, remote_port = normalize_proxy_ports(
+        proxy_port=proxy_port,
+        local_proxy_port=local_proxy_port,
+        remote_proxy_port=remote_proxy_port,
+    )
+    remote_command = terminal_remote_command(remote_port, normalized_agent, local_proxy_port=local_port)
     argv = ["ssh"]
-    if port:
-        argv.extend(["-R", f"127.0.0.1:{port}:127.0.0.1:{port}"])
+    if local_port and remote_port:
+        argv.extend(["-o", "ExitOnForwardFailure=yes", "-R", f"127.0.0.1:{remote_port}:127.0.0.1:{local_port}"])
     if remote_command:
         argv.extend(["-t", alias, remote_command])
     else:
@@ -233,12 +270,30 @@ def normalize_proxy_port(value: str | int | None) -> int | None:
     return port
 
 
-def terminal_remote_command(proxy_port: int | None, agent: str) -> str:
+def normalize_proxy_ports(
+    *,
+    proxy_port: str | int | None = None,
+    local_proxy_port: str | int | None = None,
+    remote_proxy_port: str | int | None = None,
+) -> tuple[int | None, int | None]:
+    local_value = local_proxy_port if str(local_proxy_port or "").strip() else proxy_port
+    remote_value = remote_proxy_port if str(remote_proxy_port or "").strip() else proxy_port
+    local_port = normalize_proxy_port(local_value)
+    remote_port = normalize_proxy_port(remote_value)
+    if remote_port and not local_port:
+        raise ValueError("Local proxy port is required when remote tunnel port is set.")
+    if local_port and not remote_port:
+        remote_port = local_port
+    return local_port, remote_port
+
+
+def terminal_remote_command(proxy_port: int | None, agent: str, *, local_proxy_port: int | None = None) -> str:
     parts: list[str] = []
     if proxy_port:
         proxy_url = f"http://127.0.0.1:{proxy_port}"
         parts.append(f"export HTTP_PROXY={shlex.quote(proxy_url)} HTTPS_PROXY={shlex.quote(proxy_url)}")
-        parts.append(f"echo 'LabGPU proxy: remote HTTP_PROXY/HTTPS_PROXY -> local 127.0.0.1:{proxy_port}'")
+        local_text = f"127.0.0.1:{local_proxy_port or proxy_port}"
+        parts.append(f"echo 'LabGPU proxy: remote HTTP_PROXY/HTTPS_PROXY -> local {local_text}'")
     if agent != "none":
         parts.append(agent_launcher_command(agent))
     elif proxy_port:
@@ -262,6 +317,14 @@ def agent_launcher_command(agent: str) -> str:
     check, command, missing = launchers[agent]
     script = f'if {check}; then {command}; else echo "{missing}"; fi; exec ${{SHELL:-/bin/sh}} -il'
     return f"exec ${{SHELL:-/bin/sh}} -ilc {shlex.quote(script)}"
+
+
+def is_local_tcp_port_open(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+            return True
+    except OSError:
+        return False
 
 
 def linux_terminal_launcher(argv: list[str]) -> list[str] | None:

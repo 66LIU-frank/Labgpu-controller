@@ -463,6 +463,8 @@ class ServerHandler(BaseHTTPRequestHandler):
             return
         payload = self._read_body_payload()
         proxy_port = first_value(payload.get("proxy_port"))
+        local_proxy_port = first_value(payload.get("local_proxy_port"))
+        remote_proxy_port = first_value(payload.get("remote_proxy_port"))
         agent = str(first_value(payload.get("agent")) or "none")
         ccswitch_provider_id = str(first_value(payload.get("ccswitch_provider_id")) or "").strip()
         ccswitch_switch = None
@@ -473,7 +475,13 @@ class ServerHandler(BaseHTTPRequestHandler):
                 self._json({"ok": False, "result": "ccswitch_switch_failed", "message": str(exc)}, status=HTTPStatus.CONFLICT)
                 return
         host = resolve_ssh_host(load_inventory(ssh_config=self.ssh_config, names=[alias])[0])
-        result = open_ssh_terminal(host, proxy_port=proxy_port, agent=agent)
+        result = open_ssh_terminal(
+            host,
+            proxy_port=proxy_port,
+            local_proxy_port=local_proxy_port,
+            remote_proxy_port=remote_proxy_port,
+            agent=agent,
+        )
         if ccswitch_switch:
             result["ccswitch"] = ccswitch_switch
         self._json(result, status=HTTPStatus.OK if result.get("ok") else HTTPStatus.CONFLICT)
@@ -2151,21 +2159,24 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
 </dialog>
 <dialog id="ssh-modal">
   <h2>Open SSH terminal</h2>
-  <p class="muted">Choose a local proxy tunnel if you need one, then optionally start Codex, Claude Code, Gemini, or OpenClaw in the SSH terminal.</p>
+  <p class="muted">Choose a local proxy if you need one, then optionally start Codex, Claude Code, Gemini, or OpenClaw in the SSH terminal.</p>
   <table>
     <tr><th>Server</th><td id="ssh-modal-server"></td></tr>
   </table>
-  <label>Proxy tunnel
+  <label>Local proxy
     <select id="ssh-proxy">
       <option value="">No proxy</option>
       <option value="ccswitch">CC Switch proxy</option>
-      <option value="7890">Reverse local port 7890</option>
-      <option value="33210">Reverse local port 33210</option>
-      <option value="custom">Custom local port</option>
+      <option value="7890">Use local port 7890</option>
+      <option value="33210">Use local port 33210</option>
+      <option value="custom">Custom local proxy port</option>
     </select>
   </label>
-  <label id="ssh-custom-proxy-wrap" hidden>Custom local port
+  <label id="ssh-custom-proxy-wrap" hidden>Custom local proxy port
     <input id="ssh-custom-proxy" inputmode="numeric" placeholder="15721">
+  </label>
+  <label id="ssh-remote-proxy-wrap" hidden>Remote tunnel port
+    <input id="ssh-remote-proxy" inputmode="numeric" value="43310" placeholder="43310">
   </label>
   <label>Open after SSH
     <select id="ssh-agent">
@@ -2176,7 +2187,7 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
       <option value="openclaw">OpenClaw Agent</option>
     </select>
   </label>
-  <label id="ssh-ccswitch-provider-wrap" hidden>CC Switch provider
+  <label id="ssh-ccswitch-provider-wrap" hidden>Agent provider
     <select id="ssh-ccswitch-provider">
       <option value="">Use current local selection</option>
     </select>
@@ -2392,14 +2403,21 @@ const translations = {{
   "Opening terminal...": "正在打开终端...",
   "Terminal opened": "终端已打开",
   "Choose a local proxy tunnel if you need one, then optionally start Codex, Claude Code, Gemini, or OpenClaw in the SSH terminal.": "如果需要可以选择本地代理隧道，然后可选在 SSH 终端里直接启动 Codex、Claude Code、Gemini 或 OpenClaw。",
+  "Choose a local proxy if you need one, then optionally start Codex, Claude Code, Gemini, or OpenClaw in the SSH terminal.": "如果需要可以选择本地代理，然后可选在 SSH 终端里直接启动 Codex、Claude Code、Gemini 或 OpenClaw。",
   "Proxy tunnel": "代理隧道",
+  "Local proxy": "本机代理",
   "No proxy": "不使用代理",
   "CC Switch proxy": "CC Switch 代理",
   "Reverse local port 7890": "反向转发本地 7890",
   "Reverse local port 33210": "反向转发本地 33210",
   "Custom local port": "自定义本地端口",
+  "Use local port 7890": "使用本机 7890",
+  "Use local port 33210": "使用本机 33210",
+  "Custom local proxy port": "自定义本机代理端口",
+  "Remote tunnel port": "远端隧道端口",
   "Open after SSH": "SSH 后打开",
   "CC Switch provider": "CC Switch 供应商",
+  "Agent provider": "Agent 供应商",
   "Use current local selection": "使用本机当前选择",
   "Shell only": "只打开 Shell",
   "Codex CLI": "Codex CLI",
@@ -2573,9 +2591,8 @@ function selectedAgent() {{
   return agentSelect ? agentSelect.value : "none";
 }}
 function selectedCcswitchProviderId() {{
-  const proxySelect = document.getElementById("ssh-proxy");
   const providerSelect = document.getElementById("ssh-ccswitch-provider");
-  if (!proxySelect || proxySelect.value !== "ccswitch" || !providerSelect) return "";
+  if (selectedAgent() === "none" || !providerSelect) return "";
   return providerSelect.value || "";
 }}
 function ccswitchProxyPort(agent) {{
@@ -2598,11 +2615,10 @@ function describeCcswitch(summary) {{
   return `${{providerText}} · ${{proxyText}}`;
 }}
 function updateCcswitchProviderOptions() {{
-  const proxySelect = document.getElementById("ssh-proxy");
   const providerWrap = document.getElementById("ssh-ccswitch-provider-wrap");
   const providerSelect = document.getElementById("ssh-ccswitch-provider");
   const agent = selectedAgent();
-  const enabled = !!(proxySelect && proxySelect.value === "ccswitch" && agent !== "none");
+  const enabled = agent !== "none";
   if (providerWrap) providerWrap.hidden = !enabled;
   if (!providerSelect || !enabled) return;
   const currentValue = providerSelect.value;
@@ -2635,7 +2651,7 @@ async function loadCcswitchSummary() {{
   if (status) status.textContent = describeCcswitch(ccswitchSummary);
   return ccswitchSummary;
 }}
-function selectedProxyPort() {{
+function selectedLocalProxyPort() {{
   const proxySelect = document.getElementById("ssh-proxy");
   const customInput = document.getElementById("ssh-custom-proxy");
   const value = proxySelect ? proxySelect.value : "";
@@ -2644,10 +2660,18 @@ function selectedProxyPort() {{
   if (value === "custom") return customInput ? customInput.value.trim() : "";
   return value;
 }}
+function selectedRemoteProxyPort() {{
+  const localPort = selectedLocalProxyPort();
+  if (!localPort) return "";
+  const remoteInput = document.getElementById("ssh-remote-proxy");
+  return remoteInput && remoteInput.value.trim() ? remoteInput.value.trim() : localPort;
+}}
 function updateSshProxyFields() {{
   const proxySelect = document.getElementById("ssh-proxy");
   const customWrap = document.getElementById("ssh-custom-proxy-wrap");
+  const remoteWrap = document.getElementById("ssh-remote-proxy-wrap");
   if (customWrap && proxySelect) customWrap.hidden = proxySelect.value !== "custom";
+  if (remoteWrap && proxySelect) remoteWrap.hidden = !proxySelect.value;
   updateCcswitchProviderOptions();
 }}
 async function runOpenSsh(button) {{
@@ -2657,7 +2681,12 @@ async function runOpenSsh(button) {{
   const response = await fetch(`/api/servers/${{encodeURIComponent(button.dataset.openSsh || "")}}/open-ssh`, {{
     method: "POST",
     headers: {{"X-LabGPU-Action-Token": actionToken, "Content-Type": "application/json"}},
-    body: JSON.stringify({{proxy_port: selectedProxyPort(), agent: selectedAgent(), ccswitch_provider_id: selectedCcswitchProviderId()}})
+    body: JSON.stringify({{
+      local_proxy_port: selectedLocalProxyPort(),
+      remote_proxy_port: selectedRemoteProxyPort(),
+      agent: selectedAgent(),
+      ccswitch_provider_id: selectedCcswitchProviderId()
+    }})
   }});
   const payload = await response.json().catch(() => ({{ok: false, message: "Opening terminal failed."}}));
   button.disabled = false;

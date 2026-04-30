@@ -109,12 +109,19 @@ class RemoteActionsTest(unittest.TestCase):
 
     def test_build_ssh_terminal_command_with_proxy_and_agent(self):
         argv = build_ssh_terminal_argv("alpha_liu", proxy_port="7890", agent="codex")
-        self.assertEqual(argv[:4], ["ssh", "-R", "127.0.0.1:7890:127.0.0.1:7890", "-t"])
-        self.assertEqual(argv[4], "alpha_liu")
-        self.assertIn("HTTP_PROXY=http://127.0.0.1:7890", argv[5])
-        self.assertIn("codex", argv[5])
-        self.assertIn("-ilc", argv[5])
-        self.assertNotIn("ALL_PROXY", argv[5])
+        self.assertEqual(argv[:6], ["ssh", "-o", "ExitOnForwardFailure=yes", "-R", "127.0.0.1:7890:127.0.0.1:7890", "-t"])
+        self.assertEqual(argv[6], "alpha_liu")
+        self.assertIn("HTTP_PROXY=http://127.0.0.1:7890", argv[7])
+        self.assertIn("codex", argv[7])
+        self.assertIn("-ilc", argv[7])
+        self.assertNotIn("ALL_PROXY", argv[7])
+
+    def test_build_ssh_terminal_command_splits_local_and_remote_proxy_ports(self):
+        argv = build_ssh_terminal_argv("alpha_liu", local_proxy_port="33210", remote_proxy_port="43310", agent="codex")
+        self.assertEqual(argv[:6], ["ssh", "-o", "ExitOnForwardFailure=yes", "-R", "127.0.0.1:43310:127.0.0.1:33210", "-t"])
+        self.assertEqual(argv[6], "alpha_liu")
+        self.assertIn("HTTP_PROXY=http://127.0.0.1:43310", argv[7])
+        self.assertIn("local 127.0.0.1:33210", argv[7])
 
     def test_build_ssh_terminal_command_supports_agent_launchers(self):
         gemini = build_ssh_terminal_argv("alpha_liu", agent="gemini")
