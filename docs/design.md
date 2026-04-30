@@ -11,7 +11,7 @@ Core decisions:
 - `tmux` is the first runner backend.
 - Rule-based diagnosis is preferred before any AI or external API integration.
 - `meta.json`, `events.jsonl`, `stdout.log`, `env.json`, `git.json`, and `diagnosis.json` are plain files so users can inspect runs without LabGPU.
-- `labgpu context` packages local evidence for AI assistants or teammates, but LabGPU does not call external APIs.
+- `labgpu context` packages local evidence for AI assistants or teammates. The default Assistant mode stays local and rule-based; optional BYO API mode and AI provider integrations must keep secrets local by default and send only redacted workspace context.
 - `labgpu refresh` reconciles stale `running` records after wrapper crashes, manual tmux deletion, or server restarts.
 - `labgpu ui` / `labgpu servers` is intentionally local-first: it reads the user's SSH config and probes remote machines over SSH, without deploying a daemon.
 - `labgpu pick` and the Train Now page share one ranking engine for cross-host GPU recommendations.
@@ -21,5 +21,6 @@ Core decisions:
 - Enhanced Mode is opportunistic: if the remote PATH has `labgpu`, the local UI may also show remote LabGPU runs and status. Failure to enter Enhanced Mode must not break Agentless Mode.
 - LabGPU Home may stop only the current SSH user's processes. Every stop action re-probes PID identity before signaling and writes a local audit record.
 - Process health labels are intentionally conservative. Single-probe idle signals are shown as possible/suspected, not as definitive stuck-process claims.
+- Remote AI CLI sessions should prefer session-scoped local gateway tunnels: provider keys remain on the laptop or local vault, SSH reverse forwarding exposes only a temporary loopback endpoint on the remote server, and the gateway requires a per-session token before forwarding to the local provider proxy. Writing provider keys into remote config is an advanced personal-server workflow, not the default.
 
 The project avoids scheduling, reservations, quotas, and admin panels. It focuses on a student's personal loop: find GPU -> run/adopt -> observe -> diagnose -> context/report -> safe action.

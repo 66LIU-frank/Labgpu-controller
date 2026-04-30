@@ -74,6 +74,46 @@ choose "Remember key in this browser", the key is stored in browser
 `localStorage` on that machine. Keep `labgpu ui` bound to `127.0.0.1` for this
 mode.
 
+## AI Providers and Remote Sessions
+
+LabGPU may read non-secret provider state from local tools such as CC Switch:
+provider names, current selections, and local proxy ports. It should not read
+or display provider secret payloads. LabGPU may also perform a loopback TCP
+check against the configured proxy port to distinguish "configured" from
+"actually listening."
+
+The preferred remote AI CLI workflow is Proxy Tunnel mode:
+
+```bash
+ssh -R REMOTE_GATEWAY_PORT:127.0.0.1:LOCAL_GATEWAY_PORT ALIAS
+```
+
+The remote server sees a loopback endpoint such as
+`http://127.0.0.1:REMOTE_GATEWAY_PORT`; the real API key stays on the laptop or
+in the local provider tool. The remote endpoint points to a session-scoped
+LabGPU gateway, not directly to CC Switch. Claude Code sessions export a
+temporary `ANTHROPIC_API_KEY=labgpu-session-*` token that the gateway validates
+before forwarding to CC Switch. The gateway strips this token before it reaches
+the local proxy, and LabGPU does not copy API keys into the remote home
+directory for this workflow. For Claude Code, LabGPU may create a mode-700
+temporary directory under `/tmp/labgpu-ai-*` containing a per-session
+`--settings` file and wrapper script so `claude` uses the tunnel base URL. That
+temporary file contains only the session token, not the real provider key.
+
+The session token is not a provider key, but it is still a temporary capability
+token while the gateway is alive. On shared Linux accounts, other processes
+running as the same Unix user may be able to inspect shell environments,
+`/proc`, tmux panes, or shell startup state. Proxy Tunnel mode reduces secret
+exposure, but it should not be treated as strong isolation on shared accounts.
+LabGPU gateways close automatically after an idle timeout or hard lifetime, and
+failed terminal launches close their gateway immediately.
+
+Remote Write mode, where provider configuration is written into remote
+`~/.claude`, `~/.codex`, `~/.gemini`, or similar app directories, is an
+advanced personal-server workflow. Do not use it for shared Linux accounts or
+lab servers unless the user explicitly accepts that the key will live on that
+machine.
+
 ## Shared LABGPU_HOME
 
 For a lab-wide run registry, prefer a group-owned directory:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import socket
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -42,7 +43,7 @@ def read_ccswitch_summary(home: str | Path | None = None) -> dict[str, Any]:
         summary["providers"] = read_provider_state(conn)
         summary["proxy"] = read_proxy_state(conn)
         summary["available"] = True
-        summary["message"] = "CC Switch detected. Provider switching is read-only in LabGPU for now."
+        summary["message"] = "CC Switch detected. LabGPU reads provider names and proxy ports without reading secrets."
         return summary
     except sqlite3.Error as exc:
         summary["message"] = f"Could not read CC Switch database: {exc}"
@@ -121,13 +122,25 @@ def read_proxy_state(conn: sqlite3.Connection) -> dict[str, Any]:
         "SELECT app_type, listen_address, listen_port, proxy_enabled, enabled FROM proxy_config ORDER BY app_type",
     ).fetchall()
     for app_type, listen_address, listen_port, proxy_enabled, enabled in rows:
+        port = int(listen_port or 0)
         proxy[str(app_type)] = {
             "listen_address": str(listen_address or "127.0.0.1"),
-            "listen_port": int(listen_port or 0),
+            "listen_port": port,
             "proxy_enabled": bool(proxy_enabled),
             "enabled": bool(enabled),
+            "listening": is_local_proxy_listening(port) if port else False,
         }
     return proxy
+
+
+def is_local_proxy_listening(port: int) -> bool | None:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+            return True
+    except PermissionError:
+        return None
+    except OSError:
+        return False
 
 
 def table_exists(conn: sqlite3.Connection, name: str) -> bool:

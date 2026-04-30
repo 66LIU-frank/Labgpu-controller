@@ -66,4 +66,6 @@ def apply_server_entry(host: SSHHost, entry: ServerEntry | None) -> SSHHost:
     host.disk_paths = list(entry.disk_paths)
     host.shared_account = entry.shared_account
     host.allow_stop_own_process = entry.allow_stop_own_process
+    host.ai_extra_paths = list(entry.ai_extra_paths)
+    host.claude_command = entry.claude_command
     return host

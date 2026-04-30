@@ -21,6 +21,7 @@ from labgpu.remote.dashboard import (
     render_host_card,
     render_index,
     render_me_page,
+    render_providers_page,
     render_servers_page,
     render_settings_page,
     server_health,
@@ -126,14 +127,23 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn("theme-toggle", html)
         self.assertIn("Notify me when GPU is free", html)
         self.assertIn("CUDA_VISIBLE_DEVICES=0", html)
-        self.assertIn("Open SSH terminal", html)
+        self.assertIn("Enter Server", html)
         self.assertIn('data-open-ssh="alpha_liu"', html)
+        self.assertIn('data-gpu-index="0"', html)
         self.assertIn('value="ccswitch"', html)
-        self.assertIn('value="gemini"', html)
-        self.assertIn('value="openclaw"', html)
+        self.assertIn("AI App", html)
+        self.assertIn('value="claude" checked', html)
+        self.assertIn('value="codex" disabled', html)
+        self.assertIn('value="gemini" disabled', html)
+        self.assertIn("Proxy Tunnel", html)
+        self.assertIn('value="remote_write" disabled', html)
         self.assertIn("ssh-ccswitch-status", html)
-        self.assertIn("ssh-ccswitch-provider", html)
-        self.assertIn("ssh-remote-proxy", html)
+        self.assertIn("ssh-provider-summary", html)
+        self.assertIn("Working directory", html)
+        self.assertIn("ssh-remote-cwd", html)
+        self.assertIn("/api/integrations/vscode/recent-folders", html)
+        self.assertIn("ANTHROPIC_BASE_URL", html)
+        self.assertIn("selected remote gateway port may already be in use", html)
         filtered = filter_available_gpu_items(data["overview"]["available_gpu_items"], {"min_mem_gb": "80", "model": "A100"})
         self.assertEqual(filtered[0]["server"], "alpha_liu")
         self.assertEqual(filtered[0]["server_group"], "AlphaLab")
@@ -170,6 +180,43 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn("assistant-use-api", html)
         self.assertIn("assistant-api-url", html)
         self.assertIn("assistant-model", html)
+
+    def test_providers_page_shows_non_secret_ccswitch_state(self):
+        summary = {
+            "available": True,
+            "message": "CC Switch detected.",
+            "providers": {
+                "claude": {
+                    "current": "PackyCode",
+                    "choices_detail": [
+                        {"id": "claude-packy", "name": "PackyCode", "current": True},
+                        {"id": "claude-official", "name": "Official", "current": False},
+                    ],
+                },
+                "codex": {
+                    "current": "OpenAI",
+                    "choices_detail": [{"id": "codex-openai", "name": "OpenAI", "current": True}],
+                },
+            },
+            "proxy": {
+                "claude": {"listen_address": "127.0.0.1", "listen_port": 15721, "enabled": True, "proxy_enabled": True, "listening": True},
+            },
+        }
+        with patch("labgpu.remote.dashboard.read_ccswitch_summary", return_value=summary):
+            html = render_providers_page()
+        self.assertIn("AI Providers", html)
+        self.assertIn("Proxy Tunnel", html)
+        self.assertIn("Remote Write", html)
+        self.assertIn("Last Launched AI Sessions", html)
+        self.assertIn("PackyCode", html)
+        self.assertIn("127.0.0.1:15721", html)
+        self.assertIn("TCP check", html)
+        self.assertIn("listening", html)
+        self.assertIn("API keys stay on this laptop", html)
+        self.assertNotIn("SECRET", html)
+        self.assertNotIn("sk-", html)
+        self.assertNotIn("Authorization", html)
+        self.assertNotIn("Bearer", html)
 
     def test_settings_page_lists_ssh_hosts(self):
         with tempfile.TemporaryDirectory() as tmp:

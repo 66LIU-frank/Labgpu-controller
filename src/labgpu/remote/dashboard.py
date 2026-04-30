@@ -25,6 +25,7 @@ from labgpu.remote.probe import probe_host
 from labgpu.remote import ranking
 from labgpu.remote.ssh_config import SSHHost, append_ssh_host, default_ssh_config_path, parse_ssh_config, resolve_ssh_host
 from labgpu.remote.state import alerts_for_server, annotate_server, build_overview, human_duration
+from labgpu.remote.vscode_recent import read_vscode_recent_remote_folders
 from labgpu.remote.workspace import failure_inbox_items, training_items
 
 CACHE_TTL_SECONDS = 30
@@ -280,6 +281,12 @@ def add_config_group(config: object, group: str) -> None:
         groups.append(group)
 
 
+def current_ccswitch_provider(summary: dict[str, object], app: str) -> str:
+    providers = summary.get("providers") if isinstance(summary.get("providers"), dict) else {}
+    provider = providers.get(app) if isinstance(providers.get(app), dict) else {}
+    return str(provider.get("current") or "").strip()
+
+
 class ServerHandler(BaseHTTPRequestHandler):
     ssh_config: str | Path | None = None
     names: list[str] | None = None
@@ -305,6 +312,8 @@ class ServerHandler(BaseHTTPRequestHandler):
             self._html(render_groups_page())
         elif parsed.path == "/settings":
             self._html(render_settings_page(ssh_config=self.ssh_config))
+        elif parsed.path == "/providers":
+            self._html(render_providers_page())
         elif parsed.path == "/assistant":
             self._html(render_assistant_page(self._data(parsed.query)))
         elif parsed.path == "/api/overview":
@@ -313,6 +322,8 @@ class ServerHandler(BaseHTTPRequestHandler):
             self._json(self._data(parsed.query))
         elif parsed.path == "/api/integrations/ccswitch":
             self._json(read_ccswitch_summary())
+        elif parsed.path == "/api/integrations/vscode/recent-folders":
+            self._json({"folders": read_vscode_recent_remote_folders()})
         elif parsed.path.startswith("/servers/"):
             alias = unquote(parsed.path.removeprefix("/servers/")).strip("/")
             self._html(render_detail(self._data_for_alias(alias, parsed.query)))
@@ -466,8 +477,21 @@ class ServerHandler(BaseHTTPRequestHandler):
         local_proxy_port = first_value(payload.get("local_proxy_port"))
         remote_proxy_port = first_value(payload.get("remote_proxy_port"))
         agent = str(first_value(payload.get("agent")) or "none")
+        ai_mode = str(first_value(payload.get("ai_mode")) or "").strip()
+        gpu_index = first_value(payload.get("gpu_index"))
+        remote_cwd = str(first_value(payload.get("remote_cwd")) or "").strip()
+        provider_name = str(first_value(payload.get("provider_name")) or "").strip()
         ccswitch_provider_id = str(first_value(payload.get("ccswitch_provider_id")) or "").strip()
         ccswitch_switch = None
+        if agent == "claude" and ai_mode == "proxy_tunnel":
+            summary = read_ccswitch_summary()
+            provider_name = current_ccswitch_provider(summary, "claude")
+            if not provider_name:
+                self._json(
+                    {"ok": False, "result": "missing_provider", "message": "Current CC Switch Claude provider was not found. Switch Claude provider in CC Switch first."},
+                    status=HTTPStatus.CONFLICT,
+                )
+                return
         if ccswitch_provider_id:
             try:
                 ccswitch_switch = switch_ccswitch_provider(agent, ccswitch_provider_id)
@@ -481,6 +505,10 @@ class ServerHandler(BaseHTTPRequestHandler):
             local_proxy_port=local_proxy_port,
             remote_proxy_port=remote_proxy_port,
             agent=agent,
+            ai_mode=ai_mode or None,
+            provider_name=provider_name or None,
+            gpu_index=gpu_index,
+            remote_cwd=remote_cwd or None,
         )
         if ccswitch_switch:
             result["ccswitch"] = ccswitch_switch
@@ -982,6 +1010,98 @@ def render_groups_page() -> str:
     )
 
 
+def render_providers_page() -> str:
+    summary = read_ccswitch_summary()
+    apps = [
+        ("claude", "Claude Code"),
+        ("codex", "Codex CLI"),
+        ("gemini", "Gemini CLI"),
+        ("openclaw", "OpenClaw Agent"),
+    ]
+    cards = "".join(render_provider_card(summary, app, label) for app, label in apps)
+    detected = bool(summary.get("available"))
+    detected_class = "ok" if detected else "warning"
+    detected_label = "detected" if detected else "not detected"
+    return page(
+        "AI Providers",
+        f"""
+        <section class="toolbar">
+          <div>
+            <h1>AI Providers</h1>
+            <p>Provider state for remote AI CLI sessions. LabGPU reads names, current selections, and proxy ports only.</p>
+          </div>
+          <span class="badge {detected_class}">CC Switch {detected_label}</span>
+        </section>
+        <section class="panel">
+          <div class="section-head"><h2>Remote Session Modes</h2><a href="/gpus">Open from Train Now</a></div>
+          <div class="grid compact">
+            <div class="card">
+              <div class="card-head"><h3>Proxy Tunnel</h3><span class="badge ok">recommended</span></div>
+              <p class="muted">Open SSH with a reverse tunnel to a local proxy. API keys stay on this laptop or in the local provider tool.</p>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>Remote Write</h3><span class="badge warning">advanced</span></div>
+              <p class="muted">Writing provider keys to remote <code>~/.claude</code>, <code>~/.codex</code>, or <code>~/.gemini</code> is intentionally not a default Alpha workflow.</p>
+            </div>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="section-head"><h2>CC Switch Providers</h2><a href="/api/integrations/ccswitch">JSON</a></div>
+          <p class="muted">{esc(summary.get("message") or "")}</p>
+          <div class="grid compact">{cards}</div>
+        </section>
+        <section class="panel">
+          <h2>Open A Remote AI Session</h2>
+          <p class="muted">Use any server or GPU card's Enter Server action, choose Claude Code and Proxy Tunnel, then open the terminal. LabGPU uses the current CC Switch Claude provider and opens an SSH tunnel; it does not copy API keys to the server.</p>
+        </section>
+        <section class="panel">
+          <h2>Last Launched AI Sessions</h2>
+          <p class="muted">Browser-local launch history only. It does not prove the terminal or tunnel is still alive.</p>
+          <table><tr><th>Server</th><th>Folder</th><th>App / Provider</th><th>Proxy Tunnel</th><th>GPU</th><th>Started</th></tr><tbody id="ai-session-rows"><tr><td colspan="6" class="muted">No AI sessions launched from this browser yet.</td></tr></tbody></table>
+        </section>
+        """,
+        json_href="/api/integrations/ccswitch",
+    )
+
+
+def render_provider_card(summary: dict[str, object], app: str, label: str) -> str:
+    providers = summary.get("providers") if isinstance(summary.get("providers"), dict) else {}
+    proxy = summary.get("proxy") if isinstance(summary.get("proxy"), dict) else {}
+    provider = providers.get(app) if isinstance(providers.get(app), dict) else {}
+    proxy_config = proxy.get(app) if isinstance(proxy.get(app), dict) else {}
+    current = str(provider.get("current") or "-")
+    choices = provider.get("choices_detail") if isinstance(provider.get("choices_detail"), list) else []
+    choice_rows = "".join(
+        f"<tr><td>{esc(item.get('name') or '-')}</td><td>{esc('current' if item.get('current') else '')}</td></tr>"
+        for item in choices
+        if isinstance(item, dict)
+    ) or "<tr><td colspan='2' class='muted'>No providers found.</td></tr>"
+    port = proxy_config.get("listen_port") if isinstance(proxy_config, dict) else None
+    enabled = bool(proxy_config.get("enabled") or proxy_config.get("proxy_enabled")) if isinstance(proxy_config, dict) else False
+    listening = proxy_config.get("listening") if isinstance(proxy_config, dict) else None
+    proxy_label = f"{proxy_config.get('listen_address') or '127.0.0.1'}:{port}" if port else "-"
+    proxy_class = "error" if enabled and listening is False else ("ok" if enabled else ("warning" if port else ""))
+    proxy_state = "not listening" if enabled and listening is False else ("enabled" if enabled else ("configured" if port else "not configured"))
+    tcp_state = "listening" if listening is True else ("not listening" if listening is False and port else ("unknown" if enabled and port else "-"))
+    return f"""
+    <article class="card">
+      <div class="card-head">
+        <div>
+          <h3>{esc(label)}</h3>
+          <p>Current provider: <strong>{esc(current)}</strong></p>
+        </div>
+        <span class="badge {esc(proxy_class)}">{esc(proxy_state)}</span>
+      </div>
+      <div class="meta">
+        <span><span>Local proxy</span> <code>{esc(proxy_label)}</code></span>
+        <span><span>TCP check</span> <code>{esc(tcp_state)}</code></span>
+        <span><span>App id</span> <code>{esc(app)}</code></span>
+      </div>
+      <table><tr><th>Provider</th><th>Status</th></tr>{choice_rows}</table>
+    </article>
+    """
+
+
 def render_assistant_page(data: dict[str, object]) -> str:
     overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
     return page(
@@ -1383,7 +1503,7 @@ def render_available_gpus(
             "</div></section>"
         )
     rows = "".join(
-        f"<tr><td><a href='/servers/{esc(item.get('server'))}'>{esc(item.get('server'))}</a></td><td>GPU {esc(item.get('gpu_index'))}</td><td>{esc(short(item.get('name') or '', 34))}</td><td>{esc(item.get('memory_free_mb'))} MB</td><td>{esc(item.get('utilization_gpu'))}%</td><td>{esc(item.get('temperature'))} C</td><td>{esc(item.get('disk_health'))}</td><td><code>{esc(item.get('ssh_command'))}</code><br><code>CUDA_VISIBLE_DEVICES={esc(item.get('cuda_visible_devices'))}</code><br>{render_open_ssh_button(item.get('server'))}</td></tr>"
+        f"<tr><td><a href='/servers/{esc(item.get('server'))}'>{esc(item.get('server'))}</a></td><td>GPU {esc(item.get('gpu_index'))}</td><td>{esc(short(item.get('name') or '', 34))}</td><td>{esc(item.get('memory_free_mb'))} MB</td><td>{esc(item.get('utilization_gpu'))}%</td><td>{esc(item.get('temperature'))} C</td><td>{esc(item.get('disk_health'))}</td><td><code>{esc(item.get('ssh_command'))}</code><br><code>CUDA_VISIBLE_DEVICES={esc(item.get('cuda_visible_devices'))}</code><br>{render_open_ssh_button(item.get('server'), item.get('gpu_index'))}</td></tr>"
         for item in items
         if isinstance(item, dict)
     )
@@ -1407,7 +1527,7 @@ def render_gpu_recommendation_card(item: dict[str, object]) -> str:
     ssh_command = str(item.get("ssh_command") or ("ssh " + str(item.get("server") or "")))
     cuda = str(item.get("cuda_visible_devices") or item.get("index") or "")
     snippet = ranking.launch_snippet(item)
-    open_terminal = render_open_ssh_button(item.get("server"))
+    open_terminal = render_open_ssh_button(item.get("server"), item.get("index"))
     availability = str(item.get("availability") or item.get("status") or "unknown")
     availability_label = "GPU free" if availability in {"free", "probably_available"} else "GPU busy" if availability == "busy" else availability
     availability_class = "ok" if availability in {"free", "probably_available"} else "warning" if availability == "busy" else ""
@@ -1447,10 +1567,11 @@ def render_gpu_recommendation_card(item: dict[str, object]) -> str:
     """
 
 
-def render_open_ssh_button(server: object) -> str:
+def render_open_ssh_button(server: object, gpu_index: object | None = None) -> str:
     if not ServerHandler.action_allowed or ServerHandler.fake_lab or not server:
         return ""
-    return f'<button class="small" type="button" data-open-ssh="{esc(server)}">Open SSH terminal</button>'
+    gpu_attr = f' data-gpu-index="{esc(gpu_index)}"' if gpu_index not in {None, ""} else ""
+    return f'<button class="small" type="button" data-open-ssh="{esc(server)}"{gpu_attr}>Enter Server</button>'
 
 
 def filter_available_gpu_items(items: object, ui: dict[str, object]) -> list[dict[str, object]]:
@@ -2076,6 +2197,9 @@ dialog{{border:1px solid var(--border);border-radius:8px;background:var(--surfac
 dialog::backdrop{{background:rgba(0,0,0,.45)}}
 dialog label{{display:flex;flex-direction:column;gap:4px;margin:10px 0;color:var(--muted);font-size:12px}}
 dialog select,dialog input{{border:1px solid var(--border);border-radius:6px;padding:8px;background:var(--button);color:var(--text);font:inherit}}
+dialog fieldset{{border:1px solid var(--border-soft);border-radius:8px;margin:12px 0;padding:10px 12px}}
+dialog legend{{color:var(--text);font-weight:700;padding:0 4px}}
+dialog fieldset label{{flex-direction:row;align-items:center;color:var(--text);font-size:13px;margin:7px 0}}
 .modal-actions{{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}}
 .toolbar{{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:18px}}
 .actions{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
@@ -2158,46 +2282,37 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
   </div>
 </dialog>
 <dialog id="ssh-modal">
-  <h2>Open SSH terminal</h2>
-  <p class="muted">Choose a local proxy if you need one, then optionally start Codex, Claude Code, Gemini, or OpenClaw in the SSH terminal.</p>
+  <h2>Enter Server</h2>
+  <p class="muted">Open a server shell with a local AI provider tunnel. Alpha supports Claude Code through the current CC Switch provider.</p>
   <table>
     <tr><th>Server</th><td id="ssh-modal-server"></td></tr>
+    <tr><th>GPU</th><td><select id="ssh-gpu"><option value="">none</option></select></td></tr>
+    <tr><th>Working directory</th><td>
+      <input id="ssh-remote-cwd" list="ssh-remote-cwd-options" placeholder="/data/lsg/work/project" autocomplete="off">
+      <datalist id="ssh-remote-cwd-options"></datalist>
+      <p class="muted" id="ssh-folder-summary">VS Code Remote-SSH recent folders will appear here when available.</p>
+    </td></tr>
   </table>
-  <label>Local proxy
-    <select id="ssh-proxy">
-      <option value="">No proxy (server network)</option>
-      <option value="ccswitch">CC Switch proxy</option>
-      <option value="7890">Use local port 7890</option>
-      <option value="33210">Use local port 33210</option>
-      <option value="custom">Custom local proxy port</option>
-    </select>
-  </label>
-  <label id="ssh-custom-proxy-wrap" hidden>Custom local proxy port
-    <input id="ssh-custom-proxy" inputmode="numeric" placeholder="15721">
-  </label>
-  <label id="ssh-remote-proxy-wrap" hidden>Remote tunnel port
-    <input id="ssh-remote-proxy" inputmode="numeric" placeholder="auto">
-  </label>
-  <label>Open after SSH
-    <select id="ssh-agent">
-      <option value="none">Shell only</option>
-      <option value="codex">Codex CLI</option>
-      <option value="claude">Claude Code</option>
-      <option value="gemini">Gemini CLI</option>
-      <option value="openclaw">OpenClaw Agent</option>
-    </select>
-  </label>
-  <label id="ssh-ccswitch-provider-wrap" hidden>Agent provider
-    <select id="ssh-ccswitch-provider">
-      <option value="">Use current local selection</option>
-    </select>
-  </label>
+  <input type="hidden" id="ssh-proxy" value="ccswitch">
+  <fieldset>
+    <legend>AI App</legend>
+    <label><input type="radio" name="ssh-agent" value="claude" checked> Claude Code</label>
+    <label><input type="radio" name="ssh-agent" value="codex" disabled> Codex <span class="muted">coming soon</span></label>
+    <label><input type="radio" name="ssh-agent" value="gemini" disabled> Gemini <span class="muted">coming soon</span></label>
+  </fieldset>
+  <fieldset>
+    <legend>Mode</legend>
+    <label><input type="radio" name="ssh-ai-mode" value="proxy_tunnel" checked> Proxy Tunnel <span class="muted">recommended, secrets stay local</span></label>
+    <label><input type="radio" name="ssh-ai-mode" value="remote_write" disabled> Remote Write <span class="muted">advanced, coming soon</span></label>
+  </fieldset>
+  <p class="muted" id="ssh-provider-summary">Using current CC Switch Claude provider: -</p>
+  <p class="muted" id="ssh-proxy-summary">Proxy tunnel: -</p>
   <p class="muted" id="ssh-ccswitch-status">Checking CC Switch...</p>
-  <p class="muted" id="ssh-modal-hint">Opening from a GPU card does not set <code>CUDA_VISIBLE_DEVICES</code>. It only chooses the server to SSH into.</p>
+  <p class="muted" id="ssh-modal-hint">This flow exports <code>ANTHROPIC_BASE_URL</code> to a per-session gateway tunnel and uses a temporary <code>ANTHROPIC_API_KEY</code> session token. Real provider keys stay local. If SSH exits with remote forwarding failure, the selected remote gateway port may already be in use on that server.</p>
   <p id="ssh-modal-result" class="muted"></p>
   <div class="modal-actions">
     <button class="button" id="ssh-modal-cancel" type="button">Cancel</button>
-    <button class="button" id="ssh-modal-open" type="button">Open SSH terminal</button>
+    <button class="button" id="ssh-modal-open" type="button">Open Terminal</button>
   </div>
 </dialog>
 <script>
@@ -2206,6 +2321,7 @@ const actionToken = "{esc(ServerHandler.action_token)}";
 let selectedStopButton = null;
 let selectedSshButton = null;
 let ccswitchSummary = null;
+let vscodeRecentFolders = [];
 const themeButton = document.getElementById("theme-toggle");
 const languageButton = document.getElementById("language-toggle");
 const jsonToggle = document.getElementById("show-json-toggle");
@@ -2588,14 +2704,59 @@ document.addEventListener("click", (event) => {{
   copyTextFromButton(button);
 }});
 function selectedAgent() {{
-  const agentSelect = document.getElementById("ssh-agent");
-  return agentSelect ? agentSelect.value : "none";
+  const selected = document.querySelector('input[name="ssh-agent"]:checked');
+  return selected ? selected.value : "claude";
 }}
 function selectedCcswitchProviderId() {{
-  const proxySelect = document.getElementById("ssh-proxy");
-  const providerSelect = document.getElementById("ssh-ccswitch-provider");
-  if (!proxySelect || proxySelect.value !== "ccswitch" || selectedAgent() === "none" || !providerSelect) return "";
-  return providerSelect.value || "";
+  return "";
+}}
+function selectedAiMode() {{
+  const selected = document.querySelector('input[name="ssh-ai-mode"]:checked');
+  return selected ? selected.value : "proxy_tunnel";
+}}
+function currentCcswitchProviderName(agent) {{
+  const providers = ccswitchSummary && ccswitchSummary.providers ? ccswitchSummary.providers : {{}};
+  const provider = providers[agent] || {{}};
+  return provider.current || "";
+}}
+function selectedGpuIndex() {{
+  const gpu = document.getElementById("ssh-gpu");
+  return gpu ? gpu.value : "";
+}}
+function selectedRemoteCwd() {{
+  const input = document.getElementById("ssh-remote-cwd");
+  return input ? input.value.trim() : "";
+}}
+async function loadVscodeRecentFolders(server) {{
+  const input = document.getElementById("ssh-remote-cwd");
+  const options = document.getElementById("ssh-remote-cwd-options");
+  const summary = document.getElementById("ssh-folder-summary");
+  if (options) options.innerHTML = "";
+  if (summary) summary.textContent = "Loading VS Code Remote-SSH recent folders...";
+  try {{
+    if (!vscodeRecentFolders.length) {{
+      const response = await fetch("/api/integrations/vscode/recent-folders");
+      const payload = await response.json();
+      vscodeRecentFolders = Array.isArray(payload.folders) ? payload.folders : [];
+    }}
+  }} catch (error) {{
+    vscodeRecentFolders = [];
+  }}
+  const matches = vscodeRecentFolders.filter((item) => item && item.server_alias === server && item.path);
+  if (options) {{
+    matches.slice(0, 20).forEach((item) => {{
+      const option = document.createElement("option");
+      option.value = item.path;
+      option.label = item.label || item.path;
+      options.appendChild(option);
+    }});
+  }}
+  if (input && !input.value && matches.length) input.value = matches[0].path;
+  if (summary) {{
+    summary.textContent = matches.length
+      ? `Imported ${{matches.length}} VS Code recent folder${{matches.length === 1 ? "" : "s"}} for ${{server}}.`
+      : "No VS Code recent folder found for this server. You can type an absolute remote path.";
+  }}
 }}
 function ccswitchProxyPort(agent) {{
   const proxyConfig = activeCcswitchProxyConfig(agent);
@@ -2603,17 +2764,21 @@ function ccswitchProxyPort(agent) {{
 }}
 function activeCcswitchProxyConfig(agent) {{
   const proxy = ccswitchSummary && ccswitchSummary.proxy ? ccswitchSummary.proxy : {{}};
-  const preferred = agent && agent !== "none" ? proxy[agent] : null;
-  const proxyConfig = preferred || proxy.codex || proxy.claude || proxy.gemini || proxy.openclaw;
+  const proxyConfig = agent && agent !== "none" ? proxy[agent] : proxy.codex || proxy.claude || proxy.gemini || proxy.openclaw;
   if (!proxyConfig || !proxyConfig.listen_port) return null;
   return proxyConfig.enabled || proxyConfig.proxy_enabled ? proxyConfig : null;
 }}
+function ccswitchProxyIsListening(proxyConfig) {{
+  if (!proxyConfig) return false;
+  return proxyConfig.listening !== false;
+}}
 function ccswitchProxyStatus(agent) {{
   const proxy = ccswitchSummary && ccswitchSummary.proxy ? ccswitchSummary.proxy : {{}};
-  const preferred = agent && agent !== "none" ? proxy[agent] : null;
-  const proxyConfig = preferred || proxy.codex || proxy.claude || proxy.gemini || proxy.openclaw;
+  const proxyConfig = agent && agent !== "none" ? proxy[agent] : proxy.codex || proxy.claude || proxy.gemini || proxy.openclaw;
   if (!proxyConfig || !proxyConfig.listen_port) return "proxy: -";
-  const state = proxyConfig.enabled || proxyConfig.proxy_enabled ? "enabled" : "disabled";
+  let state = proxyConfig.enabled || proxyConfig.proxy_enabled ? "enabled" : "disabled";
+  if ((proxyConfig.enabled || proxyConfig.proxy_enabled) && !ccswitchProxyIsListening(proxyConfig)) state = "enabled, not listening";
+  else if ((proxyConfig.enabled || proxyConfig.proxy_enabled) && proxyConfig.listening == null) state = "enabled, TCP check unknown";
   return `proxy ${{proxyConfig.listen_address || "127.0.0.1"}}:${{proxyConfig.listen_port}} (${{state}})`;
 }}
 function describeCcswitch(summary) {{
@@ -2629,33 +2794,23 @@ function describeCcswitch(summary) {{
   return `${{providerText}} · ${{proxyText}}`;
 }}
 function updateCcswitchProviderOptions() {{
-  const proxySelect = document.getElementById("ssh-proxy");
-  const providerWrap = document.getElementById("ssh-ccswitch-provider-wrap");
-  const providerSelect = document.getElementById("ssh-ccswitch-provider");
   const agent = selectedAgent();
-  const enabled = !!(proxySelect && proxySelect.value === "ccswitch" && agent !== "none");
-  if (providerWrap) providerWrap.hidden = !enabled;
-  if (!providerSelect || !enabled) {{
-    if (providerSelect) providerSelect.value = "";
-    return;
+  const providerSummary = document.getElementById("ssh-provider-summary");
+  const proxySummary = document.getElementById("ssh-proxy-summary");
+  const providerName = currentCcswitchProviderName(agent);
+  const proxyConfig = activeCcswitchProxyConfig(agent);
+  if (providerSummary) {{
+    providerSummary.textContent = providerName
+      ? `Using current CC Switch Claude provider: ${{providerName}}. To change provider, switch it in CC Switch first.`
+      : "Current CC Switch Claude provider was not found. Switch Claude provider in CC Switch first.";
   }}
-  const currentValue = providerSelect.value;
-  const providers = ccswitchSummary && ccswitchSummary.providers ? ccswitchSummary.providers : {{}};
-  const provider = providers[agent] || {{}};
-  const choices = provider.choices_detail || [];
-  providerSelect.innerHTML = "";
-  const keepCurrent = document.createElement("option");
-  keepCurrent.value = "";
-  keepCurrent.textContent = provider.current ? `Use current: ${{provider.current}}` : translateText("Use current local selection", currentLanguage());
-  providerSelect.appendChild(keepCurrent);
-  choices.forEach((item) => {{
-    if (!item || !item.id || !item.name) return;
-    const option = document.createElement("option");
-    option.value = item.id;
-    option.textContent = item.current ? `${{item.name}} (current)` : item.name;
-    providerSelect.appendChild(option);
-  }});
-  if (Array.from(providerSelect.options).some((option) => option.value === currentValue)) providerSelect.value = currentValue;
+  if (proxySummary) {{
+    proxySummary.textContent = proxyConfig && proxyConfig.listen_port && ccswitchProxyIsListening(proxyConfig)
+      ? `Proxy Tunnel: remote random port -> local LabGPU gateway -> CC Switch 127.0.0.1:${{proxyConfig.listen_port}}`
+      : proxyConfig && proxyConfig.listen_port
+        ? `Proxy Tunnel: CC Switch proxy is configured but not listening on 127.0.0.1:${{proxyConfig.listen_port}}.`
+      : "Proxy Tunnel: CC Switch proxy is not configured or not enabled.";
+  }}
 }}
 async function loadCcswitchSummary() {{
   const status = document.getElementById("ssh-ccswitch-status");
@@ -2670,34 +2825,40 @@ async function loadCcswitchSummary() {{
   return ccswitchSummary;
 }}
 function selectedLocalProxyPort() {{
-  const proxySelect = document.getElementById("ssh-proxy");
-  const customInput = document.getElementById("ssh-custom-proxy");
-  const value = proxySelect ? proxySelect.value : "";
-  if (!value) return "";
-  if (value === "ccswitch") return ccswitchProxyPort(selectedAgent());
-  if (value === "custom") return customInput ? customInput.value.trim() : "";
-  return value;
+  if (selectedAiMode() !== "proxy_tunnel") return "";
+  return ccswitchProxyPort(selectedAgent());
 }}
 function selectedRemoteProxyPort() {{
-  const localPort = selectedLocalProxyPort();
-  if (!localPort) return "";
-  const remoteInput = document.getElementById("ssh-remote-proxy");
-  return remoteInput ? remoteInput.value.trim() : "";
+  return "";
 }}
 function updateSshProxyFields() {{
-  const proxySelect = document.getElementById("ssh-proxy");
-  const customWrap = document.getElementById("ssh-custom-proxy-wrap");
-  const remoteWrap = document.getElementById("ssh-remote-proxy-wrap");
-  if (customWrap && proxySelect) customWrap.hidden = proxySelect.value !== "custom";
-  if (remoteWrap && proxySelect) remoteWrap.hidden = !proxySelect.value;
   updateCcswitchProviderOptions();
 }}
 async function runOpenSsh(button) {{
-  const original = button.textContent || "Open SSH terminal";
-  const proxySelect = document.getElementById("ssh-proxy");
+  const original = button.textContent || "Enter Server";
   const result = document.getElementById("ssh-modal-result");
-  if (proxySelect && proxySelect.value === "ccswitch" && !activeCcswitchProxyConfig(selectedAgent())) {{
-    if (result) result.textContent = "CC Switch proxy is disabled or not configured. Start CC Switch proxy first, or choose local port 33210.";
+  const agent = selectedAgent();
+  const mode = selectedAiMode();
+  const providerName = currentCcswitchProviderName(agent);
+  if (agent !== "claude") {{
+    if (result) result.textContent = "Only Claude Code AI sessions are available in this alpha.";
+    return;
+  }}
+  if (mode !== "proxy_tunnel") {{
+    if (result) result.textContent = "Remote Write is not available in this alpha.";
+    return;
+  }}
+  if (!providerName) {{
+    if (result) result.textContent = "Current CC Switch Claude provider was not found. Switch Claude provider in CC Switch first.";
+    return;
+  }}
+  if (!activeCcswitchProxyConfig(agent)) {{
+    if (result) result.textContent = "CC Switch proxy is not running or not configured for Claude. Start CC Switch proxy first, then reopen this session.";
+    return;
+  }}
+  const proxyConfig = activeCcswitchProxyConfig(agent);
+  if (!ccswitchProxyIsListening(proxyConfig)) {{
+    if (result) result.textContent = `CC Switch proxy is configured but not listening on 127.0.0.1:${{proxyConfig.listen_port}}.`;
     return;
   }}
   button.textContent = translateText("Opening terminal...", currentLanguage());
@@ -2708,7 +2869,11 @@ async function runOpenSsh(button) {{
     body: JSON.stringify({{
       local_proxy_port: selectedLocalProxyPort(),
       remote_proxy_port: selectedRemoteProxyPort(),
-      agent: selectedAgent(),
+      agent: agent,
+      ai_mode: mode,
+      provider_name: providerName,
+      gpu_index: selectedGpuIndex(),
+      remote_cwd: selectedRemoteCwd(),
       ccswitch_provider_id: selectedCcswitchProviderId()
     }})
   }});
@@ -2716,6 +2881,7 @@ async function runOpenSsh(button) {{
   button.disabled = false;
   if (payload.ok) {{
     button.textContent = translateText("Terminal opened", currentLanguage());
+    rememberAiSession(button, providerName, payload.ai_gateway || {{}});
     setTimeout(() => button.textContent = original, 1400);
     const dialog = document.getElementById("ssh-modal");
     if (dialog && dialog.open) dialog.close();
@@ -2724,6 +2890,49 @@ async function runOpenSsh(button) {{
     if (result) result.textContent = payload.message || "Opening terminal failed.";
     else window.alert(payload.message || "Opening terminal failed.");
   }}
+}}
+function rememberAiSession(button, providerName, gateway) {{
+  const localPort = selectedLocalProxyPort();
+  const entry = {{
+    server: button.dataset.openSsh || "",
+    app: "Claude Code",
+    provider: providerName || "-",
+    ccswitchProxyPort: gateway.ccswitch_proxy_port || localPort,
+    localGatewayPort: gateway.local_gateway_port || "-",
+    remoteGatewayPort: gateway.remote_gateway_port || "-",
+    tokenFingerprint: gateway.token_fingerprint || "",
+    gpu: selectedGpuIndex() || "none",
+    cwd: selectedRemoteCwd() || gateway.remote_cwd || "",
+    startedAt: new Date().toLocaleString()
+  }};
+  let rows = [];
+  try {{ rows = JSON.parse(localStorage.getItem("labgpu-ai-sessions") || "[]"); }} catch (error) {{ rows = []; }}
+  rows.unshift(entry);
+  localStorage.setItem("labgpu-ai-sessions", JSON.stringify(rows.slice(0, 8)));
+  renderAiSessions();
+}}
+function renderAiSessions() {{
+  const target = document.getElementById("ai-session-rows");
+  if (!target) return;
+  let rows = [];
+  try {{ rows = JSON.parse(localStorage.getItem("labgpu-ai-sessions") || "[]"); }} catch (error) {{ rows = []; }}
+  if (!rows.length) {{
+    target.innerHTML = "<tr><td colspan='6' class='muted'>No AI sessions launched from this browser yet.</td></tr>";
+    return;
+  }}
+  target.innerHTML = rows.map((item) => `
+    <tr>
+      <td>${{escapeHtml(item.server || "-")}}</td>
+      <td><code>${{escapeHtml(item.cwd || "-")}}</code></td>
+      <td>${{escapeHtml(item.app || "-")}} / ${{escapeHtml(item.provider || "-")}}</td>
+      <td>remote 127.0.0.1:${{escapeHtml(item.remoteGatewayPort || "-")}} -> local gateway 127.0.0.1:${{escapeHtml(item.localGatewayPort || "-")}} -> CC Switch 127.0.0.1:${{escapeHtml(item.ccswitchProxyPort || "-")}}</td>
+      <td>${{escapeHtml(item.gpu || "none")}}</td>
+      <td>${{escapeHtml(item.startedAt || "-")}}</td>
+    </tr>
+  `).join("");
+}}
+function escapeHtml(value) {{
+  return String(value).replace(/[&<>"']/g, (ch) => ({{"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}}[ch]));
 }}
 document.addEventListener("click", async (event) => {{
   const target = event.target;
@@ -2736,14 +2945,30 @@ document.addEventListener("click", async (event) => {{
     return;
   }}
   const serverCell = document.getElementById("ssh-modal-server");
+  const gpuSelect = document.getElementById("ssh-gpu");
+  const cwdInput = document.getElementById("ssh-remote-cwd");
   const result = document.getElementById("ssh-modal-result");
   if (serverCell) serverCell.textContent = button.dataset.openSsh || "";
+  if (cwdInput) cwdInput.value = "";
+  if (gpuSelect) {{
+    const selectedGpu = button.dataset.gpuIndex || "";
+    gpuSelect.innerHTML = "<option value=''>none</option>";
+    if (selectedGpu) {{
+      const option = document.createElement("option");
+      option.value = selectedGpu;
+      option.textContent = `GPU ${{selectedGpu}}`;
+      option.selected = true;
+      gpuSelect.appendChild(option);
+    }}
+  }}
   if (result) result.textContent = "";
   updateSshProxyFields();
   loadCcswitchSummary();
+  loadVscodeRecentFolders(button.dataset.openSsh || "");
   setRefreshPaused(true);
   dialog.showModal();
 }});
+renderAiSessions();
 document.querySelectorAll("[data-alert-action]").forEach((button) => {{
   button.addEventListener("click", async () => {{
     const key = button.dataset.alertKey;
@@ -2998,9 +3223,9 @@ if (sshModalOpen) sshModalOpen.addEventListener("click", async () => {{
 }});
 const sshProxySelect = document.getElementById("ssh-proxy");
 if (sshProxySelect) sshProxySelect.addEventListener("change", updateSshProxyFields);
-const sshAgentSelect = document.getElementById("ssh-agent");
-if (sshAgentSelect) sshAgentSelect.addEventListener("change", loadCcswitchSummary);
-if (sshProxySelect || sshAgentSelect) loadCcswitchSummary();
+const sshOptionInputs = document.querySelectorAll('input[name="ssh-agent"], input[name="ssh-ai-mode"]');
+sshOptionInputs.forEach((input) => input.addEventListener("change", loadCcswitchSummary));
+if (sshProxySelect || sshOptionInputs.length) loadCcswitchSummary();
 function fillStopModal(button) {{
   const pairs = {{
     "modal-server": button.dataset.server || "-",
@@ -3069,6 +3294,7 @@ def render_nav(*, status: str = "", json_href: str = "/api/servers") -> str:
         <a href="/gpus">Train Now</a>
         <a href="/me">My Training</a>
         <a href="/assistant">Assistant</a>
+        <a href="/providers">AI Providers</a>
         <a href="/servers">Servers</a>
         <a href="/groups">Groups</a>
         <a href="/alerts">Alerts</a>

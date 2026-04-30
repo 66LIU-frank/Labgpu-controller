@@ -17,6 +17,8 @@ class ServerEntry:
     disk_paths: list[str] = field(default_factory=list)
     shared_account: bool = False
     allow_stop_own_process: bool = True
+    ai_extra_paths: list[str] = field(default_factory=list)
+    claude_command: str = ""
 
 
 @dataclass
@@ -89,6 +91,10 @@ def parse_config(text: str) -> LabGPUConfig:
                 server.shared_account = value
             elif key == "allow_stop_own_process" and isinstance(value, bool):
                 server.allow_stop_own_process = value
+            elif key == "ai_extra_paths" and isinstance(value, list):
+                server.ai_extra_paths = [str(item) for item in value]
+            elif key == "claude_command" and isinstance(value, str):
+                server.claude_command = value
     return config
 
 
@@ -123,6 +129,8 @@ def render_config(config: LabGPUConfig) -> str:
                 f"disk_paths = {render_list(server.disk_paths)}",
                 f"shared_account = {render_bool(server.shared_account)}",
                 f"allow_stop_own_process = {render_bool(server.allow_stop_own_process)}",
+                f"ai_extra_paths = {render_list(server.ai_extra_paths)}",
+                f"claude_command = {quote_string(server.claude_command)}",
                 "",
             ]
         )

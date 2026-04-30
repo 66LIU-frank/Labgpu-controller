@@ -1,0 +1,287 @@
+from __future__ import annotations
+
+import re
+import json
+import shlex
+from dataclasses import dataclass
+
+
+SUPPORTED_AI_APPS = {"claude"}
+SUPPORTED_MODES = {"proxy_tunnel"}
+DUMMY_PROXY_API_KEY = "labgpu-proxy"
+SESSION_TOKEN_PREFIX = "labgpu-session-"
+SAFE_SSH_ALIAS_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
+SAFE_GPU_INDEX_RE = re.compile(r"^\d+(,\d+)*$")
+SAFE_SESSION_TOKEN_RE = re.compile(r"^labgpu-session-[A-Za-z0-9_-]{24,}$")
+DEFAULT_AI_PATH_PREFIXES = ("~/miniconda3/bin", "~/.local/bin")
+
+
+@dataclass(frozen=True)
+class EnterServerAIRequest:
+    server_alias: str
+    gpu_index: str | None
+    ai_app: str
+    provider_name: str
+    ccswitch_proxy_port: int
+    local_gateway_port: int
+    remote_gateway_port: int
+    session_token: str
+    mode: str = "proxy_tunnel"
+    remote_cwd: str | None = None
+    ssh_options: tuple[str, ...] = ()
+    ssh_target: str | None = None
+    remote_path_prefixes: tuple[str, ...] = DEFAULT_AI_PATH_PREFIXES
+    claude_command: str | None = None
+
+
+@dataclass(frozen=True)
+class EnterServerAICommand:
+    ssh_args: list[str]
+    remote_env: dict[str, str]
+    display_summary: str
+    token_fingerprint: str
+
+
+def build_ai_ssh_command(request: EnterServerAIRequest) -> EnterServerAICommand:
+    validate_request(request)
+    remote_url = f"http://127.0.0.1:{request.remote_gateway_port}"
+    remote_cwd = normalized_remote_cwd(request.remote_cwd)
+    path_prefixes = normalized_remote_path_prefixes(request.remote_path_prefixes)
+    claude_command = normalized_remote_command_path(request.claude_command)
+    remote_env = {
+        "LABGPU_AI_MODE": request.mode,
+        "LABGPU_AI_APP": request.ai_app,
+        "LABGPU_AI_PROVIDER": request.provider_name,
+        "ANTHROPIC_BASE_URL": remote_url,
+        "ANTHROPIC_API_KEY": request.session_token,
+    }
+    if remote_cwd is not None:
+        remote_env["LABGPU_REMOTE_CWD"] = remote_cwd
+    if path_prefixes:
+        remote_env["LABGPU_AI_PATH_PREFIX"] = ":".join(path_prefixes)
+    if claude_command is not None:
+        remote_env["LABGPU_AI_CLAUDE_COMMAND"] = claude_command
+    gpu = normalized_gpu_index(request.gpu_index)
+    if gpu is not None:
+        remote_env["CUDA_VISIBLE_DEVICES"] = gpu
+    remote_command = build_remote_shell_command(
+        remote_env,
+        remote_cwd=remote_cwd,
+        remote_path_prefixes=path_prefixes,
+        setup_claude_wrapper=request.ai_app == "claude",
+    )
+    tunnel = f"127.0.0.1:{request.remote_gateway_port}:127.0.0.1:{request.local_gateway_port}"
+    return EnterServerAICommand(
+        ssh_args=[
+            "ssh",
+            "-tt",
+            "-o",
+            "ExitOnForwardFailure=yes",
+            *request.ssh_options,
+            "-R",
+            tunnel,
+            request.ssh_target or request.server_alias,
+            remote_command,
+        ],
+        remote_env=remote_env,
+        display_summary=(
+            f"{request.server_alias} / Claude Code / {request.provider_name} / "
+            f"Proxy Tunnel remote 127.0.0.1:{request.remote_gateway_port} -> "
+            f"local gateway 127.0.0.1:{request.local_gateway_port} -> CC Switch 127.0.0.1:{request.ccswitch_proxy_port}"
+        ),
+        token_fingerprint=request.session_token[-8:],
+    )
+
+
+def build_remote_shell_command(
+    remote_env: dict[str, str],
+    *,
+    remote_cwd: str | None = None,
+    remote_path_prefixes: tuple[str, ...] | list[str] = (),
+    setup_claude_wrapper: bool = False,
+) -> str:
+    exports = [f"export {key}={shlex.quote(value)}" for key, value in remote_env.items()]
+    path_export = build_path_export(remote_path_prefixes)
+    if path_export:
+        exports.append(path_export)
+    if setup_claude_wrapper:
+        exports.append(build_claude_wrapper_setup(remote_env))
+    if remote_cwd is not None:
+        exports.append(f"cd {shlex.quote(remote_cwd)} || exit 1")
+    exports.append('exec "${SHELL:-/bin/sh}" -i')
+    return "; ".join(exports)
+
+
+def build_claude_wrapper_setup(remote_env: dict[str, str]) -> str:
+    settings = json.dumps(
+        {
+            "env": {
+                "ANTHROPIC_BASE_URL": remote_env["ANTHROPIC_BASE_URL"],
+                "ANTHROPIC_API_KEY": remote_env["ANTHROPIC_API_KEY"],
+            }
+        },
+        separators=(",", ":"),
+    )
+    wrapper = '#!/bin/sh\nexec "$LABGPU_REAL_CLAUDE" --settings "$LABGPU_CLAUDE_SETTINGS" "$@"\n'
+    return " ".join(
+        [
+            'LABGPU_REAL_CLAUDE="${LABGPU_AI_CLAUDE_COMMAND:-}"',
+            "&&",
+            'if [ -z "$LABGPU_REAL_CLAUDE" ]; then LABGPU_REAL_CLAUDE="$(command -v claude || command -v claude-code || true)"; fi',
+            ";",
+            'case "$LABGPU_REAL_CLAUDE" in "~/"*) LABGPU_REAL_CLAUDE="${HOME}/${LABGPU_REAL_CLAUDE#~/}" ;; esac',
+            ";",
+            'if [ -n "$LABGPU_REAL_CLAUDE" ]; then',
+            'LABGPU_AI_TMPDIR="${TMPDIR:-/tmp}/labgpu-ai-${USER:-user}-$$"',
+            "&&",
+            'mkdir -p "$LABGPU_AI_TMPDIR"',
+            "&&",
+            'chmod 700 "$LABGPU_AI_TMPDIR"',
+            "&&",
+            'export LABGPU_REAL_CLAUDE LABGPU_AI_TMPDIR',
+            "&&",
+            'LABGPU_CLAUDE_SETTINGS="$LABGPU_AI_TMPDIR/claude-settings.json"',
+            "&&",
+            'export LABGPU_CLAUDE_SETTINGS',
+            "&&",
+            f"umask 077 && printf %s {shlex.quote(settings)} > \"$LABGPU_CLAUDE_SETTINGS\"",
+            "&&",
+            f"printf %s {shlex.quote(wrapper)} > \"$LABGPU_AI_TMPDIR/claude\"",
+            "&&",
+            'chmod 700 "$LABGPU_AI_TMPDIR/claude"',
+            "&&",
+            'ln -sf "$LABGPU_AI_TMPDIR/claude" "$LABGPU_AI_TMPDIR/claude-code"',
+            "&&",
+            'export PATH="$LABGPU_AI_TMPDIR:$PATH"',
+            ";",
+            "fi",
+        ]
+    )
+
+
+def validate_request(request: EnterServerAIRequest) -> None:
+    if not is_safe_ssh_alias(request.server_alias):
+        raise ValueError("Unsafe SSH alias.")
+    if request.mode not in SUPPORTED_MODES:
+        raise ValueError("Only Proxy Tunnel mode is available in this alpha.")
+    if request.ai_app not in SUPPORTED_AI_APPS:
+        raise ValueError("Only Claude Code AI sessions are available in this alpha.")
+    if not request.provider_name.strip():
+        raise ValueError("Current CC Switch provider is required for Claude Code.")
+    if request.ssh_target is not None and not request.ssh_target.strip():
+        raise ValueError("SSH target is required.")
+    if any(not isinstance(item, str) or not item for item in request.ssh_options):
+        raise ValueError("SSH options must be non-empty argv strings.")
+    validate_port(request.ccswitch_proxy_port, "CC Switch proxy port")
+    validate_port(request.local_gateway_port, "Local gateway port")
+    validate_port(request.remote_gateway_port, "Remote gateway port")
+    validate_session_token(request.session_token)
+    normalized_remote_cwd(request.remote_cwd)
+    normalized_remote_path_prefixes(request.remote_path_prefixes)
+    normalized_remote_command_path(request.claude_command)
+
+
+def validate_port(value: int, label: str) -> None:
+    if value < 1 or value > 65535:
+        raise ValueError(f"{label} must be between 1 and 65535.")
+
+
+def validate_session_token(value: str) -> None:
+    if not SAFE_SESSION_TOKEN_RE.fullmatch(str(value or "")):
+        raise ValueError("AI session token must be a LabGPU session token.")
+
+
+def normalized_gpu_index(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"none", "auto"}:
+        return None
+    if not SAFE_GPU_INDEX_RE.fullmatch(text):
+        raise ValueError("GPU index must be none, auto, a number, or comma-separated numbers.")
+    return text
+
+
+def normalized_remote_cwd(value: str | None) -> str | None:
+    raw = str(value or "")
+    if "\x00" in raw or "\n" in raw or "\r" in raw:
+        raise ValueError("Remote working directory must be a single path.")
+    text = raw.strip()
+    if not text:
+        return None
+    if len(text) > 4096:
+        raise ValueError("Remote working directory is too long.")
+    if not (text.startswith("/") or text == "~" or text.startswith("~/")):
+        raise ValueError("Remote working directory must be an absolute path or start with ~.")
+    return text
+
+
+def normalized_remote_path_prefixes(values: tuple[str, ...] | list[str] | None) -> tuple[str, ...]:
+    prefixes: list[str] = []
+    seen: set[str] = set()
+    for value in values or ():
+        path = normalized_remote_path(value, label="AI PATH entry")
+        if path is None or path in seen:
+            continue
+        seen.add(path)
+        prefixes.append(path)
+    return tuple(prefixes)
+
+
+def normalized_remote_command_path(value: str | None) -> str | None:
+    return normalized_remote_path(value, label="Claude command path")
+
+
+def normalized_remote_path(value: str | None, *, label: str) -> str | None:
+    raw = str(value or "")
+    if "\x00" in raw or "\n" in raw or "\r" in raw:
+        raise ValueError(f"{label} must be a single path.")
+    text = raw.strip()
+    if not text:
+        return None
+    if len(text) > 4096:
+        raise ValueError(f"{label} is too long.")
+    if text.startswith("$HOME/"):
+        text = "~/" + text.removeprefix("$HOME/")
+    if not (text.startswith("/") or text == "~" or text.startswith("~/")):
+        raise ValueError(f"{label} must be an absolute path or start with ~.")
+    return text
+
+
+def build_path_export(remote_path_prefixes: tuple[str, ...] | list[str]) -> str:
+    prefixes = normalized_remote_path_prefixes(list(remote_path_prefixes))
+    if not prefixes:
+        return ""
+    entries = [shell_path_entry(path) for path in prefixes]
+    return f"export PATH={':'.join(entries)}:$PATH"
+
+
+def shell_path_entry(path: str) -> str:
+    if path == "~":
+        return "${HOME}"
+    if path.startswith("~/"):
+        return "${HOME}" + shlex.quote(path[1:])
+    return shlex.quote(path)
+
+
+def build_claude_command_probe(remote_path_prefixes: tuple[str, ...] | list[str] = DEFAULT_AI_PATH_PREFIXES, claude_command: str | None = None) -> str:
+    parts: list[str] = []
+    path_export = build_path_export(remote_path_prefixes)
+    if path_export:
+        parts.append(path_export)
+    command_path = normalized_remote_command_path(claude_command)
+    if command_path is not None:
+        parts.append(f"if [ -x {shlex.quote(command_path)} ]; then printf '%s\\n' {shlex.quote(command_path)}; exit 0; fi")
+    parts.extend(
+        [
+            "if command -v claude >/dev/null 2>&1; then command -v claude; exit 0; fi",
+            "if command -v claude-code >/dev/null 2>&1; then command -v claude-code; exit 0; fi",
+            "if command -v bash >/dev/null 2>&1; then bash -ic 'command -v claude || command -v claude-code' 2>/dev/null && exit 0; fi",
+            "if [ -x \"$HOME/miniconda3/bin/claude\" ]; then printf '%s\\n' \"$HOME/miniconda3/bin/claude\"; exit 0; fi",
+            "printf '%s\\n' 'claude not found in LabGPU launch PATH' >&2",
+            "exit 127",
+        ]
+    )
+    return "; ".join(parts)
+
+
+def is_safe_ssh_alias(alias: str) -> bool:
+    return bool(alias and not alias.startswith("-") and SAFE_SSH_ALIAS_RE.fullmatch(alias))

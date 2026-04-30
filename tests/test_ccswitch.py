@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from labgpu.remote.ccswitch import read_ccswitch_summary, switch_ccswitch_provider
 
@@ -26,7 +27,8 @@ class CcSwitchTest(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            summary = read_ccswitch_summary(tmp)
+            with patch("labgpu.remote.ccswitch.is_local_proxy_listening", return_value=True):
+                summary = read_ccswitch_summary(tmp)
 
         self.assertTrue(summary["available"])
         self.assertEqual(summary["providers"]["codex"]["current"], "pro")
@@ -34,6 +36,7 @@ class CcSwitchTest(unittest.TestCase):
         self.assertEqual(summary["providers"]["codex"]["choices_detail"][0]["id"], "codex-pro")
         self.assertEqual(summary["providers"]["claude"]["current"], "main")
         self.assertEqual(summary["proxy"]["codex"]["listen_port"], 15721)
+        self.assertTrue(summary["proxy"]["codex"]["listening"])
         self.assertNotIn("SECRET", str(summary))
 
     def test_switches_current_provider_without_reading_secrets(self):

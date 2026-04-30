@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import shlex
@@ -8,9 +9,13 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
+from pathlib import Path
 from typing import Any
 
+from labgpu.remote.ai_gateway import AIGatewaySession, start_ai_gateway
+from labgpu.remote.ai_session import DEFAULT_AI_PATH_PREFIXES, EnterServerAIRequest, build_ai_ssh_command, build_path_export, normalized_remote_command_path, normalized_remote_cwd, normalized_remote_path_prefixes
 from labgpu.remote.audit import append_audit
 from labgpu.remote.probe import probe_host
 from labgpu.remote.ssh_config import SSHHost
@@ -38,7 +43,9 @@ fi
 """
 
 SAFE_SSH_ALIAS_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
+AI_SESSION_TOKEN_RE = re.compile(r"labgpu-session-[A-Za-z0-9_-]{24,}")
 SUPPORTED_TERMINAL_AGENTS = {"none", "codex", "claude", "gemini", "openclaw"}
+AI_GATEWAY_SESSIONS: list[AIGatewaySession] = []
 
 
 def stop_process(
@@ -148,6 +155,10 @@ def open_ssh_terminal(
     local_proxy_port: str | int | None = None,
     remote_proxy_port: str | int | None = None,
     agent: str = "none",
+    ai_mode: str | None = None,
+    provider_name: str | None = None,
+    gpu_index: str | int | None = None,
+    remote_cwd: str | None = None,
 ) -> dict[str, Any]:
     alias = host.alias
     if not is_safe_ssh_alias(alias):
@@ -157,34 +168,71 @@ def open_ssh_terminal(
             "message": "Refusing to open an SSH terminal for an unsafe alias.",
             "server": alias,
         }
+    gateway: AIGatewaySession | None = None
+    ccswitch_proxy_port: int | None = None
+    remote_gateway_port: int | None = None
     try:
-        local_port, _remote_port = normalize_proxy_ports(
+        normalized_agent = normalize_terminal_agent(agent)
+        ccswitch_proxy_port, remote_gateway_port = normalize_proxy_ports(
             proxy_port=proxy_port,
             local_proxy_port=local_proxy_port,
             remote_proxy_port=remote_proxy_port,
         )
-        if local_port and not is_local_tcp_port_open(local_port):
+        port_state = is_local_tcp_port_open(ccswitch_proxy_port) if ccswitch_proxy_port else True
+        if ccswitch_proxy_port and port_state is False:
+            message = f"Local proxy port 127.0.0.1:{ccswitch_proxy_port} is not listening."
+            if normalized_agent == "claude" and ai_mode == "proxy_tunnel":
+                message = f"CC Switch proxy is configured but not listening on 127.0.0.1:{ccswitch_proxy_port}."
             return {
                 "ok": False,
                 "result": "local_proxy_not_listening",
-                "message": f"Local proxy port 127.0.0.1:{local_port} is not listening.",
+                "message": message,
                 "server": alias,
             }
+        if normalized_agent == "claude" and ai_mode == "proxy_tunnel":
+            if not ccswitch_proxy_port:
+                raise ValueError("Claude Code Proxy Tunnel requires a CC Switch proxy port.")
+            gateway = start_ai_gateway(target_port=ccswitch_proxy_port)
+            AI_GATEWAY_SESSIONS.append(gateway)
         argv = build_ssh_terminal_argv(
             alias,
+            host=host,
             proxy_port=proxy_port,
-            local_proxy_port=local_proxy_port,
-            remote_proxy_port=remote_proxy_port,
-            agent=agent,
+            local_proxy_port=ccswitch_proxy_port,
+            remote_proxy_port=remote_gateway_port,
+            agent=normalized_agent,
+            ai_mode=ai_mode,
+            provider_name=provider_name,
+            gpu_index=gpu_index,
+            remote_cwd=remote_cwd,
+            local_gateway_port=gateway.listen_port if gateway else None,
+            session_token=gateway.token if gateway else None,
         )
     except ValueError as exc:
+        if gateway:
+            close_gateway_session(gateway)
         return {
             "ok": False,
             "result": "invalid_terminal_options",
             "message": str(exc),
             "server": alias,
         }
+    except OSError as exc:
+        if gateway:
+            close_gateway_session(gateway)
+        return {
+            "ok": False,
+            "result": "ai_gateway_start_failed",
+            "message": f"Could not start local AI gateway: {exc}",
+            "server": alias,
+        }
     command = shlex.join(argv)
+    redacted_command = redact_ai_session_tokens(command)
+    launch_command = command
+    launch_script: Path | None = None
+    if sys.platform == "darwin" and should_use_terminal_launch_script(command):
+        launch_script = write_terminal_launch_script(command)
+        launch_command = f"exec /bin/sh {shlex.quote(str(launch_script))}"
     try:
         if sys.platform == "darwin":
             result = subprocess.run(
@@ -193,7 +241,7 @@ def open_ssh_terminal(
                     "-e",
                     'tell application "Terminal" to activate',
                     "-e",
-                    f'tell application "Terminal" to do script {json.dumps(command)}',
+                    f'tell application "Terminal" to do script {json.dumps(launch_command)}',
                 ],
                 check=False,
                 capture_output=True,
@@ -201,29 +249,95 @@ def open_ssh_terminal(
                 timeout=8,
             )
             if result.returncode != 0:
-                return terminal_result(host, "open_failed", ok=False, message=result.stderr.strip() or "Opening Terminal failed.", command=command)
+                cleanup_terminal_launch_script(launch_script)
+                if gateway:
+                    close_gateway_session(gateway)
+                return terminal_result(host, "open_failed", ok=False, message=result.stderr.strip() or "Opening Terminal failed.", command=redacted_command)
         elif sys.platform.startswith("win"):
             subprocess.Popen(["cmd", "/c", "start", "LabGPU SSH", "cmd", "/k", *argv])
         else:
             launcher = linux_terminal_launcher(argv)
             if not launcher:
-                return terminal_result(host, "no_terminal", ok=False, message="No supported terminal emulator found.", command=command)
+                if gateway:
+                    close_gateway_session(gateway)
+                return terminal_result(host, "no_terminal", ok=False, message="No supported terminal emulator found.", command=redacted_command)
             subprocess.Popen(launcher)
     except subprocess.TimeoutExpired:
-        return terminal_result(host, "timeout", ok=False, message="Opening terminal timed out.", command=command)
+        cleanup_terminal_launch_script(launch_script)
+        if gateway:
+            close_gateway_session(gateway)
+        return terminal_result(host, "timeout", ok=False, message="Opening terminal timed out.", command=redacted_command)
     except OSError as exc:
-        return terminal_result(host, "open_error", ok=False, message=str(exc), command=command)
+        cleanup_terminal_launch_script(launch_script)
+        if gateway:
+            close_gateway_session(gateway)
+        return terminal_result(host, "open_error", ok=False, message=str(exc), command=redacted_command)
 
-    return terminal_result(host, "opened", ok=True, message=f"Opening SSH terminal for {alias}.", command=command)
+    message = f"Opening SSH terminal for {alias}."
+    if normalize_terminal_agent(agent) == "claude" and ai_mode == "proxy_tunnel" and remote_gateway_port:
+        message = (
+            f"Opening SSH terminal for {alias}. If SSH reports remote port forwarding failed, "
+            f"remote gateway port {remote_gateway_port} may already be in use on this server."
+        )
+    payload = terminal_result(host, "opened", ok=True, message=message, command=redacted_command)
+    if gateway and ccswitch_proxy_port and remote_gateway_port:
+        payload["ai_gateway"] = {
+            "local_gateway_port": gateway.listen_port,
+            "remote_gateway_port": remote_gateway_port,
+            "ccswitch_proxy_port": ccswitch_proxy_port,
+            "token_fingerprint": gateway.token_fingerprint,
+        }
+        cwd = normalized_remote_cwd(remote_cwd)
+        if cwd is not None:
+            payload["ai_gateway"]["remote_cwd"] = cwd
+    return payload
+
+
+def should_use_terminal_launch_script(command: str) -> bool:
+    return len(command) > 2000 or bool(AI_SESSION_TOKEN_RE.search(command))
+
+
+def write_terminal_launch_script(command: str) -> Path:
+    directory = Path(tempfile.mkdtemp(prefix="labgpu-ssh-"))
+    os.chmod(directory, 0o700)
+    script = directory / "open.sh"
+    script.write_text(
+        "#!/bin/sh\n"
+        'script_path="$0"\n'
+        'script_dir="$(dirname "$script_path")"\n'
+        'rm -f "$script_path"\n'
+        'rmdir "$script_dir" 2>/dev/null || true\n'
+        f"exec {command}\n",
+        encoding="utf-8",
+    )
+    os.chmod(script, 0o700)
+    return script
+
+
+def cleanup_terminal_launch_script(script: Path | None) -> None:
+    if not script:
+        return
+    try:
+        script.unlink(missing_ok=True)
+        script.parent.rmdir()
+    except OSError:
+        return
 
 
 def build_ssh_terminal_argv(
     alias: str,
     *,
+    host: SSHHost | None = None,
     proxy_port: str | int | None = None,
     local_proxy_port: str | int | None = None,
     remote_proxy_port: str | int | None = None,
     agent: str = "none",
+    ai_mode: str | None = None,
+    provider_name: str | None = None,
+    gpu_index: str | int | None = None,
+    remote_cwd: str | None = None,
+    local_gateway_port: str | int | None = None,
+    session_token: str | None = None,
 ) -> list[str]:
     if not is_safe_ssh_alias(alias):
         raise ValueError("Unsafe SSH alias.")
@@ -233,15 +347,84 @@ def build_ssh_terminal_argv(
         local_proxy_port=local_proxy_port,
         remote_proxy_port=remote_proxy_port,
     )
-    remote_command = terminal_remote_command(remote_port, normalized_agent, local_proxy_port=local_port)
-    argv = ["ssh"]
+    ssh_options, ssh_target = isolated_ssh_args(host) if host and local_port and remote_port else ([], alias)
+    remote_path_prefixes = ai_path_prefixes_for_host(host)
+    claude_command = normalized_remote_command_path(host.claude_command) if host else None
+    if normalized_agent == "claude" and ai_mode == "proxy_tunnel":
+        if not local_port or not remote_port:
+            raise ValueError("Claude Code Proxy Tunnel requires a CC Switch proxy port and remote gateway port.")
+        gateway_port = normalize_proxy_port(local_gateway_port)
+        if not gateway_port:
+            raise ValueError("Claude Code Proxy Tunnel requires a local AI gateway port.")
+        return build_ai_ssh_command(
+            EnterServerAIRequest(
+                server_alias=alias,
+                gpu_index=str(gpu_index or ""),
+                ai_app="claude",
+                provider_name=str(provider_name or ""),
+                ccswitch_proxy_port=local_port,
+                local_gateway_port=gateway_port,
+                remote_gateway_port=remote_port,
+                session_token=str(session_token or ""),
+                mode="proxy_tunnel",
+                remote_cwd=remote_cwd,
+                ssh_options=tuple(ssh_options),
+                ssh_target=ssh_target,
+                remote_path_prefixes=remote_path_prefixes,
+                claude_command=claude_command,
+            )
+        ).ssh_args
+    remote_command = terminal_remote_command(
+        remote_port,
+        normalized_agent,
+        local_proxy_port=local_port,
+        remote_cwd=remote_cwd,
+        remote_path_prefixes=remote_path_prefixes,
+        claude_command=claude_command,
+    )
+    argv = ["ssh", *ssh_options]
     if local_port and remote_port:
         argv.extend(["-o", "ExitOnForwardFailure=yes", "-R", f"127.0.0.1:{remote_port}:127.0.0.1:{local_port}"])
     if remote_command:
-        argv.extend(["-t", alias, remote_command])
+        argv.extend(["-t", ssh_target, remote_command])
     else:
-        argv.append(alias)
+        argv.append(ssh_target)
     return argv
+
+
+def isolated_ssh_args(host: SSHHost) -> tuple[list[str], str]:
+    """Build ssh argv options that preserve login config but ignore configured forwards."""
+    options: list[str] = ["-F", "/dev/null"]
+
+    def add_option(name: str, value: object) -> None:
+        text = str(value or "").strip()
+        if text and text.lower() != "none":
+            options.extend(["-o", f"{name}={text}"])
+
+    add_option("HostName", host.hostname)
+    add_option("User", host.user)
+    add_option("Port", host.port)
+    add_option("ProxyJump", host.proxyjump)
+    for identity_file in host.identity_files:
+        add_option("IdentityFile", identity_file)
+    for source_key, option_name in {
+        "proxycommand": "ProxyCommand",
+        "identityagent": "IdentityAgent",
+        "identitiesonly": "IdentitiesOnly",
+        "forwardagent": "ForwardAgent",
+        "serveraliveinterval": "ServerAliveInterval",
+        "serveralivecountmax": "ServerAliveCountMax",
+        "stricthostkeychecking": "StrictHostKeyChecking",
+        "userknownhostsfile": "UserKnownHostsFile",
+        "hostkeyalias": "HostKeyAlias",
+    }.items():
+        add_option(option_name, host.options.get(source_key))
+    return options, host.alias
+
+
+def ai_path_prefixes_for_host(host: SSHHost | None) -> tuple[str, ...]:
+    extra = list(getattr(host, "ai_extra_paths", []) or []) if host else []
+    return normalized_remote_path_prefixes([*DEFAULT_AI_PATH_PREFIXES, *extra])
 
 
 def normalize_terminal_agent(value: str | None) -> str:
@@ -299,27 +482,53 @@ def choose_remote_proxy_port() -> int:
     return random.randint(41000, 60999)
 
 
-def terminal_remote_command(proxy_port: int | None, agent: str, *, local_proxy_port: int | None = None) -> str:
+def terminal_remote_command(
+    proxy_port: int | None,
+    agent: str,
+    *,
+    local_proxy_port: int | None = None,
+    remote_cwd: str | None = None,
+    remote_path_prefixes: tuple[str, ...] | list[str] = DEFAULT_AI_PATH_PREFIXES,
+    claude_command: str | None = None,
+) -> str:
     parts: list[str] = []
+    cwd = normalized_remote_cwd(remote_cwd)
+    path_export = build_path_export(remote_path_prefixes)
+    if path_export and agent != "none":
+        parts.append(path_export)
+    command_path = normalized_remote_command_path(claude_command)
+    if command_path is not None:
+        parts.append(f"export LABGPU_AI_CLAUDE_COMMAND={shlex.quote(command_path)}")
+    if cwd is not None:
+        parts.append(f"export LABGPU_REMOTE_CWD={shlex.quote(cwd)}")
+        parts.append(f"cd {shlex.quote(cwd)} || exit 1")
     if proxy_port:
         proxy_url = f"http://127.0.0.1:{proxy_port}"
         parts.append(f"export HTTP_PROXY={shlex.quote(proxy_url)} HTTPS_PROXY={shlex.quote(proxy_url)}")
         local_text = f"127.0.0.1:{local_proxy_port or proxy_port}"
         parts.append(f"echo 'LabGPU proxy: remote HTTP_PROXY/HTTPS_PROXY -> local {local_text}'")
     if agent != "none":
-        parts.append(agent_launcher_command(agent))
-    elif proxy_port:
+        parts.append(agent_launcher_command(agent, remote_path_prefixes=remote_path_prefixes, claude_command=command_path))
+    elif proxy_port or cwd is not None:
         parts.append('if [ -n "${SHELL:-}" ]; then exec "$SHELL" -l; fi; exec /bin/sh')
     return "; ".join(parts)
 
 
-def agent_launcher_command(agent: str) -> str:
+def agent_launcher_command(agent: str, *, remote_path_prefixes: tuple[str, ...] | list[str] = DEFAULT_AI_PATH_PREFIXES, claude_command: str | None = None) -> str:
+    path_export = build_path_export(remote_path_prefixes)
+    claude_path = normalized_remote_command_path(claude_command)
+    claude_check = "command -v claude >/dev/null 2>&1 || command -v claude-code >/dev/null 2>&1"
+    claude_launch = "if command -v claude >/dev/null 2>&1; then claude; else claude-code; fi"
+    if claude_path is not None:
+        quoted = shlex.quote(claude_path)
+        claude_check = f"[ -x {quoted} ] || {claude_check}"
+        claude_launch = f"if [ -x {quoted} ]; then {quoted}; elif command -v claude >/dev/null 2>&1; then claude; else claude-code; fi"
     launchers = {
         "codex": ('command -v codex >/dev/null 2>&1', "codex", "Codex CLI was not found."),
         "claude": (
-            "command -v claude >/dev/null 2>&1 || command -v claude-code >/dev/null 2>&1",
-            'if command -v claude >/dev/null 2>&1; then claude; else claude-code; fi',
-            "Claude Code CLI was not found.",
+            claude_check,
+            claude_launch,
+            "claude not found in LabGPU launch PATH.",
         ),
         "gemini": ('command -v gemini >/dev/null 2>&1', "gemini", "Gemini CLI was not found."),
         "openclaw": ('command -v openclaw >/dev/null 2>&1', "openclaw agent", "OpenClaw CLI was not found."),
@@ -327,16 +536,31 @@ def agent_launcher_command(agent: str) -> str:
     if agent not in launchers:
         raise ValueError("Unsupported terminal launcher.")
     check, command, missing = launchers[agent]
+    prefix = f"{path_export}; " if path_export else ""
     script = f'if {check}; then {command}; else echo "{missing}"; fi; exec ${{SHELL:-/bin/sh}} -il'
-    return f"exec ${{SHELL:-/bin/sh}} -ilc {shlex.quote(script)}"
+    return f"exec ${{SHELL:-/bin/sh}} -ic {shlex.quote(prefix + script)}"
 
 
-def is_local_tcp_port_open(port: int) -> bool:
+def is_local_tcp_port_open(port: int) -> bool | None:
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=0.25):
             return True
+    except PermissionError:
+        return None
     except OSError:
         return False
+
+
+def close_gateway_session(gateway: AIGatewaySession) -> None:
+    try:
+        gateway.close()
+    finally:
+        if gateway in AI_GATEWAY_SESSIONS:
+            AI_GATEWAY_SESSIONS.remove(gateway)
+
+
+def redact_ai_session_tokens(command: str) -> str:
+    return AI_SESSION_TOKEN_RE.sub("labgpu-session-<redacted>", command)
 
 
 def linux_terminal_launcher(argv: list[str]) -> list[str] | None:
