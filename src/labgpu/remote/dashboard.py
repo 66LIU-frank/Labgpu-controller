@@ -293,6 +293,8 @@ class ServerHandler(BaseHTTPRequestHandler):
             self._html(render_servers_page(self._data(parsed.query)))
         elif parsed.path == "/alerts":
             self._html(render_alerts_page(self._data(parsed.query)))
+        elif parsed.path == "/groups":
+            self._html(render_groups_page())
         elif parsed.path == "/settings":
             self._html(render_settings_page(ssh_config=self.ssh_config))
         elif parsed.path == "/assistant":
@@ -761,10 +763,6 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
         f"<tr><td><code>{esc(entry.alias)}</code></td><td>{esc(entry.enabled)}</td><td>{esc(entry.group or '-')}</td><td>{esc(join_values(entry.tags))}</td><td>{esc(join_values(entry.disk_paths))}</td><td>{esc(entry.shared_account)}</td><td>{esc(entry.allow_stop_own_process)}</td></tr>"
         for entry in saved_entries
     ) or "<tr><td colspan='7' class='muted'>No saved LabGPU server inventory yet.</td></tr>"
-    group_rows = "".join(
-        f"<tr><td><label><input type='checkbox' name='aliases' value='{esc(entry.alias)}'> <code>{esc(entry.alias)}</code></label></td><td>{esc('enabled' if entry.enabled else 'disabled')}</td><td>{esc(entry.group or '-')}</td><td>{esc(join_values(entry.tags))}</td></tr>"
-        for entry in saved_entries
-    ) or "<tr><td colspan='4' class='muted'>Save servers first, then create groups here.</td></tr>"
     return page(
         "Settings",
         f"""
@@ -780,17 +778,8 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
           <table><tr><th>Alias</th><th>Enabled</th><th>Group</th><th>Tags</th><th>Disk paths</th><th>Shared account</th><th>Stop own process</th></tr>{server_rows}</table>
         </section>
         <section class="panel">
-          <h2>Server Groups</h2>
-          <p class="muted">Groups are optional. Type a group name, select existing saved servers, and save. Use groups when you want to view only AlphaLab, off-campus, H800, or any custom server set.</p>
-          <form id="settings-groups">
-            <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
-            <div class="filters">
-              <label>Group name <input name="group_name" placeholder="AlphaLab / off-campus / H800"></label>
-              <button class="button" type="submit">Save group</button>
-            </div>
-            <p class="muted">Leave the group name blank to remove the selected servers from their group.</p>
-            <table><tr><th>Select</th><th>Status</th><th>Current group</th><th>Tags</th></tr>{group_rows}</table>
-          </form>
+          <div class="section-head"><h2>Server Groups</h2><a href="/groups">Manage groups</a></div>
+          <p class="muted">Create groups after servers are saved. Groups let you switch Home, Train Now, My Training, Servers, Alerts, and Assistant between all servers and a custom pool.</p>
         </section>
         <section class="panel">
           <h2>Add Server</h2>
@@ -838,6 +827,46 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
           <h2>Interface</h2>
           <label class="inline-setting"><input type="checkbox" id="show-json-toggle"> Show JSON/API links</label>
           <p class="muted">Show raw JSON/API links in the top-right controls. Most users can leave this off.</p>
+        </section>
+        """,
+    )
+
+
+def render_groups_page() -> str:
+    config = load_config()
+    saved_entries = sorted(config.servers.values(), key=lambda entry: entry.alias.lower())
+    groups = sorted({entry.group.strip() for entry in saved_entries if entry.group.strip()})
+    group_links = "".join(f"<a class='group-chip' href='/?group={quote(group)}'>{esc(group)}</a>" for group in groups)
+    group_summary = group_links or "<span class='muted'>No groups yet.</span>"
+    group_rows = "".join(
+        f"<tr><td><label><input type='checkbox' name='aliases' value='{esc(entry.alias)}'> <code>{esc(entry.alias)}</code></label></td><td>{esc('enabled' if entry.enabled else 'disabled')}</td><td>{esc(entry.group or '-')}</td><td>{esc(join_values(entry.tags))}</td></tr>"
+        for entry in saved_entries
+    ) or "<tr><td colspan='4' class='muted'>Save servers in Settings first, then create groups here.</td></tr>"
+    return page(
+        "Server Groups",
+        f"""
+        <section class="toolbar">
+          <div>
+            <h1>Server Groups</h1>
+            <p>Create a group name, select existing saved servers, and switch views by group when you train.</p>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="section-head"><h2>Existing Groups</h2><a href="/settings">Add servers</a></div>
+          <div class="groupbar">{group_summary}</div>
+        </section>
+        <section class="panel">
+          <h2>Create or Update Group</h2>
+          <p class="muted">Example: create <code>AlphaLab</code>, select alpha servers, then use the group chips on Home, Train Now, My Training, Servers, Alerts, or Assistant.</p>
+          <form id="settings-groups">
+            <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
+            <div class="filters">
+              <label>Group name <input name="group_name" placeholder="AlphaLab / off-campus / H800"></label>
+              <button class="button" type="submit">Save group</button>
+            </div>
+            <p class="muted">Leave the group name blank to remove the selected servers from their group.</p>
+            <table><tr><th>Select</th><th>Status</th><th>Current group</th><th>Tags</th></tr>{group_rows}</table>
+          </form>
         </section>
         """,
     )
@@ -2011,7 +2040,7 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
     <select id="ssh-proxy">
       <option value="">No proxy</option>
       <option value="7890">Reverse local port 7890</option>
-      <option value="32210">Reverse local port 32210</option>
+      <option value="33210">Reverse local port 33210</option>
       <option value="custom">Custom local port</option>
     </select>
   </label>
@@ -2047,6 +2076,7 @@ const translations = {{
   "My Training": "我的训练",
   "Assistant": "助手",
   "Servers": "服务器",
+  "Groups": "分组",
   "Alerts": "告警",
   "Settings": "设置",
   "JSON": "JSON",
@@ -2108,6 +2138,13 @@ const translations = {{
   "Saved Servers": "已保存服务器",
   "These enabled servers are shown on LabGPU Home by default.": "这些启用的服务器会默认显示在 LabGPU Home。",
   "Server Groups": "服务器分组",
+  "Existing Groups": "已有分组",
+  "Create or Update Group": "创建或更新分组",
+  "Create a group name, select existing saved servers, and switch views by group when you train.": "创建分组名，勾选已保存的服务器，训练时就可以按分组切换视图。",
+  "Example: create ": "例如：创建 ",
+  "Add servers": "添加服务器",
+  "Manage groups": "管理分组",
+  "Create groups after servers are saved. Groups let you switch Home, Train Now, My Training, Servers, Alerts, and Assistant between all servers and a custom pool.": "服务器保存后再创建分组。分组可以让 Home、现在开跑、我的训练、服务器、告警和助手在全部服务器与自定义资源池之间切换。",
   "Groups are optional. Create a group by typing the same group name on the servers you want together, then use the group chips on Home, Train Now, My Training, Servers, Alerts, or Assistant.": "分组是可选的。给想放在一起的服务器填写同一个分组名，就可以在主页、现在开跑、我的训练、服务器、告警或助手页面用分组按钮查看。",
   "Groups are optional. Type a group name, select existing saved servers, and save. Use groups when you want to view only AlphaLab, off-campus, H800, or any custom server set.": "分组是可选的。输入分组名，勾选已经保存的服务器，然后保存。需要只看 AlphaLab、校外服务器、H800 或其他自定义服务器集合时使用分组。",
   "Group name": "分组名",
@@ -2214,7 +2251,7 @@ const translations = {{
   "Proxy tunnel": "代理隧道",
   "No proxy": "不使用代理",
   "Reverse local port 7890": "反向转发本地 7890",
-  "Reverse local port 32210": "反向转发本地 32210",
+  "Reverse local port 33210": "反向转发本地 33210",
   "Custom local port": "自定义本地端口",
   "After login hint": "登录后提示",
   "No hint": "不提示",
@@ -2760,6 +2797,7 @@ def render_nav(*, status: str = "", json_href: str = "/api/servers") -> str:
         <a href="/me">My Training</a>
         <a href="/assistant">Assistant</a>
         <a href="/servers">Servers</a>
+        <a href="/groups">Groups</a>
         <a href="/alerts">Alerts</a>
         <a href="/settings">Settings</a>
       </div>

@@ -190,10 +190,13 @@ Servers
   Resource details stay below the main workflow.
 
 Settings
-  Add/import SSH hosts, choose the homepage server set, edit server groups, and toggle JSON/API links.
+  Add/import SSH hosts, choose the homepage server set, and toggle JSON/API links.
+
+Groups
+  Create a group name, select existing saved servers, and view only that server pool.
 ```
 
-Server groups are optional. You can add servers first and create groups later in `Settings -> Server Groups`. Group chips appear on Home, Train Now, My Runs, Servers, Alerts, and Assistant, so you can switch between all servers and a specific pool like `AlphaLab`.
+Server groups are optional. You can add servers first and create groups later in `Groups`. Group chips appear on Home, Train Now, My Runs, Servers, Alerts, and Assistant, so you can switch between all servers and a specific pool like `AlphaLab`.
 
 The UI supports Chinese/English and light/dark mode. Pages load from local snapshots first, then refresh stale SSH data in the background, so moving between pages does not wait on slow SSH probes. The top-right cache label shows how old the current cached data is.
 

@@ -17,6 +17,7 @@ from labgpu.remote.dashboard import (
     render_assistant_page,
     render_available_gpus,
     render_gpus_page,
+    render_groups_page,
     render_host_card,
     render_index,
     render_me_page,
@@ -183,13 +184,34 @@ class DashboardPagesTest(unittest.TestCase):
             self.assertIn("Import From SSH Config", html)
             self.assertIn("Add Server", html)
             self.assertIn("settings-add-server", html)
-            self.assertIn("settings-groups", html)
+            self.assertIn("Manage groups", html)
             self.assertIn("Server Groups", html)
             self.assertIn("Group", html)
             self.assertIn("Write to SSH config", html)
             self.assertIn("alpha_liu", html)
             self.assertIn("value='alpha_liu' checked", html)
             self.assertIn("Save selected hosts", html)
+
+    def test_groups_page_assigns_saved_servers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_home = os.environ.get("LABGPU_HOME")
+            os.environ["LABGPU_HOME"] = tmp
+            config = LabGPUConfig()
+            config.servers["alpha_liu"] = ServerEntry(name="alpha_liu", alias="alpha_liu", group="AlphaLab", tags=["A100"])
+            config.servers["Song-1"] = ServerEntry(name="Song-1", alias="Song-1", tags=["4090"])
+            write_config(config)
+            try:
+                html = render_groups_page()
+            finally:
+                if old_home is None:
+                    os.environ.pop("LABGPU_HOME", None)
+                else:
+                    os.environ["LABGPU_HOME"] = old_home
+            self.assertIn("Existing Groups", html)
+            self.assertIn("AlphaLab", html)
+            self.assertIn("settings-groups", html)
+            self.assertIn("Group name", html)
+            self.assertIn("Song-1", html)
 
     def test_cached_ui_collection_does_not_probe_before_rendering(self):
         with tempfile.TemporaryDirectory() as tmp:
