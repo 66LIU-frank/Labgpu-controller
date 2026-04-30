@@ -212,4 +212,4 @@ During the smoke test, confirm that:
 - the remote token starts with `labgpu-session-`, not `sk-`
 - unauthenticated remote gateway requests return `401`
 - Claude Code streaming output is incremental
-- Last Launched AI Sessions does not claim that a tunnel is online
+- Recent AI Sessions does not claim that a tunnel is online

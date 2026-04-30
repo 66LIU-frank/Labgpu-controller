@@ -753,12 +753,17 @@ def render_index(data: dict[str, object]) -> str:
         "demo": "Showing built-in demo servers.",
     }.get(mode, "Showing SSH hosts from your config. Save selected hosts in Settings to make the home page faster.")
     return page(
-        "LabGPU Home",
+        "Home",
         f"""
         <section class="toolbar">
           <div>
-            <h1>LabGPU Home</h1>
+            <h1>Home</h1>
             <p>Personal GPU workspace for students using shared SSH servers.</p>
+          </div>
+          <div class="actions">
+            <a class="button" href="/assistant">Assistant</a>
+            <a class="button" href="/alerts">Problems</a>
+            <a class="button" href="/groups">Groups</a>
           </div>
         </section>
         {render_group_bar(data, path='/')}
@@ -774,21 +779,27 @@ def render_index(data: dict[str, object]) -> str:
 
 
 def render_gpus_page(data: dict[str, object]) -> str:
+    hosts = data.get("hosts") or []
     overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
     ui = data.get("ui") if isinstance(data.get("ui"), dict) else {}
     return page(
-        "Train Now",
+        "Train",
         f"""
         <section class="toolbar">
           <div>
-            <h1>Train Now</h1>
+            <h1>Train</h1>
             <p>Rank GPUs across SSH hosts by GPU availability, free VRAM, model, load, and tags.</p>
+          </div>
+          <div class="actions">
+            <a class="button" href="{esc(page_url('/me', ui))}">My Training</a>
           </div>
         </section>
         {render_group_bar(data, path='/gpus')}
         {render_filters(ui, kind='gpus')}
         {render_gpu_watch_panel(ui)}
         {render_gpu_finder(overview, ui)}
+        {render_my_training(training_items(hosts, overview), ui=ui, title='My Runs', limit=6, view_all=page_url('/me', ui))}
+        {render_my_processes(overview.get('my_process_items') if isinstance(overview, dict) else [], ui=ui, title='My GPU Processes', limit=8, view_all=page_url('/me', ui))}
         """,
         status=render_data_status(data),
     )
@@ -828,6 +839,10 @@ def render_servers_page(data: dict[str, object]) -> str:
           <div>
             <h1>Servers</h1>
             <p>Configured SSH GPU servers, health, disks, and free/busy GPUs.</p>
+          </div>
+          <div class="actions">
+            <a class="button" href="/groups">Groups</a>
+            <a class="button" href="{esc(page_url('/alerts', ui))}">Problems</a>
           </div>
         </section>
         {render_group_bar(data, path='/servers')}
@@ -880,6 +895,9 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
           <div>
             <h1>Settings</h1>
             <p>Choose which SSH GPU servers appear in LabGPU Home.</p>
+          </div>
+          <div class="actions">
+            <a class="button" href="/groups">Manage Groups</a>
           </div>
         </section>
         <section class="panel">
@@ -1023,39 +1041,35 @@ def render_providers_page() -> str:
     detected_class = "ok" if detected else "warning"
     detected_label = "detected" if detected else "not detected"
     return page(
-        "AI Providers",
+        "AI Sessions",
         f"""
         <section class="toolbar">
           <div>
-            <h1>AI Providers</h1>
-            <p>Provider state for remote AI CLI sessions. LabGPU reads names, current selections, and proxy ports only.</p>
+            <h1>AI Sessions</h1>
+            <p>Remote Claude Code sessions through the current local CC Switch provider.</p>
           </div>
           <span class="badge {detected_class}">CC Switch {detected_label}</span>
         </section>
         <section class="panel">
-          <div class="section-head"><h2>Remote Session Modes</h2><a href="/gpus">Open from Train Now</a></div>
+          <div class="section-head"><h2>Start a Session</h2><a href="/gpus">Open from Train</a></div>
           <div class="grid compact">
             <div class="card">
-              <div class="card-head"><h3>Proxy Tunnel</h3><span class="badge ok">recommended</span></div>
-              <p class="muted">Open SSH with a reverse tunnel to a local proxy. API keys stay on this laptop or in the local provider tool.</p>
+              <div class="card-head"><h3>Claude Code</h3><span class="badge ok">ready</span></div>
+              <p class="muted">Use Enter Server from a GPU or server card. LabGPU opens a session-scoped proxy tunnel; real API keys stay local.</p>
             </div>
             <div class="card">
-              <div class="card-head"><h3>Remote Write</h3><span class="badge warning">advanced</span></div>
-              <p class="muted">Writing provider keys to remote <code>~/.claude</code>, <code>~/.codex</code>, or <code>~/.gemini</code> is intentionally not a default Alpha workflow.</p>
+              <div class="card-head"><h3>Remote Write</h3><span class="badge warning">disabled</span></div>
+              <p class="muted">Remote config writes stay disabled in Alpha. Codex and Gemini session launchers are kept for later.</p>
             </div>
           </div>
         </section>
         <section class="panel">
-          <div class="section-head"><h2>CC Switch Providers</h2><a href="/api/integrations/ccswitch">JSON</a></div>
-          <p class="muted">{esc(summary.get("message") or "")}</p>
+          <div class="section-head"><h2>Provider Status</h2><a class="json-control" href="/api/integrations/ccswitch">JSON</a></div>
+          <p class="muted">{esc(summary.get("message") or "")} You can switch existing CC Switch providers here. Add new providers in CC Switch for now so LabGPU never handles provider API keys.</p>
           <div class="grid compact">{cards}</div>
         </section>
         <section class="panel">
-          <h2>Open A Remote AI Session</h2>
-          <p class="muted">Use any server or GPU card's Enter Server action, choose Claude Code and Proxy Tunnel, then open the terminal. LabGPU uses the current CC Switch Claude provider and opens an SSH tunnel; it does not copy API keys to the server.</p>
-        </section>
-        <section class="panel">
-          <h2>Last Launched AI Sessions</h2>
+          <h2>Recent AI Sessions</h2>
           <p class="muted">Browser-local launch history only. It does not prove the terminal or tunnel is still alive.</p>
           <table><tr><th>Server</th><th>Folder</th><th>App / Provider</th><th>Proxy Tunnel</th><th>GPU</th><th>Started</th></tr><tbody id="ai-session-rows"><tr><td colspan="6" class="muted">No AI sessions launched from this browser yet.</td></tr></tbody></table>
         </section>
@@ -1076,6 +1090,23 @@ def render_provider_card(summary: dict[str, object], app: str, label: str) -> st
         for item in choices
         if isinstance(item, dict)
     ) or "<tr><td colspan='2' class='muted'>No providers found.</td></tr>"
+    switch_options = "".join(
+        f"<option value='{esc(item.get('id') or '')}' {'selected' if item.get('current') else ''}>{esc(item.get('name') or '-')}</option>"
+        for item in choices
+        if isinstance(item, dict) and item.get("id") and item.get("name")
+    )
+    switch_form = (
+        f"""
+        <form class="ccswitch-switch-form" data-app="{esc(app)}">
+          <input type="hidden" name="action_token" value="{esc(ServerHandler.action_token)}">
+          <label>Switch provider <select name="provider_id">{switch_options}</select></label>
+          <button class="button" type="submit">Switch</button>
+          <span class="muted ccswitch-switch-result"></span>
+        </form>
+        """
+        if switch_options
+        else "<p class='muted'>Add providers in CC Switch first. LabGPU will show them here after refresh.</p>"
+    )
     port = proxy_config.get("listen_port") if isinstance(proxy_config, dict) else None
     enabled = bool(proxy_config.get("enabled") or proxy_config.get("proxy_enabled")) if isinstance(proxy_config, dict) else False
     listening = proxy_config.get("listening") if isinstance(proxy_config, dict) else None
@@ -1097,6 +1128,7 @@ def render_provider_card(summary: dict[str, object], app: str, label: str) -> st
         <span><span>TCP check</span> <code>{esc(tcp_state)}</code></span>
         <span><span>App id</span> <code>{esc(app)}</code></span>
       </div>
+      {switch_form}
       <table><tr><th>Provider</th><th>Status</th></tr>{choice_rows}</table>
     </article>
     """
@@ -2212,6 +2244,9 @@ dialog fieldset label{{flex-direction:row;align-items:center;color:var(--text);f
 .filters{{display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px}}
 .filters label{{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}}
 .filters input,.filters select{{border:1px solid var(--border);border-radius:6px;padding:7px 8px;min-width:150px;background:var(--button);color:var(--text)}}
+.ccswitch-switch-form{{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin:10px 0}}
+.ccswitch-switch-form label{{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}}
+.ccswitch-switch-form select{{border:1px solid var(--border);border-radius:6px;padding:7px 8px;min-width:180px;background:var(--button);color:var(--text)}}
 .inline-setting{{display:flex;gap:8px;align-items:center;margin-top:8px}}
 details{{margin-top:10px}}
 summary{{cursor:pointer;color:var(--link);font-weight:600}}
@@ -2283,7 +2318,7 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
 </dialog>
 <dialog id="ssh-modal">
   <h2>Enter Server</h2>
-  <p class="muted">Open a server shell with a local AI provider tunnel. Alpha supports Claude Code through the current CC Switch provider.</p>
+  <p class="muted">Open a server shell in the selected folder with Claude Code routed through the local CC Switch provider.</p>
   <table>
     <tr><th>Server</th><td id="ssh-modal-server"></td></tr>
     <tr><th>GPU</th><td><select id="ssh-gpu"><option value="">none</option></select></td></tr>
@@ -2294,21 +2329,24 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
     </td></tr>
   </table>
   <input type="hidden" id="ssh-proxy" value="ccswitch">
-  <fieldset>
-    <legend>AI App</legend>
-    <label><input type="radio" name="ssh-agent" value="claude" checked> Claude Code</label>
-    <label><input type="radio" name="ssh-agent" value="codex" disabled> Codex <span class="muted">coming soon</span></label>
-    <label><input type="radio" name="ssh-agent" value="gemini" disabled> Gemini <span class="muted">coming soon</span></label>
-  </fieldset>
-  <fieldset>
-    <legend>Mode</legend>
-    <label><input type="radio" name="ssh-ai-mode" value="proxy_tunnel" checked> Proxy Tunnel <span class="muted">recommended, secrets stay local</span></label>
-    <label><input type="radio" name="ssh-ai-mode" value="remote_write" disabled> Remote Write <span class="muted">advanced, coming soon</span></label>
-  </fieldset>
   <p class="muted" id="ssh-provider-summary">Using current CC Switch Claude provider: -</p>
   <p class="muted" id="ssh-proxy-summary">Proxy tunnel: -</p>
   <p class="muted" id="ssh-ccswitch-status">Checking CC Switch...</p>
-  <p class="muted" id="ssh-modal-hint">This flow exports <code>ANTHROPIC_BASE_URL</code> to a per-session gateway tunnel and uses a temporary <code>ANTHROPIC_API_KEY</code> session token. Real provider keys stay local. If SSH exits with remote forwarding failure, the selected remote gateway port may already be in use on that server.</p>
+  <details>
+    <summary>Advanced session options</summary>
+    <fieldset>
+      <legend>AI App</legend>
+      <label><input type="radio" name="ssh-agent" value="claude" checked> Claude Code</label>
+      <label><input type="radio" name="ssh-agent" value="codex" disabled> Codex <span class="muted">coming soon</span></label>
+      <label><input type="radio" name="ssh-agent" value="gemini" disabled> Gemini <span class="muted">coming soon</span></label>
+    </fieldset>
+    <fieldset>
+      <legend>Mode</legend>
+      <label><input type="radio" name="ssh-ai-mode" value="proxy_tunnel" checked> Proxy Tunnel <span class="muted">recommended, secrets stay local</span></label>
+      <label><input type="radio" name="ssh-ai-mode" value="remote_write" disabled> Remote Write <span class="muted">advanced, coming soon</span></label>
+    </fieldset>
+    <p class="muted" id="ssh-modal-hint">This flow exports <code>ANTHROPIC_BASE_URL</code> to a per-session gateway tunnel and uses a temporary <code>ANTHROPIC_API_KEY</code> session token. Real provider keys stay local. If SSH exits with remote forwarding failure, the selected remote gateway port may already be in use on that server.</p>
+  </details>
   <p id="ssh-modal-result" class="muted"></p>
   <div class="modal-actions">
     <button class="button" id="ssh-modal-cancel" type="button">Cancel</button>
@@ -2327,9 +2365,20 @@ const languageButton = document.getElementById("language-toggle");
 const jsonToggle = document.getElementById("show-json-toggle");
 const translations = {{
   "Overview": "总览",
+  "Home": "主页",
+  "Train": "训练",
   "Train Now": "现在开跑",
   "My Training": "我的训练",
   "Assistant": "助手",
+  "AI Sessions": "AI 会话",
+  "Start a Session": "开始会话",
+  "Provider Status": "Provider 状态",
+  "Recent AI Sessions": "最近 AI 会话",
+  "Advanced session options": "高级会话选项",
+  "Open from Train": "从训练页打开",
+  "Manage Groups": "管理分组",
+  "Switch provider": "切换 provider",
+  "Switch": "切换",
   "Servers": "服务器",
   "Groups": "分组",
   "Alerts": "告警",
@@ -2969,6 +3018,34 @@ document.addEventListener("click", async (event) => {{
   dialog.showModal();
 }});
 renderAiSessions();
+document.querySelectorAll(".ccswitch-switch-form").forEach((form) => {{
+  form.addEventListener("submit", async (event) => {{
+    event.preventDefault();
+    const result = form.querySelector(".ccswitch-switch-result");
+    const select = form.querySelector('select[name="provider_id"]');
+    const button = form.querySelector("button");
+    const providerId = select ? select.value : "";
+    if (!providerId) {{
+      if (result) result.textContent = "Choose a provider first.";
+      return;
+    }}
+    if (button) button.disabled = true;
+    if (result) result.textContent = "Switching...";
+    const response = await fetch("/api/integrations/ccswitch/switch", {{
+      method: "POST",
+      headers: {{"X-LabGPU-Action-Token": actionToken, "Content-Type": "application/json"}},
+      body: JSON.stringify({{app: form.dataset.app || "", provider_id: providerId}})
+    }});
+    const payload = await response.json().catch(() => ({{ok: false, message: "Switching provider failed."}}));
+    if (button) button.disabled = false;
+    if (payload.ok) {{
+      if (result) result.textContent = "Switched. Refreshing...";
+      window.location.reload();
+    }} else {{
+      if (result) result.textContent = payload.message || "Switching provider failed.";
+    }}
+  }});
+}});
 document.querySelectorAll("[data-alert-action]").forEach((button) => {{
   button.addEventListener("click", async () => {{
     const key = button.dataset.alertKey;
@@ -3290,14 +3367,10 @@ def render_nav(*, status: str = "", json_href: str = "/api/servers") -> str:
     return f"""
     <nav class="topbar">
       <div class="topnav" aria-label="Primary navigation">
-        <a href="/">Overview</a>
-        <a href="/gpus">Train Now</a>
-        <a href="/me">My Training</a>
-        <a href="/assistant">Assistant</a>
-        <a href="/providers">AI Providers</a>
+        <a href="/">Home</a>
+        <a href="/gpus">Train</a>
         <a href="/servers">Servers</a>
-        <a href="/groups">Groups</a>
-        <a href="/alerts">Alerts</a>
+        <a href="/providers">AI Sessions</a>
         <a href="/settings">Settings</a>
       </div>
       <div class="top-controls" aria-label="Display and refresh controls">
