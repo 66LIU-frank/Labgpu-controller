@@ -17,6 +17,7 @@ from labgpu.remote.actions import open_ssh_terminal, stop_process
 from labgpu.remote.alerts import all_alert_records, apply_alert_state, set_alert_status
 from labgpu.remote.assistant import assistant_reply
 from labgpu.remote.cache import read_server_cache, write_server_cache
+from labgpu.remote.ccswitch import read_ccswitch_summary
 from labgpu.remote.demo import fake_lab_data
 from labgpu.remote.history import append_history, apply_history_evidence, read_history
 from labgpu.remote.inventory import load_inventory
@@ -300,6 +301,8 @@ class ServerHandler(BaseHTTPRequestHandler):
             self._json(self._data(parsed.query))
         elif parsed.path == "/api/servers":
             self._json(self._data(parsed.query))
+        elif parsed.path == "/api/integrations/ccswitch":
+            self._json(read_ccswitch_summary())
         elif parsed.path.startswith("/servers/"):
             alias = unquote(parsed.path.removeprefix("/servers/")).strip("/")
             self._html(render_detail(self._data_for_alias(alias, parsed.query)))
@@ -442,8 +445,11 @@ class ServerHandler(BaseHTTPRequestHandler):
         if alias not in known_ssh_aliases(self.ssh_config):
             self.send_error(HTTPStatus.NOT_FOUND, "unknown SSH alias")
             return
+        payload = self._read_body_payload()
+        proxy_port = first_value(payload.get("proxy_port"))
+        agent = str(first_value(payload.get("agent")) or "none")
         host = resolve_ssh_host(load_inventory(ssh_config=self.ssh_config, names=[alias])[0])
-        result = open_ssh_terminal(host)
+        result = open_ssh_terminal(host, proxy_port=proxy_port, agent=agent)
         self._json(result, status=HTTPStatus.OK if result.get("ok") else HTTPStatus.CONFLICT)
 
     def _alert_action(self, key: str, action: str) -> None:
@@ -1910,6 +1916,8 @@ a{{color:inherit}} code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace
 html.show-json .json-control{{display:inline-flex!important}}
 dialog{{border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);max-width:min(560px,calc(100vw - 32px));padding:18px}}
 dialog::backdrop{{background:rgba(0,0,0,.45)}}
+dialog label{{display:flex;flex-direction:column;gap:4px;margin:10px 0;color:var(--muted);font-size:12px}}
+dialog select,dialog input{{border:1px solid var(--border);border-radius:6px;padding:8px;background:var(--button);color:var(--text);font:inherit}}
 .modal-actions{{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap}}
 .toolbar{{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:18px}}
 .actions{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
@@ -1988,10 +1996,45 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
     <button class="button danger-strong" id="modal-force" type="button" hidden>Force process kill</button>
   </div>
 </dialog>
+<dialog id="ssh-modal">
+  <h2>Open SSH terminal</h2>
+  <p class="muted">Choose a local proxy tunnel and optional AI CLI. LabGPU opens a normal SSH terminal with safe fixed options.</p>
+  <table>
+    <tr><th>Server</th><td id="ssh-modal-server"></td></tr>
+    <tr><th>CC Switch</th><td id="ssh-ccswitch-status" class="muted">Checking...</td></tr>
+  </table>
+  <label>Proxy tunnel
+    <select id="ssh-proxy">
+      <option value="">No proxy</option>
+      <option value="7890">Reverse local port 7890</option>
+      <option value="32210">Reverse local port 32210</option>
+      <option value="ccswitch">CC Switch local proxy</option>
+      <option value="custom">Custom local port</option>
+    </select>
+  </label>
+  <label id="ssh-custom-proxy-wrap" hidden>Custom local port
+    <input id="ssh-custom-proxy" inputmode="numeric" placeholder="15721">
+  </label>
+  <label>Start after SSH
+    <select id="ssh-agent">
+      <option value="none">Shell only</option>
+      <option value="codex">Codex CLI</option>
+      <option value="claude">Claude Code</option>
+    </select>
+  </label>
+  <p class="muted" id="ssh-modal-hint">Provider switching in CC Switch is read-only for now. Pick the provider in CC Switch first, then jump from LabGPU.</p>
+  <p id="ssh-modal-result" class="muted"></p>
+  <div class="modal-actions">
+    <button class="button" id="ssh-modal-cancel" type="button">Cancel</button>
+    <button class="button" id="ssh-modal-open" type="button">Open SSH terminal</button>
+  </div>
+</dialog>
 <script>
 let paused = false;
 const actionToken = "{esc(ServerHandler.action_token)}";
 let selectedStopButton = null;
+let selectedSshButton = null;
+let ccswitchSummary = null;
 const themeButton = document.getElementById("theme-toggle");
 const languageButton = document.getElementById("language-toggle");
 const jsonToggle = document.getElementById("show-json-toggle");
@@ -2158,6 +2201,19 @@ const translations = {{
   "Open SSH terminal": "打开 SSH 终端",
   "Opening terminal...": "正在打开终端...",
   "Terminal opened": "终端已打开",
+  "Choose a local proxy tunnel and optional AI CLI. LabGPU opens a normal SSH terminal with safe fixed options.": "选择本地代理隧道和可选 AI CLI。LabGPU 会用固定安全选项打开普通 SSH 终端。",
+  "Proxy tunnel": "代理隧道",
+  "No proxy": "不使用代理",
+  "Reverse local port 7890": "反向转发本地 7890",
+  "Reverse local port 32210": "反向转发本地 32210",
+  "CC Switch local proxy": "CC Switch 本地代理",
+  "Custom local port": "自定义本地端口",
+  "Start after SSH": "SSH 后启动",
+  "Shell only": "只打开 Shell",
+  "Codex CLI": "Codex CLI",
+  "Claude Code": "Claude Code",
+  "Provider switching in CC Switch is read-only for now. Pick the provider in CC Switch first, then jump from LabGPU.": "目前 LabGPU 只读取 CC Switch 状态，不切换 provider。请先在 CC Switch 里选好 provider，再从 LabGPU 跳转。",
+  "Checking...": "检查中...",
   "Copy command": "复制命令",
   "Copy adopt": "复制接管命令",
   "Copy owner message": "复制询问消息",
@@ -2316,26 +2372,87 @@ document.addEventListener("click", (event) => {{
   if (!button) return;
   copyTextFromButton(button);
 }});
-document.addEventListener("click", async (event) => {{
-  const target = event.target;
-  const button = target && target.closest ? target.closest("[data-open-ssh]") : null;
-  if (!button) return;
+function ccswitchProxyPort() {{
+  const proxy = ccswitchSummary && ccswitchSummary.proxy ? ccswitchSummary.proxy : {{}};
+  const codex = proxy.codex || proxy.claude || proxy.gemini;
+  return codex && codex.listen_port ? String(codex.listen_port) : "15721";
+}}
+function describeCcswitch(summary) {{
+  if (!summary || !summary.available) return summary && summary.message ? summary.message : "CC Switch not detected.";
+  const providers = summary.providers || {{}};
+  const proxy = summary.proxy || {{}};
+  const codex = providers.codex && providers.codex.current ? `Codex: ${{providers.codex.current}}` : "Codex: -";
+  const claude = providers.claude && providers.claude.current ? `Claude: ${{providers.claude.current}}` : "Claude: -";
+  const proxyConfig = proxy.codex || proxy.claude || proxy.gemini;
+  const proxyText = proxyConfig && proxyConfig.listen_port ? `proxy ${{proxyConfig.listen_address || "127.0.0.1"}}:${{proxyConfig.listen_port}}${{proxyConfig.enabled || proxyConfig.proxy_enabled ? "" : " (disabled)"}}` : "proxy: -";
+  return `${{codex}} · ${{claude}} · ${{proxyText}}`;
+}}
+async function loadCcswitchSummary() {{
+  const status = document.getElementById("ssh-ccswitch-status");
+  try {{
+    const response = await fetch("/api/integrations/ccswitch");
+    ccswitchSummary = await response.json();
+  }} catch (error) {{
+    ccswitchSummary = {{available: false, message: "CC Switch not detected."}};
+  }}
+  if (status) status.textContent = describeCcswitch(ccswitchSummary);
+  return ccswitchSummary;
+}}
+function selectedProxyPort() {{
+  const proxySelect = document.getElementById("ssh-proxy");
+  const customInput = document.getElementById("ssh-custom-proxy");
+  const value = proxySelect ? proxySelect.value : "";
+  if (!value) return "";
+  if (value === "ccswitch") return ccswitchProxyPort();
+  if (value === "custom") return customInput ? customInput.value.trim() : "";
+  return value;
+}}
+function updateSshProxyFields() {{
+  const proxySelect = document.getElementById("ssh-proxy");
+  const customWrap = document.getElementById("ssh-custom-proxy-wrap");
+  if (customWrap && proxySelect) customWrap.hidden = proxySelect.value !== "custom";
+}}
+async function runOpenSsh(button) {{
   const original = button.textContent || "Open SSH terminal";
   button.textContent = translateText("Opening terminal...", currentLanguage());
   button.disabled = true;
+  const agentSelect = document.getElementById("ssh-agent");
   const response = await fetch(`/api/servers/${{encodeURIComponent(button.dataset.openSsh || "")}}/open-ssh`, {{
     method: "POST",
-    headers: {{"X-LabGPU-Action-Token": actionToken}}
+    headers: {{"X-LabGPU-Action-Token": actionToken, "Content-Type": "application/json"}},
+    body: JSON.stringify({{proxy_port: selectedProxyPort(), agent: agentSelect ? agentSelect.value : "none"}})
   }});
   const payload = await response.json().catch(() => ({{ok: false, message: "Opening terminal failed."}}));
   button.disabled = false;
   if (payload.ok) {{
     button.textContent = translateText("Terminal opened", currentLanguage());
     setTimeout(() => button.textContent = original, 1400);
+    const dialog = document.getElementById("ssh-modal");
+    if (dialog && dialog.open) dialog.close();
   }} else {{
     button.textContent = original;
-    window.alert(payload.message || "Opening terminal failed.");
+    const result = document.getElementById("ssh-modal-result");
+    if (result) result.textContent = payload.message || "Opening terminal failed.";
+    else window.alert(payload.message || "Opening terminal failed.");
   }}
+}}
+document.addEventListener("click", async (event) => {{
+  const target = event.target;
+  const button = target && target.closest ? target.closest("[data-open-ssh]") : null;
+  if (!button) return;
+  selectedSshButton = button;
+  const dialog = document.getElementById("ssh-modal");
+  if (!dialog || !dialog.showModal) {{
+    await runOpenSsh(button);
+    return;
+  }}
+  const serverCell = document.getElementById("ssh-modal-server");
+  const result = document.getElementById("ssh-modal-result");
+  if (serverCell) serverCell.textContent = button.dataset.openSsh || "";
+  if (result) result.textContent = "";
+  updateSshProxyFields();
+  dialog.showModal();
+  await loadCcswitchSummary();
 }});
 document.querySelectorAll("[data-alert-action]").forEach((button) => {{
   button.addEventListener("click", async () => {{
@@ -2558,6 +2675,14 @@ const modalStop = document.getElementById("modal-stop");
 if (modalStop) modalStop.addEventListener("click", () => runStop(false));
 const modalForce = document.getElementById("modal-force");
 if (modalForce) modalForce.addEventListener("click", () => runStop(true));
+const sshModalCancel = document.getElementById("ssh-modal-cancel");
+if (sshModalCancel) sshModalCancel.addEventListener("click", () => document.getElementById("ssh-modal").close());
+const sshModalOpen = document.getElementById("ssh-modal-open");
+if (sshModalOpen) sshModalOpen.addEventListener("click", async () => {{
+  if (selectedSshButton) await runOpenSsh(selectedSshButton);
+}});
+const sshProxySelect = document.getElementById("ssh-proxy");
+if (sshProxySelect) sshProxySelect.addEventListener("change", updateSshProxyFields);
 function fillStopModal(button) {{
   const pairs = {{
     "modal-server": button.dataset.server || "-",

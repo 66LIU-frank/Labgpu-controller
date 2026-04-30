@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -35,6 +36,7 @@ fi
 """
 
 SAFE_SSH_ALIAS_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
+SUPPORTED_TERMINAL_AGENTS = {"none", "codex", "claude"}
 
 
 def stop_process(
@@ -137,7 +139,7 @@ def finish(
     return payload
 
 
-def open_ssh_terminal(host: SSHHost) -> dict[str, Any]:
+def open_ssh_terminal(host: SSHHost, *, proxy_port: str | int | None = None, agent: str = "none") -> dict[str, Any]:
     alias = host.alias
     if not is_safe_ssh_alias(alias):
         return {
@@ -146,7 +148,16 @@ def open_ssh_terminal(host: SSHHost) -> dict[str, Any]:
             "message": "Refusing to open an SSH terminal for an unsafe alias.",
             "server": alias,
         }
-    command = f"ssh {alias}"
+    try:
+        argv = build_ssh_terminal_argv(alias, proxy_port=proxy_port, agent=agent)
+    except ValueError as exc:
+        return {
+            "ok": False,
+            "result": "invalid_terminal_options",
+            "message": str(exc),
+            "server": alias,
+        }
+    command = shlex.join(argv)
     try:
         if sys.platform == "darwin":
             result = subprocess.run(
@@ -165,9 +176,9 @@ def open_ssh_terminal(host: SSHHost) -> dict[str, Any]:
             if result.returncode != 0:
                 return terminal_result(host, "open_failed", ok=False, message=result.stderr.strip() or "Opening Terminal failed.", command=command)
         elif sys.platform.startswith("win"):
-            subprocess.Popen(["cmd", "/c", "start", "LabGPU SSH", "cmd", "/k", "ssh", alias])
+            subprocess.Popen(["cmd", "/c", "start", "LabGPU SSH", "cmd", "/k", *argv])
         else:
-            launcher = linux_terminal_launcher(alias)
+            launcher = linux_terminal_launcher(argv)
             if not launcher:
                 return terminal_result(host, "no_terminal", ok=False, message="No supported terminal emulator found.", command=command)
             subprocess.Popen(launcher)
@@ -179,12 +190,68 @@ def open_ssh_terminal(host: SSHHost) -> dict[str, Any]:
     return terminal_result(host, "opened", ok=True, message=f"Opening SSH terminal for {alias}.", command=command)
 
 
-def linux_terminal_launcher(alias: str) -> list[str] | None:
+def build_ssh_terminal_argv(alias: str, *, proxy_port: str | int | None = None, agent: str = "none") -> list[str]:
+    if not is_safe_ssh_alias(alias):
+        raise ValueError("Unsafe SSH alias.")
+    normalized_agent = normalize_terminal_agent(agent)
+    port = normalize_proxy_port(proxy_port)
+    remote_command = terminal_remote_command(port, normalized_agent)
+    argv = ["ssh"]
+    if port:
+        argv.extend(["-R", f"127.0.0.1:{port}:127.0.0.1:{port}"])
+    if remote_command:
+        argv.extend(["-t", alias, remote_command])
+    else:
+        argv.append(alias)
+    return argv
+
+
+def normalize_terminal_agent(value: str | None) -> str:
+    agent = str(value or "none").strip().lower()
+    if agent == "claudecode":
+        agent = "claude"
+    if agent not in SUPPORTED_TERMINAL_AGENTS:
+        raise ValueError("Unsupported terminal launcher.")
+    return agent
+
+
+def normalize_proxy_port(value: str | int | None) -> int | None:
+    if value in {None, "", "none", "false", "0"}:
+        return None
+    try:
+        port = int(str(value).strip())
+    except ValueError as exc:
+        raise ValueError("Proxy port must be a number.") from exc
+    if port < 1 or port > 65535:
+        raise ValueError("Proxy port must be between 1 and 65535.")
+    return port
+
+
+def terminal_remote_command(proxy_port: int | None, agent: str) -> str:
+    parts: list[str] = []
+    if proxy_port:
+        proxy_url = f"http://127.0.0.1:{proxy_port}"
+        socks_url = f"socks5h://127.0.0.1:{proxy_port}"
+        parts.append(f"export HTTP_PROXY={shlex.quote(proxy_url)} HTTPS_PROXY={shlex.quote(proxy_url)} ALL_PROXY={shlex.quote(socks_url)}")
+        parts.append(f"echo 'LabGPU proxy: remote HTTP_PROXY/HTTPS_PROXY -> local 127.0.0.1:{proxy_port}'")
+    if agent == "codex":
+        parts.append("if command -v codex >/dev/null 2>&1; then exec codex; fi")
+        parts.append("echo 'Codex CLI was not found on this server. Opening a shell instead.'")
+    elif agent == "claude":
+        parts.append("if command -v claude >/dev/null 2>&1; then exec claude; fi")
+        parts.append("if command -v claude-code >/dev/null 2>&1; then exec claude-code; fi")
+        parts.append("echo 'Claude Code CLI was not found on this server. Opening a shell instead.'")
+    if proxy_port or agent != "none":
+        parts.append('exec "${SHELL:-/bin/sh}"')
+    return "; ".join(parts)
+
+
+def linux_terminal_launcher(argv: list[str]) -> list[str] | None:
     candidates = [
-        ("x-terminal-emulator", ["x-terminal-emulator", "-e", "ssh", alias]),
-        ("gnome-terminal", ["gnome-terminal", "--", "ssh", alias]),
-        ("konsole", ["konsole", "-e", "ssh", alias]),
-        ("xterm", ["xterm", "-e", "ssh", alias]),
+        ("x-terminal-emulator", ["x-terminal-emulator", "-e", *argv]),
+        ("gnome-terminal", ["gnome-terminal", "--", *argv]),
+        ("konsole", ["konsole", "-e", *argv]),
+        ("xterm", ["xterm", "-e", *argv]),
     ]
     for binary, command in candidates:
         if shutil.which(binary):

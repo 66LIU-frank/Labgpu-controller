@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from labgpu.remote.actions import is_safe_ssh_alias, open_ssh_terminal, stop_process
+from labgpu.remote.actions import build_ssh_terminal_argv, is_safe_ssh_alias, open_ssh_terminal, stop_process
 from labgpu.remote.ssh_config import SSHHost
 
 
@@ -106,6 +106,19 @@ class RemoteActionsTest(unittest.TestCase):
         self.assertEqual(result["result"], "invalid_alias")
         run.assert_not_called()
         popen.assert_not_called()
+
+    def test_build_ssh_terminal_command_with_proxy_and_agent(self):
+        argv = build_ssh_terminal_argv("alpha_liu", proxy_port="7890", agent="codex")
+        self.assertEqual(argv[:4], ["ssh", "-R", "127.0.0.1:7890:127.0.0.1:7890", "-t"])
+        self.assertEqual(argv[4], "alpha_liu")
+        self.assertIn("HTTP_PROXY=http://127.0.0.1:7890", argv[5])
+        self.assertIn("command -v codex", argv[5])
+
+    def test_build_ssh_terminal_rejects_bad_options(self):
+        with self.assertRaises(ValueError):
+            build_ssh_terminal_argv("alpha_liu", proxy_port="99999")
+        with self.assertRaises(ValueError):
+            build_ssh_terminal_argv("alpha_liu", agent="shell")
 
 
 if __name__ == "__main__":
