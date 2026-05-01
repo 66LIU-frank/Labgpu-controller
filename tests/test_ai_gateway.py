@@ -211,6 +211,40 @@ class AIGatewayTest(unittest.TestCase):
         self.assertFalse(state.is_expired(now=89))
         self.assertTrue(state.is_expired(now=111))
 
+    def test_session_health_payload_is_token_safe_and_includes_metadata(self):
+        state = ai_gateway.GatewayState(
+            token=TOKEN_ONE,
+            created_at=10,
+            last_accessed=20,
+            idle_timeout_seconds=30,
+            max_lifetime_seconds=100,
+            metadata=ai_gateway.safe_session_metadata(
+                {
+                    "mode": "proxy_tunnel",
+                    "app": "claude",
+                    "provider": "PackyCode",
+                    "server": "alpha_liu",
+                    "remote_cwd": "/data/lsg/work/OPSD",
+                    "ccswitch_proxy_port": 15721,
+                    "ignored_secret": TOKEN_ONE,
+                }
+            ),
+        )
+        with patch("labgpu.remote.ai_gateway.time.monotonic", return_value=25):
+            payload = ai_gateway.session_health_payload(state, target_host="127.0.0.1", target_port=15721)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["mode"], "proxy_tunnel")
+        self.assertEqual(payload["app"], "claude")
+        self.assertEqual(payload["provider"], "PackyCode")
+        self.assertEqual(payload["server"], "alpha_liu")
+        self.assertEqual(payload["remote_cwd"], "/data/lsg/work/OPSD")
+        self.assertEqual(payload["ccswitch_proxy_port"], "15721")
+        self.assertEqual(payload["target_port"], 15721)
+        self.assertEqual(payload["token_fingerprint"], ai_gateway.token_fingerprint(TOKEN_ONE))
+        self.assertNotIn(TOKEN_ONE, str(payload))
+        self.assertNotIn("ignored_secret", payload)
+
 
 if __name__ == "__main__":
     unittest.main()

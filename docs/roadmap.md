@@ -21,6 +21,7 @@ These features are implemented and covered by tests or real smoke tests:
 - VS Code Remote-SSH recent folder import
 - Claude Code through Proxy Tunnel
 - session-scoped local AI gateway with token auth, streaming, and cleanup
+- read-only remote `aiswitch status` / `aiswitch doctor`
 - CC Switch non-secret provider status reading
 - switching among existing CC Switch providers
 
@@ -56,21 +57,7 @@ These should not be presented as working product features:
 
 ## Recommended Next PRs
 
-1. AI Tunnel Doctor
-
-   Add a read-only status/doctor flow that can tell users which layer is broken:
-
-   ```text
-   remote shell env
-   remote gateway port
-   session token present
-   unauthenticated request returns 401
-   gateway reaches local CC Switch proxy
-   current provider
-   Claude wrapper path
-   ```
-
-2. Provider Switching Safety
+1. Provider Switching Safety
 
    Keep switching existing providers, but make the implementation boundary
    clearer:
@@ -79,7 +66,7 @@ These should not be presented as working product features:
    - detect database write failures cleanly
    - prefer CC Switch API/CLI when one is stable
 
-3. Codex Session Design
+2. Codex Session Design
 
    Do not simply copy the Claude path. First verify:
 
@@ -87,7 +74,7 @@ These should not be presented as working product features:
    - whether CC Switch proxy supports Codex routing in the same mode
    - whether streaming and config reload behavior match Claude Code
 
-4. README and Screenshot Refresh
+3. README and Screenshot Refresh
 
    Keep README top-of-page focused on:
 

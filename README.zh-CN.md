@@ -79,6 +79,7 @@ Enter Server
 - 打开远程 shell 并进入指定 working directory
 - 创建 SSH reverse tunnel 和 per-session gateway
 - 在远程 `/tmp` 下创建临时 Claude Code wrapper/settings
+- 在远程 shell 里运行只读的 `aiswitch status` / `aiswitch doctor`
 - 真实 provider key 留在本机或 CC Switch
 
 现在刻意不做：

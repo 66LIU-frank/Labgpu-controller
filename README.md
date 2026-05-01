@@ -81,6 +81,7 @@ What works now:
 - open a remote shell in a selected working directory
 - create an SSH reverse tunnel with a per-session gateway
 - inject a temporary Claude Code wrapper/settings file under remote `/tmp`
+- run read-only `aiswitch status` / `aiswitch doctor` inside the remote shell
 - keep real provider keys on the laptop or in CC Switch
 
 What is intentionally not built into LabGPU yet:

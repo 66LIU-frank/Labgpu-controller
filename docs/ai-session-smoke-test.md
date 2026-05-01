@@ -144,6 +144,46 @@ PATH, then creates a per-session Claude wrapper in `/tmp/labgpu-ai-*`. The
 wrapper calls the real Claude Code binary with a temporary `--settings` file so
 Claude Code uses the tunnel base URL without writing to `~/.claude`.
 
+## Run AI Tunnel Doctor
+
+The remote shell includes a temporary `aiswitch` helper in the same LabGPU
+session directory as the Claude wrapper. It is read-only in this MVP: it can
+show status and diagnose the tunnel, but it cannot switch providers.
+
+Run:
+
+```bash
+aiswitch status
+```
+
+Expected output includes:
+
+```text
+LabGPU AI Session
+Mode: proxy_tunnel
+App: claude
+Provider: <current CC Switch Claude provider>
+Base URL: http://127.0.0.1:<remote_gateway_port>
+Token: present (redacted)
+```
+
+Then run:
+
+```bash
+aiswitch doctor
+```
+
+Expected checks:
+
+```text
+No-token gateway check: 401
+Authenticated session check: 200
+Gateway session: ok
+```
+
+`aiswitch doctor` calls the gateway health endpoint with the session token, but
+it must not print the full token or any real provider key.
+
 Check that the remote loopback tunnel is reachable:
 
 ```bash

@@ -192,7 +192,17 @@ def open_ssh_terminal(
         if normalized_agent == "claude" and ai_mode == "proxy_tunnel":
             if not ccswitch_proxy_port:
                 raise ValueError("Claude Code Proxy Tunnel requires a CC Switch proxy port.")
-            gateway = start_ai_gateway(target_port=ccswitch_proxy_port)
+            gateway = start_ai_gateway(
+                target_port=ccswitch_proxy_port,
+                metadata={
+                    "mode": ai_mode,
+                    "app": normalized_agent,
+                    "provider": provider_name or "",
+                    "server": alias,
+                    "remote_cwd": remote_cwd or "",
+                    "ccswitch_proxy_port": ccswitch_proxy_port,
+                },
+            )
             AI_GATEWAY_SESSIONS.append(gateway)
         argv = build_ssh_terminal_argv(
             alias,

@@ -123,6 +123,7 @@ def build_claude_wrapper_setup(remote_env: dict[str, str]) -> str:
         separators=(",", ":"),
     )
     wrapper = '#!/bin/sh\nexec "$LABGPU_REAL_CLAUDE" --settings "$LABGPU_CLAUDE_SETTINGS" "$@"\n'
+    aiswitch = build_aiswitch_helper()
     bashrc = (
         'if [ -r "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n'
         'export PATH="$LABGPU_AI_TMPDIR:$PATH"\n'
@@ -141,7 +142,6 @@ def build_claude_wrapper_setup(remote_env: dict[str, str]) -> str:
             ";",
             'case "$LABGPU_REAL_CLAUDE" in "~/"*) LABGPU_REAL_CLAUDE="${HOME}/${LABGPU_REAL_CLAUDE#~/}" ;; esac',
             ";",
-            'if [ -n "$LABGPU_REAL_CLAUDE" ]; then',
             'LABGPU_AI_TMPDIR="${TMPDIR:-/tmp}/labgpu-ai-${USER:-user}-$$"',
             "&&",
             'mkdir -p "$LABGPU_AI_TMPDIR"',
@@ -150,6 +150,17 @@ def build_claude_wrapper_setup(remote_env: dict[str, str]) -> str:
             "&&",
             'export LABGPU_REAL_CLAUDE LABGPU_AI_TMPDIR',
             "&&",
+            f"printf %s {shlex.quote(aiswitch)} > \"$LABGPU_AI_TMPDIR/aiswitch\"",
+            "&&",
+            'chmod 700 "$LABGPU_AI_TMPDIR/aiswitch"',
+            "&&",
+            f"printf %s {shlex.quote(bashrc)} > \"$LABGPU_AI_TMPDIR/bashrc\"",
+            "&&",
+            f"printf %s {shlex.quote(zshrc)} > \"$LABGPU_AI_TMPDIR/.zshrc\"",
+            "&&",
+            'export PATH="$LABGPU_AI_TMPDIR:$PATH"',
+            ";",
+            'if [ -n "$LABGPU_REAL_CLAUDE" ]; then',
             'LABGPU_CLAUDE_SETTINGS="$LABGPU_AI_TMPDIR/claude-settings.json"',
             "&&",
             'export LABGPU_CLAUDE_SETTINGS',
@@ -161,16 +172,77 @@ def build_claude_wrapper_setup(remote_env: dict[str, str]) -> str:
             'chmod 700 "$LABGPU_AI_TMPDIR/claude"',
             "&&",
             'ln -sf "$LABGPU_AI_TMPDIR/claude" "$LABGPU_AI_TMPDIR/claude-code"',
-            "&&",
-            f"printf %s {shlex.quote(bashrc)} > \"$LABGPU_AI_TMPDIR/bashrc\"",
-            "&&",
-            f"printf %s {shlex.quote(zshrc)} > \"$LABGPU_AI_TMPDIR/.zshrc\"",
-            "&&",
-            'export PATH="$LABGPU_AI_TMPDIR:$PATH"',
             ";",
             "fi",
         ]
     )
+
+
+def build_aiswitch_helper() -> str:
+    return """#!/bin/sh
+set +x
+cmd="${1:-status}"
+base="${ANTHROPIC_BASE_URL:-}"
+token="${ANTHROPIC_API_KEY:-}"
+
+print_status() {
+  printf '%s\\n' "LabGPU AI Session"
+  printf 'Mode: %s\\n' "${LABGPU_AI_MODE:-unknown}"
+  printf 'App: %s\\n' "${LABGPU_AI_APP:-unknown}"
+  printf 'Provider: %s\\n' "${LABGPU_AI_PROVIDER:-unknown}"
+  printf 'Base URL: %s\\n' "${base:-missing}"
+  if [ -n "$token" ]; then
+    printf '%s\\n' "Token: present (redacted)"
+  else
+    printf '%s\\n' "Token: missing"
+  fi
+  printf 'Working directory: %s\\n' "$(pwd 2>/dev/null || printf unknown)"
+  printf 'Claude wrapper: %s\\n' "$(command -v claude 2>/dev/null || command -v claude-code 2>/dev/null || printf missing)"
+}
+
+case "$cmd" in
+  status)
+    print_status
+    exit 0
+    ;;
+  doctor)
+    print_status
+    if [ -z "$base" ]; then
+      printf '%s\\n' "Remote base URL: missing"
+      exit 1
+    fi
+    if [ -z "$token" ]; then
+      printf '%s\\n' "Session token: missing"
+      exit 1
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+      printf '%s\\n' "curl: missing"
+      exit 1
+    fi
+    no_token_code="$(curl -sS -o /dev/null -w '%{http_code}' "$base/__labgpu/session" 2>/dev/null || true)"
+    printf 'No-token gateway check: %s\\n' "${no_token_code:-failed}"
+    tmp="${TMPDIR:-/tmp}/labgpu-aiswitch-session.$$"
+    auth_code="$(curl -sS -o "$tmp" -w '%{http_code}' -H "x-api-key: $token" "$base/__labgpu/session" 2>/dev/null || true)"
+    printf 'Authenticated session check: %s\\n' "${auth_code:-failed}"
+    if [ "$auth_code" = "200" ]; then
+      printf '%s\\n' "Gateway session: ok"
+      cat "$tmp" 2>/dev/null || true
+      printf '\\n'
+    else
+      printf '%s\\n' "Gateway session: failed"
+    fi
+    rm -f "$tmp"
+    if [ "$no_token_code" = "401" ] && [ "$auth_code" = "200" ]; then
+      exit 0
+    fi
+    exit 1
+    ;;
+  *)
+    printf '%s\\n' "Usage: aiswitch [status|doctor]"
+    exit 2
+    ;;
+esac
+"""
 
 
 def build_interactive_shell_exec(*, setup_claude_wrapper: bool) -> str:

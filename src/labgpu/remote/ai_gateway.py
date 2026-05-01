@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import json
 import secrets
 import socket
 import threading
@@ -34,6 +35,7 @@ class GatewayState:
     last_accessed: float
     idle_timeout_seconds: float
     max_lifetime_seconds: float
+    metadata: dict[str, Any] = field(default_factory=dict)
     lock: Any = field(default_factory=threading.Lock, repr=False)
 
     def touch(self, now: float | None = None) -> None:
@@ -110,6 +112,7 @@ def start_ai_gateway(
     idle_timeout_seconds: float = DEFAULT_IDLE_TIMEOUT_SECONDS,
     max_lifetime_seconds: float = DEFAULT_MAX_LIFETIME_SECONDS,
     cleanup_interval_seconds: float = DEFAULT_CLEANUP_INTERVAL_SECONDS,
+    metadata: dict[str, Any] | None = None,
 ) -> AIGatewaySession:
     if listen_host != "127.0.0.1":
         raise ValueError("AI gateway must listen on 127.0.0.1.")
@@ -127,6 +130,7 @@ def start_ai_gateway(
         last_accessed=now,
         idle_timeout_seconds=idle_timeout_seconds,
         max_lifetime_seconds=max_lifetime_seconds,
+        metadata=safe_session_metadata(metadata or {}),
     )
     handler = build_gateway_handler(state=state, target_host=target_host, target_port=target_port)
     server = ThreadingHTTPServer((listen_host, listen_port), handler)
@@ -192,6 +196,12 @@ def build_gateway_handler(*, state: GatewayState, target_host: str, target_port:
                 self._send_plain(401, "Unauthorized\n")
                 return
             state.touch()
+            if self.path.split("?", 1)[0] == "/__labgpu/session":
+                if self.command != "GET":
+                    self._send_plain(405, "Method Not Allowed\n")
+                    return
+                self._send_json(200, session_health_payload(state, target_host=target_host, target_port=target_port))
+                return
             body = read_request_body(self)
             conn: http.client.HTTPConnection | None = None
             try:
@@ -234,10 +244,46 @@ def build_gateway_handler(*, state: GatewayState, target_host: str, target_port:
             self.end_headers()
             self.wfile.write(payload)
 
+        def _send_json(self, status: int, value: dict[str, Any]) -> None:
+            payload = json.dumps(value, sort_keys=True).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
         def log_message(self, format: str, *args: Any) -> None:
             return
 
     return AIGatewayHandler
+
+
+def safe_session_metadata(metadata: dict[str, Any]) -> dict[str, str]:
+    safe: dict[str, str] = {}
+    for key in ("mode", "app", "provider", "server", "remote_cwd", "ccswitch_proxy_port"):
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            safe[key] = value[:512]
+    return safe
+
+
+def session_health_payload(state: GatewayState, *, target_host: str, target_port: int) -> dict[str, Any]:
+    now = time.monotonic()
+    with state.lock:
+        idle_remaining = max(0, int(state.idle_timeout_seconds - (now - state.last_accessed)))
+        lifetime_remaining = max(0, int(state.max_lifetime_seconds - (now - state.created_at)))
+        metadata = dict(state.metadata)
+    return {
+        "ok": True,
+        "target_host": target_host,
+        "target_port": target_port,
+        "token_fingerprint": token_fingerprint(state.token),
+        "idle_timeout_seconds": int(state.idle_timeout_seconds),
+        "max_lifetime_seconds": int(state.max_lifetime_seconds),
+        "idle_timeout_remaining_seconds": idle_remaining,
+        "max_lifetime_remaining_seconds": lifetime_remaining,
+        **metadata,
+    }
 
 
 def request_has_token(headers: Any, token: str) -> bool:

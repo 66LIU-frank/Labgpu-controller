@@ -219,7 +219,7 @@ class RemoteActionsTest(unittest.TestCase):
         with (
             patch("labgpu.remote.actions.sys.platform", "darwin"),
             patch("labgpu.remote.actions.is_local_tcp_port_open", return_value=True),
-            patch("labgpu.remote.actions.start_ai_gateway", return_value=gateway),
+            patch("labgpu.remote.actions.start_ai_gateway", return_value=gateway) as start_gateway,
             patch("labgpu.remote.actions.AI_GATEWAY_SESSIONS", []),
             patch("labgpu.remote.actions.write_terminal_launch_script", return_value=Path("/tmp/labgpu-open.sh")) as write_script,
             patch("labgpu.remote.actions.subprocess.run", return_value=Result()) as run,
@@ -240,6 +240,12 @@ class RemoteActionsTest(unittest.TestCase):
         self.assertEqual(result["ai_gateway"]["ccswitch_proxy_port"], 15721)
         self.assertNotIn(SESSION_TOKEN, result["command"])
         self.assertIn("labgpu-session-<redacted>", result["command"])
+        metadata = start_gateway.call_args.kwargs["metadata"]
+        self.assertEqual(metadata["mode"], "proxy_tunnel")
+        self.assertEqual(metadata["app"], "claude")
+        self.assertEqual(metadata["provider"], "PackyCode")
+        self.assertEqual(metadata["server"], "alpha_liu")
+        self.assertEqual(metadata["ccswitch_proxy_port"], 15721)
         write_script.assert_called_once()
         osascript_command = " ".join(run.call_args.args[0])
         self.assertIn("/tmp/labgpu-open.sh", osascript_command)
