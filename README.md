@@ -16,7 +16,11 @@ No root. No remote daemon. No Slurm or Kubernetes requirement. No shared
 tracking server.
 
 <p align="center">
-  <img src="docs/assets/labgpu-ai-workflow.svg" alt="LabGPU workflow and AI proxy tunnel architecture" width="100%">
+  <img src="docs/assets/labgpu-hero.png" alt="LabGPU promotional hero illustration" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/assets/labgpu-home-live.png" alt="LabGPU real UI example" width="100%">
 </p>
 
 ```text
@@ -237,6 +241,16 @@ labgpu list --json
 ```
 
 Failure to enter Enhanced Mode never breaks Agentless Mode.
+
+## Architecture
+
+LabGPU keeps the control plane local. SSH remains the server boundary, while AI
+sessions route through a session-scoped local gateway before reaching the local
+provider proxy.
+
+<p align="center">
+  <img src="docs/assets/labgpu-ai-workflow.svg" alt="LabGPU workflow and AI proxy tunnel architecture" width="100%">
+</p>
 
 ## Safety
 
