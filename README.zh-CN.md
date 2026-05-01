@@ -75,7 +75,7 @@ Enter Server
 现在已经支持：
 
 - 读取非 secret 的 CC Switch provider 状态
-- 在 LabGPU 中切换已有 CC Switch provider
+- 在 LabGPU 中通过更新本机 current-provider 状态切换已有 CC Switch provider
 - 打开远程 shell 并进入指定 working directory
 - 创建 SSH reverse tunnel 和 per-session gateway
 - 在远程 `/tmp` 下创建临时 Claude Code wrapper/settings
@@ -90,7 +90,8 @@ Enter Server
 - Codex/Gemini 远程 session launcher
 
 新增 provider 先在 CC Switch 里做。LabGPU 刷新后会读到它，并可以在已有 provider
-之间切换。
+之间切换。切换只更新 CC Switch 本机 current-provider 状态；LabGPU 不创建或保存
+provider key。
 
 ## 快速开始
 

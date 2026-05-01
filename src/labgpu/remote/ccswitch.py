@@ -10,6 +10,11 @@ from typing import Any
 CCSWITCH_DB = ".cc-switch/cc-switch.db"
 CCSWITCH_APP = "/Applications/CC Switch.app"
 SUPPORTED_APPS = ("codex", "claude", "gemini", "openclaw")
+SWITCH_METHOD = "ccswitch_local_db_state"
+SWITCH_WARNING = (
+    "LabGPU switches existing CC Switch providers by updating local current-provider state only. "
+    "It does not read, store, or create provider API keys."
+)
 
 
 class CcSwitchError(RuntimeError):
@@ -65,12 +70,12 @@ def read_provider_state(conn: sqlite3.Connection) -> dict[str, Any]:
             continue
         choices = [str(row[1] or "") for row in rows if row[1]]
         choice_items = [
-            {"id": str(row[0] or ""), "name": str(row[1] or ""), "current": bool(row[2])}
+            {"id": str(row[0] or ""), "name": str(row[1] or ""), "current": sqlite_truthy(row[2])}
             for row in rows
             if row[0] and row[1]
         ]
-        current = next((str(row[1]) for row in rows if row[2]), "")
-        current_id = next((str(row[0]) for row in rows if row[2]), "")
+        current = next((str(row[1]) for row in rows if sqlite_truthy(row[2])), "")
+        current_id = next((str(row[0]) for row in rows if sqlite_truthy(row[2])), "")
         providers[app_type] = {
             "current": current,
             "current_id": current_id,
@@ -99,15 +104,37 @@ def switch_ccswitch_provider(app_type: str, provider_id: str, home: str | Path |
         if not table_exists(conn, "providers"):
             raise CcSwitchError("CC Switch providers table was not found.")
         row = conn.execute(
-            "SELECT name FROM providers WHERE app_type = ? AND id = ?",
+            "SELECT name, is_current FROM providers WHERE app_type = ? AND id = ?",
             (app, selected_id),
         ).fetchone()
         if not row:
             raise CcSwitchError("Selected provider was not found.")
+        provider_name = str(row[0] or "")
+        was_current = sqlite_truthy(row[1])
         with conn:
             conn.execute("UPDATE providers SET is_current = 0 WHERE app_type = ?", (app,))
             conn.execute("UPDATE providers SET is_current = 1 WHERE app_type = ? AND id = ?", (app, selected_id))
-        return {"app": app, "provider_id": selected_id, "provider": str(row[0] or "")}
+        current_rows = conn.execute(
+            "SELECT id FROM providers WHERE app_type = ? AND is_current = 1",
+            (app,),
+        ).fetchall()
+        if [str(current[0]) for current in current_rows] != [selected_id]:
+            raise CcSwitchError("CC Switch provider switch could not be verified.")
+        return {
+            "app": app,
+            "provider_id": selected_id,
+            "provider": provider_name,
+            "changed": not was_current,
+            "verified": True,
+            "method": SWITCH_METHOD,
+            "secret_access": False,
+            "warning": SWITCH_WARNING,
+            "message": (
+                f"Switched {app} provider to {provider_name}."
+                if not was_current
+                else f"{provider_name} was already the current {app} provider."
+            ),
+        }
     except sqlite3.Error as exc:
         raise CcSwitchError(f"Could not update CC Switch provider: {exc}") from exc
     finally:
@@ -126,8 +153,8 @@ def read_proxy_state(conn: sqlite3.Connection) -> dict[str, Any]:
         proxy[str(app_type)] = {
             "listen_address": str(listen_address or "127.0.0.1"),
             "listen_port": port,
-            "proxy_enabled": bool(proxy_enabled),
-            "enabled": bool(enabled),
+            "proxy_enabled": sqlite_truthy(proxy_enabled),
+            "enabled": sqlite_truthy(enabled),
             "listening": is_local_proxy_listening(port) if port else False,
         }
     return proxy
@@ -146,3 +173,13 @@ def is_local_proxy_listening(port: int) -> bool | None:
 def table_exists(conn: sqlite3.Connection, name: str) -> bool:
     row = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (name,)).fetchone()
     return bool(row)
+
+
+def sqlite_truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+    return bool(value)

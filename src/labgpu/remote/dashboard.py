@@ -483,20 +483,21 @@ class ServerHandler(BaseHTTPRequestHandler):
         provider_name = str(first_value(payload.get("provider_name")) or "").strip()
         ccswitch_provider_id = str(first_value(payload.get("ccswitch_provider_id")) or "").strip()
         ccswitch_switch = None
-        if agent == "claude" and ai_mode == "proxy_tunnel":
-            summary = read_ccswitch_summary()
-            provider_name = current_ccswitch_provider(summary, "claude")
-            if not provider_name:
-                self._json(
-                    {"ok": False, "result": "missing_provider", "message": "Current CC Switch Claude provider was not found. Switch Claude provider in CC Switch first."},
-                    status=HTTPStatus.CONFLICT,
-                )
-                return
         if ccswitch_provider_id:
             try:
                 ccswitch_switch = switch_ccswitch_provider(agent, ccswitch_provider_id)
+                provider_name = str(ccswitch_switch.get("provider") or provider_name)
             except CcSwitchError as exc:
                 self._json({"ok": False, "result": "ccswitch_switch_failed", "message": str(exc)}, status=HTTPStatus.CONFLICT)
+                return
+        if agent == "claude" and ai_mode == "proxy_tunnel":
+            summary = read_ccswitch_summary()
+            provider_name = provider_name or current_ccswitch_provider(summary, "claude")
+            if not provider_name:
+                self._json(
+                    {"ok": False, "result": "missing_provider", "message": "Current CC Switch Claude provider was not found. Switch Claude provider in AI Sessions or CC Switch first."},
+                    status=HTTPStatus.CONFLICT,
+                )
                 return
         host = resolve_ssh_host(load_inventory(ssh_config=self.ssh_config, names=[alias])[0])
         result = open_ssh_terminal(
@@ -1066,6 +1067,7 @@ def render_providers_page() -> str:
         <section class="panel">
           <div class="section-head"><h2>Provider Status</h2><a class="json-control" href="/api/integrations/ccswitch">JSON</a></div>
           <p class="muted">{esc(summary.get("message") or "")} You can switch existing CC Switch providers here. Add new providers in CC Switch for now so LabGPU never handles provider API keys.</p>
+          <p class="muted">Switching updates CC Switch local current-provider state only; LabGPU does not read or store provider secrets.</p>
           <div class="grid compact">{cards}</div>
         </section>
         <section class="panel">
@@ -1102,6 +1104,7 @@ def render_provider_card(summary: dict[str, object], app: str, label: str) -> st
           <label>Switch provider <select name="provider_id">{switch_options}</select></label>
           <button class="button" type="submit">Switch</button>
           <span class="muted ccswitch-switch-result"></span>
+          <p class="muted">Updates CC Switch local provider state. Keys stay in CC Switch.</p>
         </form>
         """
         if switch_options
@@ -2850,8 +2853,8 @@ function updateCcswitchProviderOptions() {{
   const proxyConfig = activeCcswitchProxyConfig(agent);
   if (providerSummary) {{
     providerSummary.textContent = providerName
-      ? `Using current CC Switch Claude provider: ${{providerName}}. To change provider, switch it in CC Switch first.`
-      : "Current CC Switch Claude provider was not found. Switch Claude provider in CC Switch first.";
+      ? `Using current CC Switch Claude provider: ${{providerName}}. To change provider, use the AI Sessions page or CC Switch.`
+      : "Current CC Switch Claude provider was not found. Switch Claude provider in AI Sessions or CC Switch first.";
   }}
   if (proxySummary) {{
     proxySummary.textContent = proxyConfig && proxyConfig.listen_port && ccswitchProxyIsListening(proxyConfig)
@@ -2898,7 +2901,7 @@ async function runOpenSsh(button) {{
     return;
   }}
   if (!providerName) {{
-    if (result) result.textContent = "Current CC Switch Claude provider was not found. Switch Claude provider in CC Switch first.";
+    if (result) result.textContent = "Current CC Switch Claude provider was not found. Switch Claude provider in AI Sessions or CC Switch first.";
     return;
   }}
   if (!activeCcswitchProxyConfig(agent)) {{
@@ -3039,8 +3042,9 @@ document.querySelectorAll(".ccswitch-switch-form").forEach((form) => {{
     const payload = await response.json().catch(() => ({{ok: false, message: "Switching provider failed."}}));
     if (button) button.disabled = false;
     if (payload.ok) {{
-      if (result) result.textContent = "Switched. Refreshing...";
-      window.location.reload();
+      const message = payload.switched && payload.switched.message ? payload.switched.message : "Switched.";
+      if (result) result.textContent = `${{message}} Refreshing...`;
+      setTimeout(() => window.location.reload(), 400);
     }} else {{
       if (result) result.textContent = payload.message || "Switching provider failed.";
     }}

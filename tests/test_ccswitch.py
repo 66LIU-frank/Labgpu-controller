@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from labgpu.remote.ccswitch import read_ccswitch_summary, switch_ccswitch_provider
+from labgpu.remote.ccswitch import read_ccswitch_summary, sqlite_truthy, switch_ccswitch_provider
 
 
 class CcSwitchTest(unittest.TestCase):
@@ -57,9 +57,42 @@ class CcSwitchTest(unittest.TestCase):
             summary = read_ccswitch_summary(tmp)
 
         self.assertEqual(switched["provider"], "alt")
+        self.assertTrue(switched["changed"])
+        self.assertTrue(switched["verified"])
+        self.assertEqual(switched["method"], "ccswitch_local_db_state")
+        self.assertFalse(switched["secret_access"])
+        self.assertIn("does not read", switched["warning"])
         self.assertEqual(summary["providers"]["codex"]["current"], "alt")
         self.assertEqual(summary["providers"]["codex"]["current_id"], "codex-alt")
         self.assertNotIn("SECRET", str(summary))
+        self.assertNotIn("SECRET", str(switched))
+
+    def test_switching_current_provider_is_verified_noop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_dir = Path(tmp) / ".cc-switch"
+            db_dir.mkdir()
+            db_path = db_dir / "cc-switch.db"
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                "CREATE TABLE providers (id TEXT, app_type TEXT, name TEXT, settings_config TEXT, is_current BOOLEAN DEFAULT 0, PRIMARY KEY(id, app_type))"
+            )
+            conn.execute("INSERT INTO providers VALUES ('claude-main', 'claude', 'main', 'SECRET', 1)")
+            conn.commit()
+            conn.close()
+
+            switched = switch_ccswitch_provider("claude", "claude-main", tmp)
+
+        self.assertFalse(switched["changed"])
+        self.assertTrue(switched["verified"])
+        self.assertIn("already the current", switched["message"])
+
+    def test_sqlite_truthy_handles_text_boolean_values(self):
+        self.assertTrue(sqlite_truthy("1"))
+        self.assertTrue(sqlite_truthy("true"))
+        self.assertTrue(sqlite_truthy(1))
+        self.assertFalse(sqlite_truthy("0"))
+        self.assertFalse(sqlite_truthy("false"))
+        self.assertFalse(sqlite_truthy(0))
 
 
 if __name__ == "__main__":

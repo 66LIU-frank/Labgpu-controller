@@ -24,6 +24,8 @@ These features are implemented and covered by tests or real smoke tests:
 - read-only remote `aiswitch status` / `aiswitch doctor`
 - CC Switch non-secret provider status reading
 - switching among existing CC Switch providers
+  - switches local current-provider state only
+  - does not read, store, or create provider API keys
 
 ## Alpha but Usable With Care
 
@@ -35,6 +37,7 @@ These are useful, but the behavior should stay conservative:
   - no tool execution or automatic actions
 - CC Switch provider switching
   - currently updates CC Switch provider state directly in the local database
+  - switch results are verified after write and labeled as local state updates
   - safer long term path is an official CC Switch API/CLI if available
 - browser-local Recent AI Sessions
   - launch history only
@@ -57,22 +60,18 @@ These should not be presented as working product features:
 
 ## Recommended Next PRs
 
-1. Provider Switching Safety
-
-   Keep switching existing providers, but make the implementation boundary
-   clearer:
-
-   - add a warning that LabGPU switches CC Switch local state
-   - detect database write failures cleanly
-   - prefer CC Switch API/CLI when one is stable
-
-2. Codex Session Design
+1. Codex Session Design
 
    Do not simply copy the Claude path. First verify:
 
    - what Codex CLI expects for base URL and auth
    - whether CC Switch proxy supports Codex routing in the same mode
    - whether streaming and config reload behavior match Claude Code
+
+2. CC Switch API/CLI Adapter
+
+   Keep the current local database path as a fallback, but prefer an official
+   CC Switch API/CLI when one is stable.
 
 3. README and Screenshot Refresh
 

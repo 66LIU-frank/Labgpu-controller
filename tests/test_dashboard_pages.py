@@ -220,6 +220,8 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn('name="provider_id"', html)
         self.assertIn("Switch provider", html)
         self.assertIn("Add new providers in CC Switch", html)
+        self.assertIn("Switching updates CC Switch local current-provider state only", html)
+        self.assertIn("Keys stay in CC Switch", html)
         self.assertIn("PackyCode", html)
         self.assertIn("127.0.0.1:15721", html)
         self.assertIn("TCP check", html)

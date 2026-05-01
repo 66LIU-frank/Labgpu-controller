@@ -230,7 +230,7 @@ remote gateway port when that option is available.
 If Claude provider state is missing, LabGPU should report:
 
 ```text
-Current CC Switch Claude provider was not found. Switch Claude provider in CC Switch first.
+Current CC Switch Claude provider was not found. Switch Claude provider in AI Sessions or CC Switch first.
 ```
 
 If Claude Code exists on the server but is not visible to the LabGPU launch

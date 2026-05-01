@@ -77,7 +77,7 @@ Enter Server
 What works now:
 
 - read non-secret CC Switch provider state
-- switch existing CC Switch providers from LabGPU
+- switch existing CC Switch providers from LabGPU by updating local current-provider state
 - open a remote shell in a selected working directory
 - create an SSH reverse tunnel with a per-session gateway
 - inject a temporary Claude Code wrapper/settings file under remote `/tmp`
@@ -92,7 +92,9 @@ What is intentionally not built into LabGPU yet:
 - Codex/Gemini remote session launchers
 
 Add new providers in CC Switch for now. LabGPU will show them after refresh and
-can switch among existing providers without reading their secrets.
+can switch among existing providers without reading their secrets. Switching is
+limited to CC Switch local current-provider state; LabGPU does not create or
+store provider keys.
 
 ## Quick Start
 
