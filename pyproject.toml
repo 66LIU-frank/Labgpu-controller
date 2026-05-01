@@ -31,7 +31,7 @@ dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/66LIU-frank/Labgpu-controller"
-Demo = "https://github.com/66LIU-frank/Labgpu-controller#start-fast"
+Demo = "https://github.com/66LIU-frank/Labgpu-controller#quick-start"
 Issues = "https://github.com/66LIU-frank/Labgpu-controller/issues"
 
 [project.scripts]

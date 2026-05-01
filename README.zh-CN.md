@@ -7,199 +7,179 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-给学生个人用的远程 GPU 训练工作台。
+LabGPU 是给学生和研究者个人使用的本地优先 GPU 工作台。它面向共享 SSH GPU
+服务器：帮你找可用 GPU、进入正确服务器和目录、追踪自己的训练、诊断失败，并让远程
+Claude Code 走本机 CC Switch provider，而不是把 API key 写到服务器上。
 
-在多台共享 SSH GPU 服务器里找空卡、启动训练、找回自己的任务、诊断失败。
-不需要 daemon，不需要 root，不需要 Slurm，不需要 Kubernetes。
-
-<table>
-  <tr>
-    <td><img src="docs/assets/labgpu-just-ssh.png" alt="LabGPU Just SSH" width="100%"></td>
-    <td><img src="docs/assets/labgpu-track-runs.png" alt="LabGPU Track Runs" width="100%"></td>
-  </tr>
-</table>
+不需要 root，不需要远程 daemon，不要求 Slurm/Kubernetes，也不需要共享 tracking
+server。
 
 <p align="center">
-  <img src="docs/assets/labgpu-home-live.png" alt="LabGPU Home demo preview" width="100%">
+  <img src="docs/assets/labgpu-ai-workflow.svg" alt="LabGPU workflow and AI proxy tunnel architecture" width="100%">
 </p>
 
 ```text
-找卡 -> 启动/接管 -> 观察 -> 诊断 -> 导出 context/report -> 安全处理
+找 GPU -> 进入服务器 -> 启动/接管 -> 观察 -> 诊断 -> 导出 context/report
 ```
 
-## 3 分钟上手
+## 为什么用 LabGPU
 
-LabGPU 跑在你自己的电脑上。它读取你的 `~/.ssh/config`，通过 SSH 探测你选中的 GPU 服务器，然后打开本地工作台。不需要 root，不需要远端 daemon，不需要 Slurm/Kubernetes，也不需要共享 tracking server。
+很多实验室 GPU 用户已经有 SSH 账号，但缺一个清晰的个人工作台。LabGPU 保留这个模式：
 
-大多数用户按这条路径用：
+- 跑在你的电脑上
+- 读取你正常的 `~/.ssh/config`
+- 通过 SSH 探测服务器
+- 不在共享机器上安装 daemon
+- 对危险操作保持保守，只管理自己的进程
+- 默认让 AI provider secret 留在本机
+
+## 主界面
+
+UI 现在收束成五个主入口：
+
+| 页面 | 用途 |
+| --- | --- |
+| Home | 总览、推荐 GPU、当前任务、问题、保存的服务器。 |
+| Train | 找 GPU、打开终端、查看 `My Runs` 和 `My GPU Processes`。 |
+| Servers | 查看 SSH 服务器、磁盘、GPU、健康状态和分组入口。 |
+| AI Sessions | 查看/切换已有 CC Switch provider，启动远程 Claude Code session。 |
+| Settings | 新增/导入 SSH 服务器，选择保存的服务器，管理分组。 |
+
+次级功能仍然保留：
+
+- `Groups` 可以从 Home、Servers、Settings 进入。
+- `Problems` 可以从 Home、Servers 进入。
+- `Assistant` 可以从 Home 进入。
+- JSON/API 链接默认隐藏，可在 Settings 里打开。
+
+## AI Sessions
+
+LabGPU 可以让远程 Claude Code 使用你本机的 CC Switch provider，同时不把真实 API key
+写到远程服务器。
+
+当前支持的链路：
 
 ```text
-安装 -> labgpu ui -> Settings 新增/导入服务器 -> Train Now 复制命令 -> labgpu where 找任务
+Enter Server
+  -> Claude Code
+  -> Proxy Tunnel
+  -> 本机 LabGPU session gateway
+  -> 本机 CC Switch proxy
+  -> 当前 provider
 ```
 
-接真实服务器前，先确认：
+现在已经支持：
 
-- Python 3.10+
-- `ssh YOUR_ALIAS` 可以连到你的 GPU 服务器，或者你知道新增服务器需要的 host/user/key
-- NVIDIA 服务器上有 `nvidia-smi`
+- 读取非 secret 的 CC Switch provider 状态
+- 在 LabGPU 中切换已有 CC Switch provider
+- 打开远程 shell 并进入指定 working directory
+- 创建 SSH reverse tunnel 和 per-session gateway
+- 在远程 `/tmp` 下创建临时 Claude Code wrapper/settings
+- 真实 provider key 留在本机或 CC Switch
 
-### 1. 安装
+现在刻意不做：
+
+- 在 LabGPU 里新增带 API key 的 provider
+- 写 provider key 到远程 `~/.claude`、`~/.codex`、`~/.gemini`
+- 多用户 provider vault
+- Codex/Gemini 远程 session launcher
+
+新增 provider 先在 CC Switch 里做。LabGPU 刷新后会读到它，并可以在已有 provider
+之间切换。
+
+## 快速开始
+
+安装：
 
 ```bash
 pipx install git+https://github.com/66LIU-frank/Labgpu-controller.git
 ```
 
-没有 `pipx` 的话：
+没有 `pipx`：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/66LIU-frank/Labgpu-controller/main/install.sh | sh
 ```
 
-### 2. 先看 demo
-
-```bash
-labgpu demo
-labgpu pick --fake-lab
-```
-
-### 3. 添加你的 SSH GPU 服务器
-
-如果你的 alias 已经在 `~/.ssh/config` 里：
-
-```bash
-labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
-```
-
-或者直接打开 UI，从 `Settings` 新增/导入服务器：
+打开本地 UI：
 
 ```bash
 labgpu ui
 ```
 
-在 `Settings` 里可以：
+固定服务器范围：
 
-- 选择哪些服务器显示在首页
-- 新增 SSH 服务器，并可选择写入一个 `Host` block 到 `~/.ssh/config`
-- 从已有 `~/.ssh/config` 导入 SSH aliases
-- 后续再创建可选分组，比如 `AlphaLab`、`校外服务器`、`H800`
+```bash
+labgpu ui --hosts alpha_liu,alpha_shi
+```
 
-LabGPU 不会替你生成 SSH key。它使用你原本的 SSH 配置：密码登录、SSH key、ssh-agent、`IdentityFile`、`ProxyJump` 都还是交给 SSH config。为了让后台自动探测更顺，最好配置好 key/agent，避免每次 probe 都要交互式输入密码。
+使用真实服务器前，先确认：
 
-### 4. 找卡并复制启动命令
+- 本机有 Python 3.10+
+- `ssh YOUR_ALIAS` 能连上 GPU 服务器，或者你知道 host/user/key
+- NVIDIA GPU 服务器上有 `nvidia-smi`
 
-用 `Train Now` 页面，或者命令行：
+## 添加服务器
+
+如果 alias 已经在 `~/.ssh/config`：
+
+```bash
+labgpu init --hosts alpha_liu,alpha_shi --tags A100,training
+```
+
+也可以在 UI 的 Settings 中：
+
+- 新增 SSH 服务器
+- 导入已有 SSH alias
+- 可选地追加安全的 `Host` block 到 `~/.ssh/config`
+- 选择默认显示哪些服务器
+- 创建 `AlphaLab`、`off-campus`、`H800` 这类分组
+
+LabGPU 不创建 SSH key。密码登录、SSH key、ssh-agent、`IdentityFile`、`ProxyJump`
+都继续交给正常 SSH config。
+
+## 找 GPU 并进入服务器
+
+用 Train 页面，或者命令行：
 
 ```bash
 labgpu pick --min-vram 24G --prefer A100 --explain
 labgpu pick --min-vram 24G --prefer 4090 --cmd "python train.py --config configs/sft.yaml"
 ```
 
-每张推荐 GPU 卡片都可以复制：
+每张 GPU 卡片可以复制：
 
 - `ssh HOST`
 - `CUDA_VISIBLE_DEVICES=GPU_INDEX`
 - 启动片段
-- 或直接打开对应服务器的 SSH 终端
+- Enter Server 终端入口
 
-### 5. 追踪自己的训练
+Enter Server 还可以自动填 VS Code Remote-SSH 最近目录，并让远程 Claude Code 通过本机
+provider tunnel 工作。
 
-如果你想保存完整 run capsule，就在目标 GPU 服务器上通过 LabGPU 启动：
+## 追踪训练
+
+启动 tracked run：
 
 ```bash
 labgpu run --name sft --gpu auto --min-vram 24G -- python train.py --config configs/sft.yaml
-labgpu where
 ```
 
-如果任务已经在跑，也可以接管：
+接管已经在跑的进程：
 
 ```bash
 labgpu adopt 23891 --name old_baseline --log ./train.log
 ```
 
-## 它能帮你做什么
-
-| 需求 | LabGPU 做什么 |
-| --- | --- |
-| 找一张现在能用的 GPU | `Train Now` 和 `labgpu pick` 跨 SSH hosts 排名推荐。 |
-| 快速开跑 | 复制 SSH 命令、`CUDA_VISIBLE_DEVICES`、启动片段，或从 GPU 卡片直接打开 SSH 终端。 |
-| 找回自己的任务 | `My Runs` 和 `labgpu where` 显示 tracked、adopted、自己的 GPU process。 |
-| 组织服务器 | Settings 里可以保存启用的服务器、编辑分组，并按某个分组查看。 |
-| 不手改文件也能管配置 | 在 UI 里新增/导入 SSH hosts，安全追加 `Host` 配置，并更新 `~/.labgpu/config.toml`。 |
-| 在服务器之间搬项目 | `labgpu sync` 通过你的电脑把项目从一台 SSH 服务器流式传到另一台。 |
-| 先测速 | `labgpu nettest` 在搬项目之前测试有效传输速度。 |
-| 保存实验现场 | run capsule 保存命令、日志、git、config、env summary、GPU 信息。 |
-| 诊断失败 | `diagnose` 和 Failure Inbox 识别 OOM、Traceback、NCCL、disk full、killed、NaN、suspected idle。 |
-| 发给 AI/同学求助 | `labgpu context --copy` 复制一份默认脱敏的 Markdown debug context。 |
-| 安全停止 | UI 只对自己的进程显示 stop action，并做保守校验。 |
-
-## 常用任务
-
-找 GPU：
-
-```bash
-labgpu pick --min-vram 24G --prefer A100 --tag training --explain
-labgpu pick --min-vram 24G --prefer 4090 --cmd "python train.py --config configs/sft.yaml"
-```
-
-在 GPU 服务器上启动或接管训练：
-
-```bash
-labgpu run --name baseline --gpu auto --min-vram 24G -- python train.py
-labgpu adopt 23891 --name old_baseline --log ./train.log
-```
-
-找回、看日志、诊断、导出 context：
+之后找回自己的任务：
 
 ```bash
 labgpu where
-labgpu logs baseline --tail 100
-labgpu diagnose baseline
-labgpu context baseline --copy
-labgpu report baseline
+labgpu list
+labgpu logs sft --tail 100
 ```
 
-把项目搬到另一台 GPU 服务器：
-
-```bash
-labgpu nettest alpha_liu alpha_shi --mb 64
-labgpu sync alpha_liu:/data/me/project alpha_shi:/data/me/project
-labgpu sync alpha_liu:/data/me/project alpha_shi:/data/me/project --execute --yes
-```
-
-`sync` 默认通过你的电脑中转，不要求两台服务器之间能互相 SSH。只有源服务器本身能 SSH 到目标服务器时，才给 `nettest` 加 `--direct` 测直连。
-
-## UI 首页
-
-LabGPU Home 不是以 server card 为主，而是按训练流程排：
-
-```text
-Train Now
-  按 GPU 是否空闲、显存、型号、负载和 tags 推荐 GPU。
-  每张卡都可以复制命令，或打开对应服务器的 SSH 终端。
-
-My Runs
-  我的 LabGPU runs、adopted runs、自己的 untracked GPU processes。
-
-Failed or Suspicious Runs
-  OOM、Traceback、NCCL、disk full、killed、NaN、suspected idle、日志不更新。
-
-Problems
-  离线/缓存服务器、磁盘告警、probe timeout、process health warning。
-
-Servers
-  服务器资源详情放在下面，不作为主入口。
-
-Settings
-  新增/导入 SSH hosts，选择首页服务器，编辑服务器分组，开关 JSON/API 链接。
-```
-
-服务器分组是可选的。你可以先把服务器加进来，之后在 `Settings -> Server Groups` 里再创建分组。Home、Train Now、My Runs、Servers、Alerts、Assistant 页面都会出现分组按钮，可以在全部服务器和 `AlphaLab` 这类服务器池之间切换。
-
-UI 支持中文/英文、深色/浅色模式。页面会先用本地快照打开，再后台刷新 SSH 数据，所以切换页面时不用每次都等 SSH probe。右上角缓存提示会显示当前缓存距上次刷新过了多久。
-
-## Run Capsule
-
-每个 tracked/adopted run 都会在 `~/.labgpu/runs/` 下保存实验现场：
+每个 tracked/adopted run 都会在 `~/.labgpu/runs/` 下保存 plain-file capsule：
 
 ```text
 meta.json
@@ -213,37 +193,68 @@ git.patch
 diagnosis.json
 ```
 
-这些文件记录：命令、cwd、用户、host、GPU、PID、日志、git commit/patch、配置文件、Python/Conda/venv 摘要、退出码、诊断结果和 Markdown context。
+## 诊断和导出上下文
 
-## 两种模式
+```bash
+labgpu diagnose sft
+labgpu context sft --copy
+labgpu report sft
+```
 
-Agentless SSH Mode 是默认模式。LabGPU 在你的电脑上运行，读取 `~/.ssh/config`，通过 SSH 探测远端服务器。不需要在远端安装 LabGPU，也能看 GPU/process/server health。
+LabGPU 会检查 OOM、traceback、NCCL、disk full、killed、NaN、stale logs、疑似 idle
+GPU memory、zombie/IO-wait 等信号。
 
-Enhanced Mode 是可选增强。如果远端服务器的 `PATH` 里有 `labgpu`，LabGPU Home 会额外读取：
+`labgpu context --copy` 会生成默认脱敏的 Markdown context，方便发给 AI 或同学。
+
+## 搬项目
+
+```bash
+labgpu nettest alpha_liu alpha_shi --mb 64
+labgpu sync alpha_liu:/data/me/project alpha_shi:/data/me/project
+labgpu sync alpha_liu:/data/me/project alpha_shi:/data/me/project --execute --yes
+```
+
+默认通过你的电脑中转，所以两台服务器不需要互相 SSH。
+
+## 模式
+
+**Agentless SSH Mode** 是默认模式。LabGPU 本地运行，用 `nvidia-smi`、`ps`、`df`、
+`free`、`uptime` 这类远程命令探测服务器。
+
+**Enhanced Mode** 是可选模式。如果远程 PATH 里有 `labgpu`，UI 还会读取：
 
 ```bash
 labgpu status --json
 labgpu list --json
 ```
 
-这样能显示更完整的 tracked/adopted run 信息。失败时会自动回退到 Agentless Mode。
+Enhanced Mode 失败不会影响 Agentless Mode。
 
 ## 安全边界
 
-LabGPU 是个人工具，不是 scheduler、reservation、quota、admin panel，也不是 Slurm/Kubernetes/W&B/MLflow 的替代品。
+LabGPU 是 personal-first。它不是 scheduler、reservation system、quota system、
+admin panel、Slurm/Kubernetes replacement，也不是管理别人任务的工具。
 
-安全停止默认很保守：
+安全停止进程：
 
 - 只对当前 SSH 用户自己的进程显示
-- shared Linux account 默认禁用 stop action
-- 操作前重新 probe PID/user/start time/command hash
+- shared Linux account 默认不开放 stop action
+- 操作前重新校验 PID/user/start time/command hash
 - 默认发 SIGTERM
-- SIGKILL 需要显式 force
-- UI 绑定到非 loopback 时默认禁用修改操作
+- 强制 SIGKILL 需要单独确认
+- 非 loopback 绑定默认禁用 mutating actions
 
-命令和 debug context 默认脱敏。共享 `LABGPU_HOME` 属于高级用法，可能暴露日志、命令、配置和诊断信息；看 [docs/security.md](docs/security.md) 和 [docs/lab_setup.md](docs/lab_setup.md) 再用。
+AI session 安全：
 
-## 常用命令
+- LabGPU 只读 provider name、current selection、proxy port
+- 真实 provider key 保持在 CC Switch 或本机 provider 工具里
+- 远程服务器只拿到临时 `labgpu-session-*` token
+- 本机 gateway 校验 token 后才转发
+- Alpha 阶段 Remote Write 保持禁用
+
+完整安全说明见 [docs/security.md](docs/security.md)。
+
+## 命令速查
 
 ```text
 labgpu init [--hosts alpha_liu,alpha_shi] [--tags A100,training]
@@ -268,48 +279,17 @@ labgpu servers probe alpha_liu
 labgpu demo
 ```
 
-## LabGPU Assistant
-
-实验性功能，还没做完。Assistant 不是当前主卖点，只是展示 LabGPU 在核心找卡、追踪、诊断流程稳定后可以往哪里走。
-
-现在已经能做：
-
-- 本地模式：不调用外部 API，只基于当前 LabGPU workspace 做规则型回答。
-- 自带 API 模式：在 Assistant 页面填自己的 OpenAI-compatible chat-completions URL、model 和 API key。
-- 只读回答：推荐 GPU、解释可见失败、找任务、生成可复制的 launch/debug-context 命令。
-
-还没做完：
-
-- 还没有可靠的多轮规划
-- 还没有完整 tool-call 框架
-- 还不会自动执行 launch/adopt/stop
-- 还没有移动端/PWA push 通知闭环
-- 失败解释还比较基础，依赖当前 LabGPU 能看到的上下文
-
-API 模式只会发送脱敏后的 workspace summary 到你配置的 endpoint。助手仍然只读、只生成可复制命令，不会执行任意 SSH shell。
-
-TODO：
-
-- 结合 logs、config、git、env summary、GPU history 给出更好的失败解释
-- 做结构化 LabGPU tool-call 层，而不是让模型自由生成 shell
-- 未来对 approved LabGPU action 增加明确确认卡片
-- 做移动端/PWA 通知：run failed、suspected idle、GPU 空出来
-
-## 当前状态
-
-LabGPU 还在 alpha。当前主要支持 NVIDIA `nvidia-smi`、SSH aliases、tmux 启动、本地 run capsule、GPU 推荐、Failure Inbox、debug context 导出和只停止自己进程的安全操作。
-
-已知边界：
-
-- 不做 scheduler、queue、reservation、quota、admin panel
-- Web UI alpha 阶段没有完整认证层，请默认本地使用
-- shared Linux account 建议禁用 stop action，或者用 Enhanced Mode
-- MIG、Docker、MPS、Slurm、ROCm 兼容性见 [docs/compatibility.md](docs/compatibility.md)
-
-更多文档：
+## 文档
 
 - [Quickstart](docs/quickstart.md)
+- [AI Session Smoke Test](docs/ai-session-smoke-test.md)
 - [Security](docs/security.md)
 - [Compatibility](docs/compatibility.md)
 - [Lab setup](docs/lab_setup.md)
-- [Changelog](CHANGELOG.md)
+- [Design](docs/design.md)
+
+## 状态
+
+LabGPU 仍是 alpha。当前重点是 NVIDIA + SSH + `nvidia-smi`、本地 run capsule、GPU
+ranking、session-scoped AI proxy tunnel、Failure Inbox、脱敏 context export、传输工具
+和安全的 own-process actions。
