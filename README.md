@@ -310,6 +310,7 @@ labgpu demo
 - [Compatibility](docs/compatibility.md)
 - [Lab setup](docs/lab_setup.md)
 - [Design](docs/design.md)
+- [Roadmap and Feature Status](docs/roadmap.md)
 
 ## Status
 
