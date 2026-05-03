@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from labgpu import __version__
-from labgpu.cli import adopt, context as context_cmd, demo, diagnose, doctor, init as init_cmd, kill, list as list_cmd, logs, nettest, pick, refresh, report, run as run_cmd, servers, status, sync as sync_cmd, ui, web, where
+from labgpu.cli import adopt, context as context_cmd, demo, desktop, diagnose, doctor, init as init_cmd, kill, list as list_cmd, logs, nettest, pick, refresh, report, run as run_cmd, servers, status, sync as sync_cmd, ui, web, where
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -190,6 +190,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--allow-actions", action="store_true", help="allow stop actions even when not bound to loopback")
     p.add_argument("--fake-lab", action="store_true", help="use built-in multi-server demo data")
     p.set_defaults(handler=ui.run)
+
+    p = sub.add_parser("desktop", help="start LabGPU as a local app-style window")
+    p.add_argument("--hosts", help="comma-separated SSH aliases, for example alpha_liu,Song-1")
+    p.add_argument("--pattern", help="filter SSH aliases by substring")
+    p.add_argument("--config", help="SSH config path, default ~/.ssh/config")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=0, help="port to bind; default picks a free local port")
+    p.add_argument("--timeout", type=int, default=8)
+    p.add_argument("--no-open", action="store_true", help="start the backend without opening a desktop-style browser window")
+    p.add_argument("--browser", default="auto", help="macOS app browser to use, default: auto")
+    p.add_argument("--allow-actions", action="store_true", help="allow stop actions even when not bound to loopback")
+    p.add_argument("--fake-lab", action="store_true", help="use built-in multi-server demo data")
+    p.set_defaults(handler=desktop.run)
 
     p = sub.add_parser("servers", help="probe SSH GPU servers or start the resource-details UI")
     p.add_argument("--hosts", help="comma-separated SSH aliases, for example alpha_liu,Song-1")
