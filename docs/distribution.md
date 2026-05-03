@@ -53,9 +53,18 @@ create a GitHub Release automatically and attach the generated `.dmg` / `.zip`
 files.
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag -a v0.1.1-alpha -m "LabGPU v0.1.1 alpha"
+git push origin v0.1.1-alpha
 ```
+
+Release troubleshooting:
+
+- Existing tags do not rebuild automatically after the workflow is added or
+  changed. Push a new `v*` tag for the current commit.
+- Manual `workflow_dispatch` runs are useful for testing packages, but they do
+  not create a GitHub Release.
+- Keep `pyproject.toml` and `src/labgpu/__init__.py` in sync before cutting a
+  new release tag. The standalone artifact names use `src/labgpu/__init__.py`.
 
 ## Current Limitations
 

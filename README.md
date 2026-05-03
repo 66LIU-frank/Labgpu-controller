@@ -3,7 +3,7 @@
 [![CI](https://github.com/66LIU-frank/Labgpu-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/66LIU-frank/Labgpu-controller/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-v0.1.0--alpha-orange)
+![Status](https://img.shields.io/badge/status-v0.1.1--alpha-orange)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -111,6 +111,16 @@ inside the session gateway so remote servers still receive only a
 
 ## Quick Start
 
+Download a desktop build:
+
+- macOS: download `LabGPU-<version>-macOS.dmg` from
+  [GitHub Releases](https://github.com/66LIU-frank/Labgpu-controller/releases)
+- Windows: download `LabGPU-<version>-Windows.zip` from
+  [GitHub Releases](https://github.com/66LIU-frank/Labgpu-controller/releases)
+
+If Releases is empty or behind `main`, push a fresh version tag. GitHub Actions
+only publishes release artifacts for commits that receive a `v*` tag.
+
 Install from GitHub:
 
 ```bash
@@ -159,8 +169,14 @@ python scripts/build_standalone.py --clean
 ```
 
 The standalone path uses PyInstaller. On GitHub, the `Release Build` workflow
-builds macOS `.dmg` and Windows `.zip` artifacts. Tag pushes also publish a
-GitHub Release with those artifacts attached.
+builds macOS `.dmg` and Windows `.zip` artifacts. Manual runs upload artifacts
+to the Actions run; tag pushes also publish a GitHub Release with those
+artifacts attached.
+
+```bash
+git tag -a v0.1.1-alpha -m "LabGPU v0.1.1 alpha"
+git push origin v0.1.1-alpha
+```
 
 For a fixed server set:
 

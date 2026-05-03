@@ -79,6 +79,7 @@ def find_or_prepare_pyinstaller(*, no_install: bool) -> list[str]:
         run([sys.executable, "-m", "venv", str(venv_dir)])
     run([str(python_bin), "-m", "pip", "install", "--upgrade", "pip"])
     run([str(python_bin), "-m", "pip", "install", "--upgrade", "pyinstaller"])
+    run([str(python_bin), "-m", "pip", "install", "-e", str(ROOT)])
     return [str(python_bin), "-m", "PyInstaller"]
 
 

@@ -3,7 +3,7 @@
 [![CI](https://github.com/66LIU-frank/Labgpu-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/66LIU-frank/Labgpu-controller/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-v0.1.0--alpha-orange)
+![Status](https://img.shields.io/badge/status-v0.1.1--alpha-orange)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -104,6 +104,16 @@ key，但远程服务器仍然只拿到 `labgpu-session-*` token。LabGPU 不创
 
 ## 快速开始
 
+下载桌面版：
+
+- macOS：从 [GitHub Releases](https://github.com/66LIU-frank/Labgpu-controller/releases)
+  下载 `LabGPU-<version>-macOS.dmg`
+- Windows：从 [GitHub Releases](https://github.com/66LIU-frank/Labgpu-controller/releases)
+  下载 `LabGPU-<version>-Windows.zip`
+
+如果 Releases 是空的，或者比 `main` 落后，需要推一个新的版本 tag。GitHub Actions
+只会给收到 `v*` tag 的 commit 自动发布 release 产物。
+
 安装：
 
 ```bash
@@ -152,8 +162,13 @@ python scripts/build_standalone.py --clean
 ```
 
 standalone 路线使用 PyInstaller。GitHub 上的 `Release Build` workflow 会在打 tag
-或手动触发时构建 macOS `.dmg` 和 Windows `.zip`；打 tag 还会自动创建 GitHub
-Release 并把产物挂上去。
+或手动触发时构建 macOS `.dmg` 和 Windows `.zip`；手动触发只把产物放在 Actions
+run 里，打 tag 才会自动创建 GitHub Release 并把产物挂上去。
+
+```bash
+git tag -a v0.1.1-alpha -m "LabGPU v0.1.1 alpha"
+git push origin v0.1.1-alpha
+```
 
 固定服务器范围：
 

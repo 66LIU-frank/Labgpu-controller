@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "labgpu"
-version = "0.1.0"
+version = "0.1.1"
 description = "Personal GPU workspace for students using shared SSH servers."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,7 +27,9 @@ classifiers = [
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: System :: Monitoring"
 ]
-dependencies = []
+dependencies = [
+  "tomli>=2.0; python_version<'3.11'"
+]
 
 [project.urls]
 Homepage = "https://github.com/66LIU-frank/Labgpu-controller"

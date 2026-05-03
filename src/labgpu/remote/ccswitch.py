@@ -4,9 +4,13 @@ import json
 import os
 import socket
 import sqlite3
-import tomllib
 from pathlib import Path
 from typing import Any
+
+try:  # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10 CI
+    import tomli as tomllib  # type: ignore[no-redef]
 
 
 CCSWITCH_DB = ".cc-switch/cc-switch.db"
