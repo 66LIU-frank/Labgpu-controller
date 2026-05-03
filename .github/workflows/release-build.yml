@@ -1,0 +1,37 @@
+name: Release Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  standalone:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS DMG
+            os: macos-latest
+            artifact: LabGPU-macOS
+            path: dist/release/*.dmg
+          - name: Windows ZIP
+            os: windows-latest
+            artifact: LabGPU-Windows
+            path: dist/release/*.zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build standalone package
+        run: python scripts/build_standalone.py --clean
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error

@@ -144,6 +144,15 @@ scripts/package_windows_zip.sh
 These packages are lightweight launchers/installers. They install or call the
 normal `labgpu` command, then start the same local-first UI.
 
+Build standalone desktop packages:
+
+```bash
+python scripts/build_standalone.py --clean
+```
+
+The standalone path uses PyInstaller. On GitHub, the `Release Build` workflow
+builds macOS `.dmg` and Windows `.zip` artifacts for tag/manual releases.
+
 For a fixed server set:
 
 ```bash
@@ -341,6 +350,7 @@ labgpu demo
 - [Quickstart](docs/quickstart.md)
 - [AI Session Smoke Test](docs/ai-session-smoke-test.md)
 - [Security](docs/security.md)
+- [Distribution](docs/distribution.md)
 - [Compatibility](docs/compatibility.md)
 - [Lab setup](docs/lab_setup.md)
 - [Design](docs/design.md)

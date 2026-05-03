@@ -140,6 +140,15 @@ scripts/package_windows_zip.sh
 这两个包是轻量启动器/安装器：先安装或调用正常的 `labgpu` 命令，然后启动同一套
 local-first UI。
 
+构建真正的 standalone 桌面包：
+
+```bash
+python scripts/build_standalone.py --clean
+```
+
+standalone 路线使用 PyInstaller。GitHub 上的 `Release Build` workflow 会在打 tag
+或手动触发时构建 macOS `.dmg` 和 Windows `.zip`。
+
 固定服务器范围：
 
 ```bash
@@ -328,6 +337,7 @@ labgpu demo
 - [Quickstart](docs/quickstart.md)
 - [AI Session Smoke Test](docs/ai-session-smoke-test.md)
 - [Security](docs/security.md)
+- [Distribution](docs/distribution.md)
 - [Compatibility](docs/compatibility.md)
 - [Lab setup](docs/lab_setup.md)
 - [Design](docs/design.md)

@@ -36,6 +36,7 @@ Issues = "https://github.com/66LIU-frank/Labgpu-controller/issues"
 
 [project.scripts]
 labgpu = "labgpu.cli.main:main"
+labgpu-desktop = "labgpu.cli.standalone:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
