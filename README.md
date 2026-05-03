@@ -134,6 +134,16 @@ labgpu desktop --install-app
 open ~/Applications/LabGPU.app
 ```
 
+Build release launcher packages:
+
+```bash
+scripts/package_macos_dmg.sh
+scripts/package_windows_zip.sh
+```
+
+These packages are lightweight launchers/installers. They install or call the
+normal `labgpu` command, then start the same local-first UI.
+
 For a fixed server set:
 
 ```bash

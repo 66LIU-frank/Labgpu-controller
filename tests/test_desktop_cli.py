@@ -62,12 +62,15 @@ class DesktopCliTest(unittest.TestCase):
     def test_install_macos_app_writes_wrapper_bundle(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "LabGPU.app"
-            with patch("labgpu.cli.desktop.platform.system", return_value="Darwin"), patch("labgpu.cli.desktop.shutil.which", return_value="/Users/me/.local/bin/labgpu"):
+            with patch("labgpu.cli.desktop.platform.system", return_value="Darwin"):
                 app_path = desktop.install_macos_app(target)
             launcher = app_path / "Contents" / "MacOS" / "LabGPU"
             self.assertTrue(launcher.exists())
             self.assertIn("CFBundleExecutable", (app_path / "Contents" / "Info.plist").read_text())
-            self.assertIn("/Users/me/.local/bin/labgpu desktop", launcher.read_text())
+            launcher_text = launcher.read_text()
+            self.assertIn("find_labgpu()", launcher_text)
+            self.assertIn('exec "$LABGPU_BIN" desktop', launcher_text)
+            self.assertIn("LabGPU is not installed yet", launcher_text)
             self.assertTrue(launcher.stat().st_mode & 0o111)
 
 

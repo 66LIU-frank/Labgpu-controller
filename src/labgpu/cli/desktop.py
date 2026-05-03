@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import os
 import platform
-import shlex
-import shutil
 import socket
 import subprocess
 import threading
@@ -103,13 +101,44 @@ def default_macos_app_path() -> Path:
 
 
 def app_launcher_script() -> str:
-    labgpu_bin = shutil.which("labgpu") or "labgpu"
     path_prefix = "$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
     return "\n".join(
         [
             "#!/bin/sh",
             f'export PATH="{path_prefix}:$PATH"',
-            f"exec {shlex.quote(labgpu_bin)} desktop",
+            "find_labgpu() {",
+            "  if command -v labgpu >/dev/null 2>&1; then",
+            "    command -v labgpu",
+            "    return 0",
+            "  fi",
+            '  if [ -x "$HOME/.local/bin/labgpu" ]; then',
+            '    printf "%s\\n" "$HOME/.local/bin/labgpu"',
+            "    return 0",
+            "  fi",
+            "  if command -v python3 >/dev/null 2>&1; then",
+            "    user_base=$(python3 - <<'PY' 2>/dev/null",
+            "import site",
+            "print(site.USER_BASE)",
+            "PY",
+            "    )",
+            '    if [ -n "$user_base" ] && [ -x "$user_base/bin/labgpu" ]; then',
+            '      printf "%s\\n" "$user_base/bin/labgpu"',
+            "      return 0",
+            "    fi",
+            "  fi",
+            "  return 1",
+            "}",
+            'LABGPU_BIN="$(find_labgpu || true)"',
+            'if [ -z "$LABGPU_BIN" ]; then',
+            "  if command -v osascript >/dev/null 2>&1; then",
+            "    osascript -e 'display dialog \"LabGPU is not installed yet. Run install.command from the DMG, or install with pipx install git+https://github.com/66LIU-frank/Labgpu-controller.git\" buttons {\"OK\"} default button \"OK\" with title \"LabGPU\"' >/dev/null 2>&1 || true",
+            "  fi",
+            "  if command -v open >/dev/null 2>&1; then",
+            "    open 'https://github.com/66LIU-frank/Labgpu-controller#quick-start' >/dev/null 2>&1 || true",
+            "  fi",
+            "  exit 127",
+            "fi",
+            'exec "$LABGPU_BIN" desktop',
             "",
         ]
     )

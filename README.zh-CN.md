@@ -130,6 +130,16 @@ labgpu desktop --install-app
 open ~/Applications/LabGPU.app
 ```
 
+构建发布用启动器安装包：
+
+```bash
+scripts/package_macos_dmg.sh
+scripts/package_windows_zip.sh
+```
+
+这两个包是轻量启动器/安装器：先安装或调用正常的 `labgpu` 命令，然后启动同一套
+local-first UI。
+
 固定服务器范围：
 
 ```bash
