@@ -28,7 +28,8 @@ from labgpu.remote.state import alerts_for_server, annotate_server, build_overvi
 from labgpu.remote.vscode_recent import read_vscode_recent_remote_folders
 from labgpu.remote.workspace import failure_inbox_items, training_items
 
-CACHE_TTL_SECONDS = 30
+CACHE_TTL_SECONDS = 300
+AUTO_REFRESH_INTERVAL_SECONDS = 300
 _REFRESH_LOCK = threading.Lock()
 _REFRESHING_ALIASES: set[str] = set()
 
@@ -2259,6 +2260,7 @@ a{{color:inherit}} code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace
 .topnav,.top-controls{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
 .top-controls{{justify-content:flex-end;max-width:min(560px,45vw)}}
 .topnav a,.top-controls a,.top-controls button{{border:1px solid var(--border);background:var(--button);border-radius:999px;padding:6px 10px;text-decoration:none;color:var(--link);font:inherit;cursor:pointer;white-space:nowrap}}
+.refresh-cadence{{color:var(--muted);font-size:12px;white-space:nowrap}}
 .cache-status{{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex:1 1 100%;min-width:min(420px,100%);color:var(--muted);font-size:12px}}
 .cache-message{{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(300px,24vw)}}
 .json-control{{display:none!important}}
@@ -2449,6 +2451,7 @@ const translations = {{
   "Pause refresh": "暂停刷新",
   "Resume refresh": "继续刷新",
   "Refresh now": "立即刷新",
+  "Auto refresh 5 min": "自动刷新 5 分钟",
   "Cached page": "缓存页面",
   "Servers missing cache": "缺少缓存的服务器",
   "Cached data age": "缓存距上次刷新",
@@ -2784,7 +2787,7 @@ if (refreshNow) {{
 }}
 setInterval(() => {{
   if (!paused) window.location.reload();
-}}, 15000);
+}}, {AUTO_REFRESH_INTERVAL_SECONDS * 1000});
 document.querySelectorAll("form input, form select, form textarea").forEach((input) => {{
   input.addEventListener("focus", () => setRefreshPaused(true), {{once: true}});
   input.addEventListener("input", () => setRefreshPaused(true), {{once: true}});
@@ -3444,6 +3447,7 @@ def render_nav(*, status: str = "", json_href: str = "/api/servers") -> str:
         {status}
         <button id="refresh-now" type="button">Refresh now</button>
         <button id="pause-refresh" type="button">Pause refresh</button>
+        <span class="refresh-cadence">Auto refresh 5 min</span>
         <a class="json-control" href="{esc(json_href)}">JSON</a>
         <button id="language-toggle" type="button">中文</button>
         <button id="theme-toggle" type="button">Dark</button>

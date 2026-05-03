@@ -340,6 +340,8 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn("Cached data age", html)
         self.assertNotIn("Opening from local cache", html)
         self.assertIn("Refresh now", html)
+        self.assertIn("Auto refresh 5 min", html)
+        self.assertIn("300000", html)
 
     def test_summary_cards_and_empty_gpu_state(self):
         data = sample_data()

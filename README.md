@@ -123,6 +123,13 @@ Open an app-style desktop window:
 labgpu desktop
 ```
 
+Create a macOS app wrapper:
+
+```bash
+labgpu desktop --install-app
+open ~/Applications/LabGPU.app
+```
+
 For a fixed server set:
 
 ```bash
@@ -293,6 +300,7 @@ See [docs/security.md](docs/security.md) for the full model.
 labgpu init [--hosts alpha_liu,alpha_shi] [--tags A100,training]
 labgpu ui [--hosts alpha_liu,alpha_shi] [--fake-lab]
 labgpu desktop [--hosts alpha_liu,alpha_shi] [--fake-lab]
+labgpu desktop --install-app [PATH]
 labgpu pick [--min-vram 24G] [--prefer A100] [--tag training] [--explain] [--cmd "COMMAND"] [--json]
 labgpu where [--json]
 labgpu nettest SRC_HOST DST_HOST [--mb 64] [--both] [--direct] [--json]

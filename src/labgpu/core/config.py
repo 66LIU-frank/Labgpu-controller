@@ -23,7 +23,7 @@ class ServerEntry:
 
 @dataclass
 class UIConfig:
-    refresh_interval_seconds: int = 15
+    refresh_interval_seconds: int = 300
     safe_mode: bool = True
 
 

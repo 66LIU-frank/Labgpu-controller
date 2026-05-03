@@ -1,5 +1,7 @@
 import argparse
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from labgpu.cli import desktop
@@ -11,6 +13,7 @@ class DesktopCliTest(unittest.TestCase):
         args = build_parser().parse_args(["desktop", "--port", "8899", "--no-open", "--hosts", "alpha_liu"])
         self.assertEqual(args.port, 8899)
         self.assertEqual(args.hosts, "alpha_liu")
+        self.assertIsNone(args.install_app)
         self.assertIs(args.handler, desktop.run)
 
     def test_run_uses_free_port_when_port_is_zero(self):
@@ -19,6 +22,7 @@ class DesktopCliTest(unittest.TestCase):
             port=0,
             no_open=True,
             browser="auto",
+            install_app=None,
             config=None,
             hosts="alpha_liu,beta",
             pattern=None,
@@ -50,6 +54,21 @@ class DesktopCliTest(unittest.TestCase):
         with patch("labgpu.cli.desktop.platform.system", return_value="Linux"), patch("labgpu.cli.desktop.webbrowser.open", return_value=True) as open_browser:
             self.assertTrue(desktop.open_desktop_window("http://127.0.0.1:8798"))
         open_browser.assert_called_once_with("http://127.0.0.1:8798")
+
+    def test_install_app_flag_is_registered(self):
+        args = build_parser().parse_args(["desktop", "--install-app", "/tmp/LabGPU.app"])
+        self.assertEqual(args.install_app, "/tmp/LabGPU.app")
+
+    def test_install_macos_app_writes_wrapper_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "LabGPU.app"
+            with patch("labgpu.cli.desktop.platform.system", return_value="Darwin"), patch("labgpu.cli.desktop.shutil.which", return_value="/Users/me/.local/bin/labgpu"):
+                app_path = desktop.install_macos_app(target)
+            launcher = app_path / "Contents" / "MacOS" / "LabGPU"
+            self.assertTrue(launcher.exists())
+            self.assertIn("CFBundleExecutable", (app_path / "Contents" / "Info.plist").read_text())
+            self.assertIn("/Users/me/.local/bin/labgpu desktop", launcher.read_text())
+            self.assertTrue(launcher.stat().st_mode & 0o111)
 
 
 if __name__ == "__main__":

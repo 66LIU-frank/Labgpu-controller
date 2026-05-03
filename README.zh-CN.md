@@ -120,6 +120,13 @@ labgpu ui
 labgpu desktop
 ```
 
+创建 macOS 应用包装：
+
+```bash
+labgpu desktop --install-app
+open ~/Applications/LabGPU.app
+```
+
 固定服务器范围：
 
 ```bash
@@ -282,6 +289,7 @@ AI session 安全：
 labgpu init [--hosts alpha_liu,alpha_shi] [--tags A100,training]
 labgpu ui [--hosts alpha_liu,alpha_shi] [--fake-lab]
 labgpu desktop [--hosts alpha_liu,alpha_shi] [--fake-lab]
+labgpu desktop --install-app [PATH]
 labgpu pick [--min-vram 24G] [--prefer A100] [--tag training] [--explain] [--cmd "COMMAND"] [--json]
 labgpu where [--json]
 labgpu nettest SRC_HOST DST_HOST [--mb 64] [--both] [--direct] [--json]

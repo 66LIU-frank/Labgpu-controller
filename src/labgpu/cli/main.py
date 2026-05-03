@@ -200,6 +200,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--timeout", type=int, default=8)
     p.add_argument("--no-open", action="store_true", help="start the backend without opening a desktop-style browser window")
     p.add_argument("--browser", default="auto", help="macOS app browser to use, default: auto")
+    p.add_argument("--install-app", nargs="?", const="", help="create a macOS LabGPU.app wrapper, optionally at PATH")
     p.add_argument("--allow-actions", action="store_true", help="allow stop actions even when not bound to loopback")
     p.add_argument("--fake-lab", action="store_true", help="use built-in multi-server demo data")
     p.set_defaults(handler=desktop.run)
