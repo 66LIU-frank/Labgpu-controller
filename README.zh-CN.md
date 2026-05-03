@@ -338,7 +338,7 @@ labgpu demo
 - [Quickstart](docs/quickstart.md)
 - [AI Session Smoke Test](docs/ai-session-smoke-test.md)
 - [Security](docs/security.md)
-- [Distribution](docs/distribution.md)
+- [分发](docs/distribution.md)
 - [Compatibility](docs/compatibility.md)
 - [Lab setup](docs/lab_setup.md)
 - [Design](docs/design.md)
