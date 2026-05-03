@@ -89,6 +89,61 @@ class AISessionTest(unittest.TestCase):
         self.assertIn("Codex CLI", command.display_summary)
         self.assertNotIn(SESSION_TOKEN, command.display_summary)
 
+    def test_build_ai_ssh_command_for_claude_remote_config_override(self):
+        command = build_ai_ssh_command(
+            EnterServerAIRequest(
+                server_alias="alpha_liu",
+                gpu_index=None,
+                ai_app="claude",
+                provider_name="DMXAPI",
+                ccswitch_proxy_port=15721,
+                local_gateway_port=49231,
+                remote_gateway_port=27183,
+                session_token=SESSION_TOKEN,
+                mode="remote_write",
+            )
+        )
+        remote = command.ssh_args[7]
+        self.assertIn("LABGPU_AI_MODE=remote_write", remote)
+        self.assertIn("LABGPU_REMOTE_WRITE_BACKUP", remote)
+        self.assertIn(".labgpu/ai-config-backups", remote)
+        self.assertIn("labgpu_backup_config", remote)
+        self.assertIn("$HOME/.claude/settings.json", remote)
+        self.assertIn("ANTHROPIC_BASE_URL", remote)
+        self.assertIn(f"ANTHROPIC_API_KEY={SESSION_TOKEN}", remote)
+        self.assertIn("restore.sh", remote)
+        self.assertIn("Restore with: sh", remote)
+        self.assertNotIn("--settings \"$LABGPU_CLAUDE_SETTINGS\"", remote)
+        self.assertNotIn("sk-", " ".join(command.ssh_args))
+        self.assertNotIn(SESSION_TOKEN, command.display_summary)
+
+    def test_build_ai_ssh_command_for_codex_remote_config_override(self):
+        command = build_ai_ssh_command(
+            EnterServerAIRequest(
+                server_alias="alpha_liu",
+                gpu_index=None,
+                ai_app="codex",
+                provider_name="OpenAI",
+                ccswitch_proxy_port=15721,
+                local_gateway_port=49231,
+                remote_gateway_port=27183,
+                session_token=SESSION_TOKEN,
+                mode="remote_write",
+            )
+        )
+        remote = command.ssh_args[7]
+        self.assertIn("LABGPU_AI_MODE=remote_write", remote)
+        self.assertIn("$HOME/.codex/auth.json", remote)
+        self.assertIn("$HOME/.codex/config.toml", remote)
+        self.assertIn("openai_base_url", remote)
+        self.assertIn(f"OPENAI_API_KEY={SESSION_TOKEN}", remote)
+        self.assertIn("auth_mode", remote)
+        self.assertIn("restore.sh", remote)
+        self.assertNotIn("export ANTHROPIC_API_KEY", remote)
+        self.assertNotIn("LABGPU_CODEX_HOME", remote)
+        self.assertNotIn("CODEX_HOME=", remote)
+        self.assertNotIn(SESSION_TOKEN, command.display_summary)
+
     def test_build_ai_ssh_command_quotes_provider_and_validates_gpu(self):
         command = build_ai_ssh_command(
             EnterServerAIRequest(

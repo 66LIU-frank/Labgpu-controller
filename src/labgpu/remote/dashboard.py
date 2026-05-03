@@ -289,6 +289,7 @@ def current_ccswitch_provider(summary: dict[str, object], app: str) -> str:
 
 
 AI_PROXY_TUNNEL_APPS = {"claude": "Claude Code", "codex": "Codex CLI"}
+AI_SESSION_MODES = {"proxy_tunnel", "remote_write"}
 
 
 class ServerHandler(BaseHTTPRequestHandler):
@@ -494,7 +495,7 @@ class ServerHandler(BaseHTTPRequestHandler):
             except CcSwitchError as exc:
                 self._json({"ok": False, "result": "ccswitch_switch_failed", "message": str(exc)}, status=HTTPStatus.CONFLICT)
                 return
-        if agent in AI_PROXY_TUNNEL_APPS and ai_mode == "proxy_tunnel":
+        if agent in AI_PROXY_TUNNEL_APPS and ai_mode in AI_SESSION_MODES:
             summary = read_ccswitch_summary()
             provider_name = provider_name or current_ccswitch_provider(summary, agent)
             if not provider_name:
@@ -1065,7 +1066,7 @@ def render_providers_page() -> str:
             <span>Open Proxy Tunnel</span>
           </div>
           <div class="ai-launch-grid">{launch_cards}</div>
-          <p class="muted">Remote Write stays disabled in Alpha. LabGPU launches remote AI CLIs through a session gateway and does not copy provider API keys to servers.</p>
+          <p class="muted">Proxy Tunnel stays recommended. Remote Config Override is available for Claude/Codex when you want LabGPU to back up and overwrite remote app config for the current gateway session. Real provider keys are not copied to servers.</p>
         </section>
         <section class="panel">
           <div class="section-head"><h2>Provider Console</h2><a class="json-control" href="/api/integrations/ccswitch">JSON</a></div>
@@ -2399,9 +2400,9 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
     <fieldset>
       <legend>Mode</legend>
       <label><input type="radio" name="ssh-ai-mode" value="proxy_tunnel" checked> Proxy Tunnel <span class="muted">recommended, secrets stay local</span></label>
-      <label><input type="radio" name="ssh-ai-mode" value="remote_write" disabled> Remote Write <span class="muted">advanced, coming soon</span></label>
+      <label><input type="radio" name="ssh-ai-mode" value="remote_write"> Remote Config Override <span class="muted">advanced, backs up remote config</span></label>
     </fieldset>
-    <p class="muted" id="ssh-modal-hint">This flow creates a per-session gateway tunnel and temporary app config under remote <code>/tmp</code>. Real provider keys stay local. If SSH exits with remote forwarding failure, the selected remote gateway port may already be in use on that server.</p>
+    <p class="muted" id="ssh-modal-hint">Proxy Tunnel creates a per-session gateway tunnel and temporary app config under remote <code>/tmp</code>. Remote Config Override also backs up and writes remote Claude/Codex config to the session gateway. Real provider keys stay local. If SSH exits with remote forwarding failure, the selected remote gateway port may already be in use on that server.</p>
   </details>
   <p id="ssh-modal-result" class="muted"></p>
   <div class="modal-actions">
@@ -2418,6 +2419,7 @@ let ccswitchSummary = null;
 let vscodeRecentFolders = [];
 const aiAppLabels = {{claude: "Claude Code", codex: "Codex CLI", gemini: "Gemini", openclaw: "OpenClaw"}};
 const proxyTunnelApps = new Set(["claude", "codex"]);
+const aiSessionModes = new Set(["proxy_tunnel", "remote_write"]);
 const themeButton = document.getElementById("theme-toggle");
 const languageButton = document.getElementById("language-toggle");
 const jsonToggle = document.getElementById("show-json-toggle");
@@ -2452,6 +2454,8 @@ const translations = {{
   "Resume refresh": "继续刷新",
   "Refresh now": "立即刷新",
   "Auto refresh 5 min": "自动刷新 5 分钟",
+  "Remote Config Override": "远程配置覆盖",
+  "advanced, backs up remote config": "高级，会备份远程配置",
   "Cached page": "缓存页面",
   "Servers missing cache": "缺少缓存的服务器",
   "Cached data age": "缓存距上次刷新",
@@ -2916,6 +2920,7 @@ function updateCcswitchProviderOptions() {{
   const proxySummary = document.getElementById("ssh-proxy-summary");
   const providerName = currentCcswitchProviderName(agent);
   const proxyConfig = activeCcswitchProxyConfig(agent);
+  const modeLabel = selectedAiMode() === "remote_write" ? "Remote Config Override" : "Proxy Tunnel";
   if (providerSummary) {{
     providerSummary.textContent = providerName
       ? `Using current CC Switch ${{aiAppLabel(agent)}} provider: ${{providerName}}. To change provider, use the AI Sessions page or CC Switch.`
@@ -2923,10 +2928,10 @@ function updateCcswitchProviderOptions() {{
   }}
   if (proxySummary) {{
     proxySummary.textContent = proxyConfig && proxyConfig.listen_port && ccswitchProxyIsListening(proxyConfig)
-      ? `Proxy Tunnel: remote random port -> local LabGPU gateway -> CC Switch 127.0.0.1:${{proxyConfig.listen_port}}`
+      ? `${{modeLabel}}: remote random port -> local LabGPU gateway -> CC Switch 127.0.0.1:${{proxyConfig.listen_port}}`
       : proxyConfig && proxyConfig.listen_port
-        ? `Proxy Tunnel: CC Switch proxy is configured but not listening on 127.0.0.1:${{proxyConfig.listen_port}}.`
-      : "Proxy Tunnel: CC Switch proxy is not configured or not enabled.";
+        ? `${{modeLabel}}: CC Switch proxy is configured but not listening on 127.0.0.1:${{proxyConfig.listen_port}}.`
+      : `${{modeLabel}}: CC Switch proxy is not configured or not enabled.`;
   }}
 }}
 async function loadCcswitchSummary() {{
@@ -2942,7 +2947,7 @@ async function loadCcswitchSummary() {{
   return ccswitchSummary;
 }}
 function selectedLocalProxyPort() {{
-  if (selectedAiMode() !== "proxy_tunnel") return "";
+  if (!aiSessionModes.has(selectedAiMode())) return "";
   return ccswitchProxyPort(selectedAgent());
 }}
 function selectedRemoteProxyPort() {{
@@ -2961,8 +2966,8 @@ async function runOpenSsh(button) {{
     if (result) result.textContent = "Only Claude Code and Codex CLI AI sessions are available in this alpha.";
     return;
   }}
-  if (mode !== "proxy_tunnel") {{
-    if (result) result.textContent = "Remote Write is not available in this alpha.";
+  if (!aiSessionModes.has(mode)) {{
+    if (result) result.textContent = "Unsupported AI session mode.";
     return;
   }}
   if (!providerName) {{

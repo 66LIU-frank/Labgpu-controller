@@ -43,6 +43,10 @@ These are useful, but the behavior should stay conservative:
 - browser-local Recent AI Sessions
   - launch history only
   - not a tunnel health monitor
+- Remote Config Override for Claude/Codex
+  - backs up remote config before writing
+  - writes only the LabGPU session token/base URL, not real provider keys
+  - use only when you accept temporary session state in the remote home directory
 
 ## Not Implemented Yet
 
@@ -50,7 +54,7 @@ These should not be presented as working product features:
 
 - adding new AI providers or API keys inside LabGPU
 - local encrypted provider vault
-- Remote Write into remote `~/.claude`, `~/.codex`, `~/.gemini`
+- Real provider-key Remote Write into remote `~/.claude`, `~/.codex`, `~/.gemini`
 - Gemini remote AI session launcher
 - OpenClaw remote AI session launcher
 - remote `aiswitch use`

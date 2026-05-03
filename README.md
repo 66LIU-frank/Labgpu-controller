@@ -82,6 +82,8 @@ What works now:
 - create an SSH reverse tunnel with a per-session gateway
 - inject a temporary Claude Code wrapper/settings file under remote `/tmp`
 - inject a temporary Codex `CODEX_HOME` and wrapper under remote `/tmp` (beta)
+- optionally back up and overwrite remote Claude/Codex config for the current
+  gateway session, without copying real provider keys
 - run read-only `aiswitch status` / `aiswitch doctor` inside the remote shell
 - keep real provider keys on the laptop or in CC Switch
 
@@ -290,7 +292,8 @@ AI session safety:
 - real provider keys stay in CC Switch or local provider tooling
 - remote servers receive only a temporary `labgpu-session-*` token
 - the local gateway validates the token before forwarding
-- Remote Write remains disabled in Alpha
+- Remote Config Override backs up remote Claude/Codex config and writes only the
+  session gateway token/base URL, not real provider keys
 
 See [docs/security.md](docs/security.md) for the full model.
 

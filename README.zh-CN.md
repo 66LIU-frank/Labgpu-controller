@@ -80,6 +80,7 @@ Enter Server
 - 创建 SSH reverse tunnel 和 per-session gateway
 - 在远程 `/tmp` 下创建临时 Claude Code wrapper/settings
 - 在远程 `/tmp` 下创建临时 Codex `CODEX_HOME` 和 wrapper（beta）
+- 可选备份并覆盖远程 Claude/Codex 配置，让当前 gateway session 接管，但不复制真实 provider key
 - 在远程 shell 里运行只读的 `aiswitch status` / `aiswitch doctor`
 - 真实 provider key 留在本机或 CC Switch
 
@@ -279,7 +280,7 @@ AI session 安全：
 - 真实 provider key 保持在 CC Switch 或本机 provider 工具里
 - 远程服务器只拿到临时 `labgpu-session-*` token
 - 本机 gateway 校验 token 后才转发
-- Alpha 阶段 Remote Write 保持禁用
+- Remote Config Override 会先备份远程 Claude/Codex 配置，只写 session gateway token/base URL，不写真实 provider key
 
 完整安全说明见 [docs/security.md](docs/security.md)。
 

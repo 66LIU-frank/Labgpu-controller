@@ -11,7 +11,7 @@ AI_APP_LABELS = {
     "claude": "Claude Code",
     "codex": "Codex CLI",
 }
-SUPPORTED_MODES = {"proxy_tunnel"}
+SUPPORTED_MODES = {"proxy_tunnel", "remote_write"}
 DUMMY_PROXY_API_KEY = "labgpu-proxy"
 SESSION_TOKEN_PREFIX = "labgpu-session-"
 SAFE_SSH_ALIAS_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
@@ -158,6 +158,8 @@ def build_ai_session_setup(remote_env: dict[str, str]) -> str:
         parts.extend([";", build_claude_app_setup(remote_env)])
     elif app == "codex":
         parts.extend([";", build_codex_app_setup(remote_env)])
+    if remote_env.get("LABGPU_AI_MODE") == "remote_write":
+        parts.extend([";", build_remote_config_override_setup(remote_env)])
     return " ".join(parts)
 
 
@@ -170,6 +172,7 @@ def build_ai_shell_rc(user_rc: str) -> str:
 
 
 def build_claude_app_setup(remote_env: dict[str, str]) -> str:
+    remote_write = remote_env.get("LABGPU_AI_MODE") == "remote_write"
     settings = json.dumps(
         {
             "env": {
@@ -179,36 +182,50 @@ def build_claude_app_setup(remote_env: dict[str, str]) -> str:
         },
         separators=(",", ":"),
     )
-    wrapper = '#!/bin/sh\nexec "$LABGPU_REAL_CLAUDE" --settings "$LABGPU_CLAUDE_SETTINGS" "$@"\n'
-    return " ".join(
-        [
-            'LABGPU_REAL_CLAUDE="${LABGPU_AI_CLAUDE_COMMAND:-}"',
-            "&&",
-            'if [ -z "$LABGPU_REAL_CLAUDE" ]; then LABGPU_REAL_CLAUDE="$(command -v claude || command -v claude-code || true)"; fi',
-            ";",
-            'case "$LABGPU_REAL_CLAUDE" in "~/"*) LABGPU_REAL_CLAUDE="${HOME}/${LABGPU_REAL_CLAUDE#~/}" ;; esac',
-            ";",
-            'export LABGPU_REAL_CLAUDE',
-            ";",
-            'if [ -n "$LABGPU_REAL_CLAUDE" ]; then',
-            'LABGPU_CLAUDE_SETTINGS="$LABGPU_AI_TMPDIR/claude-settings.json"',
-            "&&",
-            'export LABGPU_CLAUDE_SETTINGS',
-            "&&",
-            f"umask 077 && printf %s {shlex.quote(settings)} > \"$LABGPU_CLAUDE_SETTINGS\"",
-            "&&",
-            f"printf %s {shlex.quote(wrapper)} > \"$LABGPU_AI_TMPDIR/claude\"",
-            "&&",
-            'chmod 700 "$LABGPU_AI_TMPDIR/claude"',
-            "&&",
-            'ln -sf "$LABGPU_AI_TMPDIR/claude" "$LABGPU_AI_TMPDIR/claude-code"',
-            ";",
-            "fi",
-        ]
-    )
+    wrapper = '#!/bin/sh\nexec "$LABGPU_REAL_CLAUDE" "$@"\n' if remote_write else '#!/bin/sh\nexec "$LABGPU_REAL_CLAUDE" --settings "$LABGPU_CLAUDE_SETTINGS" "$@"\n'
+    parts = [
+        'LABGPU_REAL_CLAUDE="${LABGPU_AI_CLAUDE_COMMAND:-}"',
+        "&&",
+        'if [ -z "$LABGPU_REAL_CLAUDE" ]; then LABGPU_REAL_CLAUDE="$(command -v claude || command -v claude-code || true)"; fi',
+        ";",
+        'case "$LABGPU_REAL_CLAUDE" in "~/"*) LABGPU_REAL_CLAUDE="${HOME}/${LABGPU_REAL_CLAUDE#~/}" ;; esac',
+        ";",
+        'export LABGPU_REAL_CLAUDE',
+        ";",
+        'if [ -n "$LABGPU_REAL_CLAUDE" ]; then',
+    ]
+    if remote_write:
+        parts.extend(
+            [
+                f"printf %s {shlex.quote(wrapper)} > \"$LABGPU_AI_TMPDIR/claude\"",
+                "&&",
+                'chmod 700 "$LABGPU_AI_TMPDIR/claude"',
+                "&&",
+                'ln -sf "$LABGPU_AI_TMPDIR/claude" "$LABGPU_AI_TMPDIR/claude-code"',
+            ]
+        )
+    else:
+        parts.extend(
+            [
+                'LABGPU_CLAUDE_SETTINGS="$LABGPU_AI_TMPDIR/claude-settings.json"',
+                "&&",
+                'export LABGPU_CLAUDE_SETTINGS',
+                "&&",
+                f"umask 077 && printf %s {shlex.quote(settings)} > \"$LABGPU_CLAUDE_SETTINGS\"",
+                "&&",
+                f"printf %s {shlex.quote(wrapper)} > \"$LABGPU_AI_TMPDIR/claude\"",
+                "&&",
+                'chmod 700 "$LABGPU_AI_TMPDIR/claude"',
+                "&&",
+                'ln -sf "$LABGPU_AI_TMPDIR/claude" "$LABGPU_AI_TMPDIR/claude-code"',
+            ]
+        )
+    parts.extend([";", "fi"])
+    return " ".join(parts)
 
 
 def build_codex_app_setup(remote_env: dict[str, str]) -> str:
+    remote_write = remote_env.get("LABGPU_AI_MODE") == "remote_write"
     auth = json.dumps(
         {
             "OPENAI_API_KEY": remote_env["OPENAI_API_KEY"],
@@ -217,35 +234,180 @@ def build_codex_app_setup(remote_env: dict[str, str]) -> str:
         separators=(",", ":"),
     )
     config = f'openai_base_url = "{remote_env["OPENAI_BASE_URL"]}"\n'
-    wrapper = '#!/bin/sh\nexport CODEX_HOME="$LABGPU_CODEX_HOME"\nexec "$LABGPU_REAL_CODEX" "$@"\n'
-    return " ".join(
+    wrapper = '#!/bin/sh\nexec "$LABGPU_REAL_CODEX" "$@"\n' if remote_write else '#!/bin/sh\nexport CODEX_HOME="$LABGPU_CODEX_HOME"\nexec "$LABGPU_REAL_CODEX" "$@"\n'
+    parts = [
+        'LABGPU_REAL_CODEX="$(command -v codex || true)"',
+        ";",
+        'case "$LABGPU_REAL_CODEX" in "~/"*) LABGPU_REAL_CODEX="${HOME}/${LABGPU_REAL_CODEX#~/}" ;; esac',
+        ";",
+        'export LABGPU_REAL_CODEX',
+        ";",
+        'if [ -n "$LABGPU_REAL_CODEX" ]; then',
+    ]
+    if remote_write:
+        parts.extend(
+            [
+                f"printf %s {shlex.quote(wrapper)} > \"$LABGPU_AI_TMPDIR/codex\"",
+                "&&",
+                'chmod 700 "$LABGPU_AI_TMPDIR/codex"',
+            ]
+        )
+    else:
+        parts.extend(
+            [
+                'LABGPU_CODEX_HOME="$LABGPU_AI_TMPDIR/codex-home"',
+                "&&",
+                'mkdir -p "$LABGPU_CODEX_HOME"',
+                "&&",
+                'chmod 700 "$LABGPU_CODEX_HOME"',
+                "&&",
+                'export LABGPU_CODEX_HOME CODEX_HOME="$LABGPU_CODEX_HOME"',
+                "&&",
+                f"umask 077 && printf %s {shlex.quote(auth)} > \"$LABGPU_CODEX_HOME/auth.json\"",
+                "&&",
+                f"umask 077 && printf %s {shlex.quote(config)} > \"$LABGPU_CODEX_HOME/config.toml\"",
+                "&&",
+                f"printf %s {shlex.quote(wrapper)} > \"$LABGPU_AI_TMPDIR/codex\"",
+                "&&",
+                'chmod 700 "$LABGPU_AI_TMPDIR/codex"',
+            ]
+        )
+    parts.extend([";", "fi"])
+    return " ".join(parts)
+
+
+def build_remote_config_override_setup(remote_env: dict[str, str]) -> str:
+    app = remote_env.get("LABGPU_AI_APP")
+    restore_script = build_remote_config_restore_script(app or "")
+    parts = [
+        'LABGPU_REMOTE_WRITE_BACKUP="$HOME/.labgpu/ai-config-backups/${LABGPU_AI_APP:-ai}-$(date +%Y%m%d-%H%M%S)-$$"',
+        "&&",
+        'mkdir -p "$LABGPU_REMOTE_WRITE_BACKUP"',
+        "&&",
+        'chmod 700 "$HOME/.labgpu" "$HOME/.labgpu/ai-config-backups" "$LABGPU_REMOTE_WRITE_BACKUP" 2>/dev/null || true',
+        "&&",
+        'export LABGPU_REMOTE_WRITE_BACKUP',
+        "&&",
+        f"umask 077 && printf %s {shlex.quote(restore_script)} > \"$LABGPU_REMOTE_WRITE_BACKUP/restore.sh\"",
+        "&&",
+        'chmod 700 "$LABGPU_REMOTE_WRITE_BACKUP/restore.sh"',
+        "&&",
+        build_remote_backup_function(),
+        ";",
+    ]
+    if app == "claude":
+        parts.append(build_claude_remote_config_override(remote_env))
+    elif app == "codex":
+        parts.append(build_codex_remote_config_override(remote_env))
+    else:
+        parts.append("false")
+    parts.extend(
         [
-            'LABGPU_REAL_CODEX="$(command -v codex || true)"',
             ";",
-            'case "$LABGPU_REAL_CODEX" in "~/"*) LABGPU_REAL_CODEX="${HOME}/${LABGPU_REAL_CODEX#~/}" ;; esac',
+            'export LABGPU_REMOTE_WRITE_RESTORE="$LABGPU_REMOTE_WRITE_BACKUP/restore.sh"',
             ";",
-            'export LABGPU_REAL_CODEX',
+            'printf "%s\\n" "LabGPU Remote Config Override: backed up previous config to $LABGPU_REMOTE_WRITE_BACKUP"',
             ";",
-            'if [ -n "$LABGPU_REAL_CODEX" ]; then',
-            'LABGPU_CODEX_HOME="$LABGPU_AI_TMPDIR/codex-home"',
-            "&&",
-            'mkdir -p "$LABGPU_CODEX_HOME"',
-            "&&",
-            'chmod 700 "$LABGPU_CODEX_HOME"',
-            "&&",
-            'export LABGPU_CODEX_HOME CODEX_HOME="$LABGPU_CODEX_HOME"',
-            "&&",
-            f"umask 077 && printf %s {shlex.quote(auth)} > \"$LABGPU_CODEX_HOME/auth.json\"",
-            "&&",
-            f"umask 077 && printf %s {shlex.quote(config)} > \"$LABGPU_CODEX_HOME/config.toml\"",
-            "&&",
-            f"printf %s {shlex.quote(wrapper)} > \"$LABGPU_AI_TMPDIR/codex\"",
-            "&&",
-            'chmod 700 "$LABGPU_AI_TMPDIR/codex"',
-            ";",
-            "fi",
+            'printf "%s\\n" "Restore with: sh $LABGPU_REMOTE_WRITE_RESTORE"',
         ]
     )
+    return " ".join(parts)
+
+
+def build_remote_backup_function() -> str:
+    return (
+        "labgpu_backup_config() { "
+        'src="$1"; rel="$2"; dst="$LABGPU_REMOTE_WRITE_BACKUP/$rel"; '
+        'mkdir -p "$(dirname "$dst")"; '
+        'if [ -e "$src" ]; then cp -p "$src" "$dst"; else : > "$dst.missing"; fi; '
+        "}"
+    )
+
+
+def build_claude_remote_config_override(remote_env: dict[str, str]) -> str:
+    settings = json.dumps(
+        {
+            "env": {
+                "ANTHROPIC_BASE_URL": remote_env["ANTHROPIC_BASE_URL"],
+                "ANTHROPIC_API_KEY": remote_env["ANTHROPIC_API_KEY"],
+            }
+        },
+        separators=(",", ":"),
+    )
+    return " ".join(
+        [
+            'mkdir -p "$HOME/.claude"',
+            "&&",
+            'chmod 700 "$HOME/.claude" 2>/dev/null || true',
+            "&&",
+            'labgpu_backup_config "$HOME/.claude/settings.json" ".claude/settings.json"',
+            "&&",
+            f"umask 077 && printf %s {shlex.quote(settings)} > \"$HOME/.claude/settings.json\"",
+            "&&",
+            'chmod 600 "$HOME/.claude/settings.json" 2>/dev/null || true',
+        ]
+    )
+
+
+def build_codex_remote_config_override(remote_env: dict[str, str]) -> str:
+    auth = json.dumps(
+        {
+            "OPENAI_API_KEY": remote_env["OPENAI_API_KEY"],
+            "auth_mode": "apikey",
+        },
+        separators=(",", ":"),
+    )
+    config = f'openai_base_url = "{remote_env["OPENAI_BASE_URL"]}"\n'
+    return " ".join(
+        [
+            'mkdir -p "$HOME/.codex"',
+            "&&",
+            'chmod 700 "$HOME/.codex" 2>/dev/null || true',
+            "&&",
+            'labgpu_backup_config "$HOME/.codex/auth.json" ".codex/auth.json"',
+            "&&",
+            'labgpu_backup_config "$HOME/.codex/config.toml" ".codex/config.toml"',
+            "&&",
+            f"umask 077 && printf %s {shlex.quote(auth)} > \"$HOME/.codex/auth.json\"",
+            "&&",
+            f"umask 077 && printf %s {shlex.quote(config)} > \"$HOME/.codex/config.toml\"",
+            "&&",
+            'chmod 600 "$HOME/.codex/auth.json" "$HOME/.codex/config.toml" 2>/dev/null || true',
+        ]
+    )
+
+
+def build_remote_config_restore_script(app: str) -> str:
+    restore_targets = {
+        "claude": [(".claude/settings.json", "$HOME/.claude/settings.json")],
+        "codex": [
+            (".codex/auth.json", "$HOME/.codex/auth.json"),
+            (".codex/config.toml", "$HOME/.codex/config.toml"),
+        ],
+    }.get(app, [])
+    lines = [
+        "#!/bin/sh",
+        "set -eu",
+        'backup_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"',
+        "restore_one() {",
+        '  rel="$1"',
+        '  dst="$2"',
+        '  src="$backup_dir/$rel"',
+        '  mkdir -p "$(dirname "$dst")"',
+        '  if [ -f "$src" ]; then',
+        '    cp -p "$src" "$dst"',
+        '    printf "%s\\n" "Restored $dst"',
+        '  elif [ -f "$src.missing" ]; then',
+        '    rm -f "$dst"',
+        '    printf "%s\\n" "Removed LabGPU-created $dst"',
+        "  else",
+        '    printf "%s\\n" "No backup for $dst" >&2',
+        "  fi",
+        "}",
+    ]
+    for rel, dst in restore_targets:
+        lines.append(f'restore_one {shlex.quote(rel)} "{dst}"')
+    return "\n".join(lines) + "\n"
 
 
 def build_aiswitch_helper() -> str:
@@ -343,7 +505,7 @@ def validate_request(request: EnterServerAIRequest) -> None:
     if not is_safe_ssh_alias(request.server_alias):
         raise ValueError("Unsafe SSH alias.")
     if request.mode not in SUPPORTED_MODES:
-        raise ValueError("Only Proxy Tunnel mode is available in this alpha.")
+        raise ValueError("Only Proxy Tunnel and Remote Config Override modes are available.")
     if request.ai_app not in SUPPORTED_AI_APPS:
         raise ValueError("Only Claude Code and Codex CLI AI sessions are available in this alpha.")
     if not request.provider_name.strip():

@@ -189,6 +189,23 @@ class RemoteActionsTest(unittest.TestCase):
         self.assertNotIn("~/.codex", argv[7])
         self.assertNotIn("SECRET", " ".join(argv))
 
+    def test_build_ssh_terminal_command_for_remote_config_override(self):
+        argv = build_ssh_terminal_argv(
+            "alpha_liu",
+            local_proxy_port="15721",
+            remote_proxy_port="27183",
+            agent="claude",
+            ai_mode="remote_write",
+            provider_name="DMXAPI",
+            local_gateway_port="49231",
+            session_token=SESSION_TOKEN,
+        )
+        self.assertEqual(argv[:6], ["ssh", "-tt", "-o", "ExitOnForwardFailure=yes", "-R", "127.0.0.1:27183:127.0.0.1:49231"])
+        self.assertIn("LABGPU_AI_MODE=remote_write", argv[7])
+        self.assertIn("$HOME/.claude/settings.json", argv[7])
+        self.assertIn("LABGPU_REMOTE_WRITE_BACKUP", argv[7])
+        self.assertIn("labgpu-session-", argv[7])
+
     def test_build_ssh_terminal_command_can_isolate_config_forwardings(self):
         host = SSHHost(alias="alpha_liu", hostname="210.45.70.34", user="lsg", port="22", options={"remoteforward": "127.0.0.1:29890 127.0.0.1:33210"})
         argv = build_ssh_terminal_argv(
@@ -259,6 +276,38 @@ class RemoteActionsTest(unittest.TestCase):
         metadata = start_gateway.call_args.kwargs["metadata"]
         self.assertEqual(metadata["app"], "codex")
         self.assertEqual(metadata["provider"], "OpenAI")
+        self.assertEqual(result["ai_gateway"]["ccswitch_proxy_port"], 15721)
+        self.assertNotIn(SESSION_TOKEN, result["command"])
+
+    def test_open_ssh_terminal_starts_gateway_for_remote_config_override(self):
+        host = SSHHost(alias="alpha_liu")
+        gateway = FakeGateway()
+
+        class Result:
+            returncode = 0
+            stderr = ""
+
+        with (
+            patch("labgpu.remote.actions.sys.platform", "darwin"),
+            patch("labgpu.remote.actions.is_local_tcp_port_open", return_value=True),
+            patch("labgpu.remote.actions.start_ai_gateway", return_value=gateway) as start_gateway,
+            patch("labgpu.remote.actions.AI_GATEWAY_SESSIONS", []),
+            patch("labgpu.remote.actions.write_terminal_launch_script", return_value=Path("/tmp/labgpu-open.sh")),
+            patch("labgpu.remote.actions.subprocess.run", return_value=Result()),
+            patch("labgpu.remote.actions.append_audit"),
+        ):
+            result = open_ssh_terminal(
+                host,
+                local_proxy_port="15721",
+                remote_proxy_port="27183",
+                agent="claude",
+                ai_mode="remote_write",
+                provider_name="DMXAPI",
+            )
+        self.assertTrue(result["ok"])
+        metadata = start_gateway.call_args.kwargs["metadata"]
+        self.assertEqual(metadata["mode"], "remote_write")
+        self.assertEqual(metadata["app"], "claude")
         self.assertEqual(result["ai_gateway"]["ccswitch_proxy_port"], 15721)
         self.assertNotIn(SESSION_TOKEN, result["command"])
 
@@ -357,6 +406,17 @@ class RemoteActionsTest(unittest.TestCase):
             build_ssh_terminal_argv("alpha_liu", proxy_port="99999")
         with self.assertRaises(ValueError):
             build_ssh_terminal_argv("alpha_liu", agent="shell")
+        with self.assertRaisesRegex(ValueError, "Only Claude Code and Codex CLI"):
+            build_ssh_terminal_argv(
+                "alpha_liu",
+                local_proxy_port="15721",
+                remote_proxy_port="27183",
+                agent="gemini",
+                ai_mode="remote_write",
+                provider_name="Gemini",
+                local_gateway_port="49231",
+                session_token=SESSION_TOKEN,
+            )
 
 
 if __name__ == "__main__":

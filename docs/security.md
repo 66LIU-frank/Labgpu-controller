@@ -112,11 +112,15 @@ exposure, but it should not be treated as strong isolation on shared accounts.
 LabGPU gateways close automatically after an idle timeout or hard lifetime, and
 failed terminal launches close their gateway immediately.
 
-Remote Write mode, where provider configuration is written into remote
-`~/.claude`, `~/.codex`, `~/.gemini`, or similar app directories, is an
-advanced personal-server workflow. Do not use it for shared Linux accounts or
-lab servers unless the user explicitly accepts that the key will live on that
-machine.
+Remote Config Override mode is an advanced personal-server workflow for Claude
+Code and Codex CLI. LabGPU first backs up the existing remote config under
+`~/.labgpu/ai-config-backups/...`, then writes remote `~/.claude/settings.json`
+or `~/.codex/{auth.json,config.toml}` so the app points at the current LabGPU
+session gateway. These files contain only the temporary `labgpu-session-*`
+token and `127.0.0.1:<remote_port>` base URL, not the real provider key. A
+restore script is written into the backup directory. Do not use this mode on
+shared Linux accounts unless the user accepts that the temporary session token
+will be stored in that remote home directory until restored or removed.
 
 ## Shared LABGPU_HOME
 

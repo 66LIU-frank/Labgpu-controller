@@ -15,7 +15,7 @@ This smoke test covers:
 - current CC Switch provider for the selected app
 - per-session LabGPU AI gateway
 - optional remote working directory selected from VS Code Remote-SSH recents
-- no vault, no Remote Write, no copied API keys
+- no vault, no copied real provider API keys
 
 ## Security Model
 
@@ -29,7 +29,9 @@ This smoke test covers:
 - Streaming responses such as `text/event-stream` are forwarded incrementally.
 - Gateways have an idle timeout and a hard lifetime so abandoned sessions do
   not keep a local port open forever.
-- Remote Write remains disabled in Alpha.
+- Remote Config Override is advanced. It backs up and overwrites remote
+  Claude/Codex config with the session gateway token/base URL, not real
+  provider keys.
 
 The session token is a temporary capability token, not a real provider key. On
 shared Linux accounts, other processes running as the same Unix user may still
@@ -89,7 +91,7 @@ write controls.
 5. Select `Proxy Tunnel`.
 6. Optionally choose a working directory imported from VS Code Remote-SSH
    recents, or type an absolute remote path such as `/data/lsg/work/OPSD`.
-7. Confirm Remote Write, Gemini, and OpenClaw are disabled.
+7. Confirm Remote Config Override is marked advanced, while Gemini and OpenClaw are disabled.
 8. Click `Open Terminal`.
 
 The SSH command should include these properties:
@@ -277,7 +279,7 @@ During the smoke test, confirm that:
 
 - no real API key appears in the UI
 - no real API key appears in the SSH command
-- no Remote Write path is enabled
+- Remote Config Override writes only a temporary session token/base URL and creates a restore script
 - `-R` binds the remote side to `127.0.0.1`
 - `ExitOnForwardFailure=yes` is present
 - the remote token starts with `labgpu-session-`, not `sk-`
