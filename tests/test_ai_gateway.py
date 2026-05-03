@@ -75,6 +75,10 @@ class FakeConnection:
         return None
 
 
+class FakeHttpsConnection(FakeConnection):
+    pass
+
+
 class FakeServer:
     instances = []
 
@@ -155,6 +159,39 @@ class AIGatewayTest(unittest.TestCase):
         self.assertNotIn("x-api-key", outbound)
         self.assertNotIn("Authorization", outbound)
         self.assertNotIn(TOKEN_ONE, str(outbound))
+
+    def test_forward_request_can_use_direct_provider_upstream(self):
+        headers = {
+            "Host": "127.0.0.1:27183",
+            "Authorization": f"Bearer {TOKEN_ONE}",
+            "Content-Type": "application/json",
+        }
+        with patch("labgpu.remote.ai_gateway.http.client.HTTPSConnection", FakeHttpsConnection):
+            status, reason, _response_headers, _response_body = ai_gateway.forward_request(
+                method="POST",
+                path="/v1/responses",
+                headers=headers,
+                body=b"{}",
+                target_host="127.0.0.1",
+                target_port=15721,
+                target_base_url="https://api.example.test/v1",
+                upstream_headers={"Authorization": "Bearer sk-provider"},
+            )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(reason, "OK")
+        self.assertEqual(FakeHttpsConnection.calls[0]["host"], "api.example.test")
+        self.assertEqual(FakeHttpsConnection.calls[0]["port"], 443)
+        self.assertEqual(FakeHttpsConnection.calls[0]["path"], "/v1/responses")
+        outbound = FakeHttpsConnection.calls[0]["headers"]
+        self.assertEqual(outbound["Host"], "api.example.test")
+        self.assertEqual(outbound["Authorization"], "Bearer sk-provider")
+        self.assertNotIn(TOKEN_ONE, str(outbound))
+
+    def test_rewrite_upstream_path_prepends_base_path_once(self):
+        self.assertEqual(ai_gateway.rewrite_upstream_path("/responses", "/v1"), "/v1/responses")
+        self.assertEqual(ai_gateway.rewrite_upstream_path("/v1/responses", "/v1"), "/v1/responses")
+        self.assertEqual(ai_gateway.rewrite_upstream_path("/responses?stream=true", "/v1"), "/v1/responses?stream=true")
 
     def test_start_gateway_is_loopback_only_and_closeable(self):
         with (

@@ -17,6 +17,7 @@ from typing import Any
 from labgpu.remote.ai_gateway import AIGatewaySession, start_ai_gateway
 from labgpu.remote.ai_session import AI_APP_LABELS, DEFAULT_AI_PATH_PREFIXES, EnterServerAIRequest, SUPPORTED_AI_APPS, build_ai_ssh_command, build_network_proxy_url, build_path_export, normalized_remote_command_path, normalized_remote_cwd, normalized_remote_path_prefixes
 from labgpu.remote.audit import append_audit
+from labgpu.remote.ccswitch import CcSwitchError, read_codex_provider_runtime
 from labgpu.remote.probe import probe_host
 from labgpu.remote.ssh_config import SSHHost
 from labgpu.remote.state import annotate_server
@@ -159,6 +160,7 @@ def open_ssh_terminal(
     agent: str = "none",
     ai_mode: str | None = None,
     provider_name: str | None = None,
+    provider_id: str | None = None,
     gpu_index: str | int | None = None,
     remote_cwd: str | None = None,
     network_proxy_enabled: bool = False,
@@ -188,8 +190,15 @@ def open_ssh_terminal(
             local_proxy_port=local_proxy_port,
             remote_proxy_port=remote_proxy_port,
         )
+        codex_direct_runtime: dict[str, Any] | None = None
+        if normalized_agent == "codex" and ai_mode in AI_SESSION_MODES:
+            try:
+                codex_direct_runtime = read_codex_provider_runtime(provider_id)
+                provider_name = str(codex_direct_runtime.get("provider") or provider_name or "")
+            except CcSwitchError as exc:
+                raise ValueError(str(exc)) from exc
         port_state = is_local_tcp_port_open(ccswitch_proxy_port) if ccswitch_proxy_port else True
-        if ccswitch_proxy_port and port_state is False:
+        if ccswitch_proxy_port and port_state is False and codex_direct_runtime is None:
             message = f"Local proxy port 127.0.0.1:{ccswitch_proxy_port} is not listening."
             if normalized_agent in AI_PROXY_TUNNEL_AGENTS and ai_mode in AI_SESSION_MODES:
                 message = f"CC Switch {ai_agent_label(normalized_agent)} proxy is configured but not listening on 127.0.0.1:{ccswitch_proxy_port}."
@@ -217,9 +226,9 @@ def open_ssh_terminal(
         if normalized_agent in AI_PROXY_TUNNEL_AGENTS and ai_mode in AI_SESSION_MODES:
             if not ccswitch_proxy_port:
                 raise ValueError(f"{ai_agent_label(normalized_agent)} AI session requires a CC Switch proxy port.")
-            gateway = start_ai_gateway(
-                target_port=ccswitch_proxy_port,
-                metadata={
+            gateway_kwargs: dict[str, Any] = {
+                "target_port": ccswitch_proxy_port,
+                "metadata": {
                     "mode": ai_mode,
                     "app": normalized_agent,
                     "provider": provider_name or "",
@@ -227,7 +236,16 @@ def open_ssh_terminal(
                     "remote_cwd": remote_cwd or "",
                     "ccswitch_proxy_port": ccswitch_proxy_port,
                 },
-            )
+            }
+            if codex_direct_runtime is not None:
+                gateway_kwargs.update(
+                    {
+                        "target_base_url": str(codex_direct_runtime["base_url"]),
+                        "upstream_headers": {"Authorization": f"Bearer {codex_direct_runtime['api_key']}"},
+                    }
+                )
+                gateway_kwargs["metadata"]["upstream"] = "ccswitch_provider_direct"
+            gateway = start_ai_gateway(**gateway_kwargs)
             AI_GATEWAY_SESSIONS.append(gateway)
         argv = build_ssh_terminal_argv(
             alias,
@@ -326,6 +344,7 @@ def open_ssh_terminal(
             "remote_gateway_port": remote_gateway_port,
             "ccswitch_proxy_port": ccswitch_proxy_port,
             "token_fingerprint": gateway.token_fingerprint,
+            "upstream_label": f"CC Switch Codex provider {provider_name}" if codex_direct_runtime else f"CC Switch 127.0.0.1:{ccswitch_proxy_port}",
         }
         cwd = normalized_remote_cwd(remote_cwd)
         if cwd is not None:

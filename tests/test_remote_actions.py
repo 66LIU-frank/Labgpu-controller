@@ -303,6 +303,14 @@ class RemoteActionsTest(unittest.TestCase):
         with (
             patch("labgpu.remote.actions.sys.platform", "darwin"),
             patch("labgpu.remote.actions.is_local_tcp_port_open", return_value=True),
+            patch(
+                "labgpu.remote.actions.read_codex_provider_runtime",
+                return_value={
+                    "provider": "OpenAI",
+                    "base_url": "https://api.example.test/v1",
+                    "api_key": "sk-secret",
+                },
+            ),
             patch("labgpu.remote.actions.start_ai_gateway", return_value=gateway) as start_gateway,
             patch("labgpu.remote.actions.AI_GATEWAY_SESSIONS", []),
             patch("labgpu.remote.actions.write_terminal_launch_script", return_value=Path("/tmp/labgpu-open.sh")),
@@ -321,6 +329,8 @@ class RemoteActionsTest(unittest.TestCase):
         metadata = start_gateway.call_args.kwargs["metadata"]
         self.assertEqual(metadata["app"], "codex")
         self.assertEqual(metadata["provider"], "OpenAI")
+        self.assertEqual(start_gateway.call_args.kwargs["target_base_url"], "https://api.example.test/v1")
+        self.assertEqual(start_gateway.call_args.kwargs["upstream_headers"], {"Authorization": "Bearer sk-secret"})
         self.assertEqual(result["ai_gateway"]["ccswitch_proxy_port"], 15721)
         self.assertNotIn(SESSION_TOKEN, result["command"])
 

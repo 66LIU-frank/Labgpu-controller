@@ -21,7 +21,10 @@ This smoke test covers:
 
 ## Security Model
 
-- LabGPU does not read or copy provider secrets.
+- LabGPU does not copy provider secrets to the remote server in Proxy Tunnel
+  mode. Claude uses the local provider proxy. Codex may read the selected CC
+  Switch Codex provider key locally inside the LabGPU gateway when direct
+  provider forwarding is needed.
 - Remote servers receive only a temporary `labgpu-session-*` access token.
 - Remote Claude Code or Codex CLI talks to a LabGPU gateway through an SSH
   reverse tunnel.
@@ -47,7 +50,8 @@ keeps real provider secrets local, but it is not strong account isolation.
 ## Prerequisites
 
 1. CC Switch is installed and has a current provider for the selected app.
-2. For Codex tests, CC Switch has a current Codex provider and proxy route.
+2. For Codex tests, CC Switch has a current Codex provider with API key and
+   `base_url` in its provider config.
 3. The selected CC Switch app proxy is enabled and listening on loopback,
    usually:
 
@@ -112,7 +116,7 @@ The SSH command should include these properties:
 -R 127.0.0.1:<remote_network_proxy_port>:127.0.0.1:<local_proxy_port>  # Network Tunnel only
 ANTHROPIC_BASE_URL=http://127.0.0.1:<remote_gateway_port>
 ANTHROPIC_API_KEY=labgpu-session-...
-OPENAI_BASE_URL=http://127.0.0.1:<remote_gateway_port>     # Codex only
+OPENAI_BASE_URL=http://127.0.0.1:<remote_gateway_port>/v1  # Codex only
 OPENAI_API_KEY=labgpu-session-...                          # Codex only
 CODEX_HOME=/tmp/labgpu-ai-.../codex-home                   # Codex only
 LABGPU_REMOTE_CWD=<selected folder, if any>
@@ -176,6 +180,9 @@ wrapper calls the real Claude Code binary with a temporary `--settings` file so
 Claude Code uses the tunnel base URL without writing to `~/.claude`. The Codex
 wrapper calls the real Codex binary with a temporary `CODEX_HOME` containing
 session-only `auth.json` and `config.toml`, without writing to `~/.codex`.
+Remote Codex still receives only the session token; if direct provider
+forwarding is active, the real selected provider key is used only by the local
+LabGPU gateway on the laptop.
 
 ## Run AI Tunnel Doctor
 

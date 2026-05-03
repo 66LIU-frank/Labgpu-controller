@@ -523,6 +523,7 @@ class ServerHandler(BaseHTTPRequestHandler):
             agent=agent,
             ai_mode=ai_mode or None,
             provider_name=provider_name or None,
+            provider_id=ccswitch_provider_id or None,
             gpu_index=gpu_index,
             remote_cwd=remote_cwd or None,
             network_proxy_enabled=network_proxy_enabled,
@@ -1280,7 +1281,7 @@ def render_providers_page() -> str:
           <p class="muted">{esc(summary.get("message") or "")} Choose existing providers and check the CC Switch routing port. Add new providers and API keys in CC Switch for now.</p>
           {console_tabs}
           <div class="provider-grid">{cards}</div>
-          <p class="muted">LabGPU reads provider names, current selections, and proxy ports only. Real provider secrets stay in CC Switch. Remote launch happens from Train / GPU cards.</p>
+          <p class="muted">LabGPU reads provider names, current selections, and proxy ports for summary/switching. Codex Proxy Tunnel may use the selected CC Switch Codex key inside the local gateway only; remote servers still receive only a session token.</p>
         </section>
         """,
         json_href="/api/integrations/ccswitch",
@@ -3331,8 +3332,10 @@ function updateCcswitchProviderOptions() {{
       : `Current CC Switch ${{aiAppLabel(agent)}} provider was not found. Switch ${{aiAppLabel(agent)}} provider in AI Config Console or CC Switch first.`;
   }}
   if (proxySummary) {{
-    proxySummary.textContent = proxyConfig && proxyConfig.listen_port && ccswitchProxyIsListening(proxyConfig)
-      ? `${{modeLabel}}: remote random port -> local LabGPU gateway -> CC Switch 127.0.0.1:${{proxyConfig.listen_port}}`
+    proxySummary.textContent = proxyConfig && proxyConfig.listen_port && agent === "codex"
+      ? `${{modeLabel}}: remote random port -> local LabGPU gateway -> selected CC Switch Codex provider`
+      : proxyConfig && proxyConfig.listen_port && ccswitchProxyIsListening(proxyConfig)
+        ? `${{modeLabel}}: remote random port -> local LabGPU gateway -> CC Switch 127.0.0.1:${{proxyConfig.listen_port}}`
       : proxyConfig && proxyConfig.listen_port
         ? `${{modeLabel}}: CC Switch proxy is configured but not listening on 127.0.0.1:${{proxyConfig.listen_port}}.`
       : `${{modeLabel}}: CC Switch proxy is not configured or not enabled.`;
@@ -3415,7 +3418,7 @@ async function runOpenSsh(button) {{
     return;
   }}
   const proxyConfig = activeCcswitchProxyConfig(agent);
-  if (!ccswitchProxyIsListening(proxyConfig)) {{
+  if (!ccswitchProxyIsListening(proxyConfig) && agent !== "codex") {{
     if (result) result.textContent = `CC Switch ${{aiAppLabel(agent)}} proxy is configured but not listening on 127.0.0.1:${{proxyConfig.listen_port}}.`;
     return;
   }}
@@ -3467,6 +3470,7 @@ function rememberAiSession(button, providerName, gateway, networkTunnel) {{
     app: aiAppLabel(agent),
     provider: providerName || "-",
     ccswitchProxyPort: gateway.ccswitch_proxy_port || localPort,
+    upstreamLabel: gateway.upstream_label || "",
     localGatewayPort: gateway.local_gateway_port || "-",
     remoteGatewayPort: gateway.remote_gateway_port || "-",
     networkProxyUrl: networkTunnel.proxy_url || "",
@@ -3498,7 +3502,7 @@ function renderAiSessions() {{
       <td><code>${{escapeHtml(item.cwd || "-")}}</code></td>
       <td>${{escapeHtml(item.app || "-")}} / ${{escapeHtml(item.provider || "-")}}</td>
       <td>
-        remote 127.0.0.1:${{escapeHtml(item.remoteGatewayPort || "-")}} -> local gateway 127.0.0.1:${{escapeHtml(item.localGatewayPort || "-")}} -> CC Switch 127.0.0.1:${{escapeHtml(item.ccswitchProxyPort || "-")}}
+        remote 127.0.0.1:${{escapeHtml(item.remoteGatewayPort || "-")}} -> local gateway 127.0.0.1:${{escapeHtml(item.localGatewayPort || "-")}} -> ${{escapeHtml(item.upstreamLabel || `CC Switch 127.0.0.1:${{item.ccswitchProxyPort || "-"}}`)}}
         ${{item.networkProxyUrl ? `<br>network ${{escapeHtml(item.networkProxyUrl)}} -> local 127.0.0.1:${{escapeHtml(item.networkLocalProxyPort || "-")}}` : ""}}
       </td>
       <td>${{escapeHtml(item.gpu || "none")}}</td>

@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import sqlite3
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -166,6 +167,113 @@ def switch_ccswitch_provider(app_type: str, provider_id: str, home: str | Path |
         raise CcSwitchError(f"Could not update CC Switch provider: {exc}") from exc
     finally:
         conn.close()
+
+
+def read_codex_provider_runtime(provider_id: str | None = None, home: str | Path | None = None) -> dict[str, Any]:
+    """Read the selected Codex provider runtime config, including the local API key.
+
+    This is intentionally separate from read_ccswitch_summary(), which remains
+    non-secret. The returned API key is for local gateway forwarding only and
+    must never be rendered in UI, logs, commands, or remote shell env.
+    """
+    db_path = ccswitch_db_path(home)
+    if not db_path.exists():
+        raise CcSwitchError("CC Switch database was not found.")
+    settings_current = read_current_provider_settings(home).get("codex", "")
+    selected_id = str(provider_id or settings_current or "").strip()
+    try:
+        conn = sqlite3.connect(db_path, timeout=1.0)
+    except sqlite3.Error as exc:
+        raise CcSwitchError(f"Could not open CC Switch database: {exc}") from exc
+    try:
+        if not table_exists(conn, "providers"):
+            raise CcSwitchError("CC Switch providers table was not found.")
+        if selected_id:
+            row = conn.execute(
+                "SELECT id, name, settings_config FROM providers WHERE app_type = ? AND id = ?",
+                ("codex", selected_id),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT id, name, settings_config FROM providers WHERE app_type = ? AND is_current = 1",
+                ("codex",),
+            ).fetchone()
+        if not row:
+            raise CcSwitchError("Selected Codex provider was not found.")
+        provider_id_value = str(row[0] or "")
+        provider_name = str(row[1] or "")
+        settings = parse_provider_settings_config(row[2])
+        auth = normalize_provider_mapping(settings.get("auth"))
+        config_text = str(settings.get("config") or "")
+        config = parse_codex_config_toml(config_text)
+        api_key = str(auth.get("OPENAI_API_KEY") or auth.get("api_key") or "").strip()
+        base_url = codex_config_base_url(config)
+        model = str(config.get("model") or "").strip()
+        model_provider = str(config.get("model_provider") or "").strip()
+        if not api_key:
+            raise CcSwitchError(f"Codex provider {provider_name or provider_id_value} does not have an API key in CC Switch.")
+        if not base_url:
+            raise CcSwitchError(f"Codex provider {provider_name or provider_id_value} does not have base_url in CC Switch.")
+        return {
+            "app": "codex",
+            "provider_id": provider_id_value,
+            "provider": provider_name,
+            "base_url": base_url,
+            "api_key": api_key,
+            "model": model,
+            "model_provider": model_provider,
+            "secret_access": True,
+            "secret_scope": "local_gateway_only",
+        }
+    except sqlite3.Error as exc:
+        raise CcSwitchError(f"Could not read CC Switch Codex provider: {exc}") from exc
+    finally:
+        conn.close()
+
+
+def parse_provider_settings_config(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    try:
+        data = json.loads(str(value or "{}"))
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def normalize_provider_mapping(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        data = json.loads(value)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def parse_codex_config_toml(value: str) -> dict[str, Any]:
+    if not value.strip():
+        return {}
+    try:
+        data = tomllib.loads(value)
+    except tomllib.TOMLDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def codex_config_base_url(config: dict[str, Any]) -> str:
+    direct = str(config.get("base_url") or "").strip()
+    if direct:
+        return direct
+    provider_name = str(config.get("model_provider") or "").strip()
+    providers = config.get("model_providers")
+    if isinstance(providers, dict) and provider_name:
+        provider = providers.get(provider_name)
+        if isinstance(provider, dict):
+            return str(provider.get("base_url") or "").strip()
+    return ""
 
 
 def read_proxy_state(conn: sqlite3.Connection) -> dict[str, Any]:

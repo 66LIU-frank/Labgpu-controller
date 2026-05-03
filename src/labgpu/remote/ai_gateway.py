@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import urlsplit
 
 SESSION_TOKEN_PREFIX = "labgpu-session-"
 DEFAULT_IDLE_TIMEOUT_SECONDS = 30 * 60
@@ -26,6 +27,15 @@ HOP_BY_HOP_HEADERS = {
     "transfer-encoding",
     "upgrade",
 }
+
+
+@dataclass
+class GatewayUpstream:
+    scheme: str
+    host: str
+    port: int
+    base_path: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -53,8 +63,7 @@ class GatewayState:
 @dataclass
 class AIGatewaySession:
     state: GatewayState
-    target_host: str
-    target_port: int
+    upstream: GatewayUpstream
     listen_host: str
     listen_port: int
     server: ThreadingHTTPServer
@@ -104,9 +113,11 @@ def token_fingerprint(token: str) -> str:
 
 def start_ai_gateway(
     *,
-    target_port: int,
+    target_port: int | None = None,
     token: str | None = None,
     target_host: str = "127.0.0.1",
+    target_base_url: str | None = None,
+    upstream_headers: dict[str, str] | None = None,
     listen_host: str = "127.0.0.1",
     listen_port: int = 0,
     idle_timeout_seconds: float = DEFAULT_IDLE_TIMEOUT_SECONDS,
@@ -116,9 +127,12 @@ def start_ai_gateway(
 ) -> AIGatewaySession:
     if listen_host != "127.0.0.1":
         raise ValueError("AI gateway must listen on 127.0.0.1.")
-    if target_host != "127.0.0.1":
-        raise ValueError("AI gateway target must be 127.0.0.1.")
-    validate_port(target_port, "Target proxy port")
+    upstream = build_gateway_upstream(
+        target_host=target_host,
+        target_port=target_port,
+        target_base_url=target_base_url,
+        upstream_headers=upstream_headers or {},
+    )
     validate_port(listen_port, "Gateway listen port", allow_zero=True)
     session_token = token or new_session_token()
     if not is_session_token(session_token):
@@ -132,15 +146,14 @@ def start_ai_gateway(
         max_lifetime_seconds=max_lifetime_seconds,
         metadata=safe_session_metadata(metadata or {}),
     )
-    handler = build_gateway_handler(state=state, target_host=target_host, target_port=target_port)
+    handler = build_gateway_handler(state=state, upstream=upstream)
     server = ThreadingHTTPServer((listen_host, listen_port), handler)
     actual_host, actual_port = server.server_address[:2]
     thread = threading.Thread(target=server.serve_forever, name=f"labgpu-ai-gateway-{actual_port}", daemon=True)
     stop_event = threading.Event()
     session = AIGatewaySession(
         state=state,
-        target_host=target_host,
-        target_port=target_port,
+        upstream=upstream,
         listen_host=str(actual_host),
         listen_port=int(actual_port),
         server=server,
@@ -166,7 +179,35 @@ def gateway_cleanup_worker(session: AIGatewaySession, check_interval_seconds: fl
             return
 
 
-def build_gateway_handler(*, state: GatewayState, target_host: str, target_port: int) -> type[BaseHTTPRequestHandler]:
+def build_gateway_upstream(
+    *,
+    target_host: str,
+    target_port: int | None,
+    target_base_url: str | None,
+    upstream_headers: dict[str, str],
+) -> GatewayUpstream:
+    if target_base_url:
+        parsed = urlsplit(target_base_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("AI gateway upstream URL must be http or https.")
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        validate_port(port, "Gateway upstream port")
+        return GatewayUpstream(
+            scheme=parsed.scheme,
+            host=parsed.hostname,
+            port=port,
+            base_path=parsed.path.rstrip("/"),
+            headers=dict(upstream_headers),
+        )
+    if target_host != "127.0.0.1":
+        raise ValueError("AI gateway target must be 127.0.0.1.")
+    if target_port is None:
+        raise ValueError("AI gateway target port is required.")
+    validate_port(target_port, "Target proxy port")
+    return GatewayUpstream(scheme="http", host=target_host, port=target_port)
+
+
+def build_gateway_handler(*, state: GatewayState, upstream: GatewayUpstream) -> type[BaseHTTPRequestHandler]:
     class AIGatewayHandler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
@@ -200,7 +241,7 @@ def build_gateway_handler(*, state: GatewayState, target_host: str, target_port:
                 if self.command != "GET":
                     self._send_plain(405, "Method Not Allowed\n")
                     return
-                self._send_json(200, session_health_payload(state, target_host=target_host, target_port=target_port))
+                self._send_json(200, session_health_payload(state, upstream=upstream))
                 return
             body = read_request_body(self)
             conn: http.client.HTTPConnection | None = None
@@ -210,8 +251,7 @@ def build_gateway_handler(*, state: GatewayState, target_host: str, target_port:
                     path=self.path,
                     headers=self.headers,
                     body=body,
-                    target_host=target_host,
-                    target_port=target_port,
+                    upstream=upstream,
                 )
             except OSError:
                 self._send_plain(502, "Bad Gateway\n")
@@ -260,14 +300,14 @@ def build_gateway_handler(*, state: GatewayState, target_host: str, target_port:
 
 def safe_session_metadata(metadata: dict[str, Any]) -> dict[str, str]:
     safe: dict[str, str] = {}
-    for key in ("mode", "app", "provider", "server", "remote_cwd", "ccswitch_proxy_port"):
+    for key in ("mode", "app", "provider", "server", "remote_cwd", "ccswitch_proxy_port", "upstream"):
         value = str(metadata.get(key) or "").strip()
         if value:
             safe[key] = value[:512]
     return safe
 
 
-def session_health_payload(state: GatewayState, *, target_host: str, target_port: int) -> dict[str, Any]:
+def session_health_payload(state: GatewayState, *, upstream: GatewayUpstream | None = None, target_host: str | None = None, target_port: int | None = None) -> dict[str, Any]:
     now = time.monotonic()
     with state.lock:
         idle_remaining = max(0, int(state.idle_timeout_seconds - (now - state.last_accessed)))
@@ -275,8 +315,9 @@ def session_health_payload(state: GatewayState, *, target_host: str, target_port
         metadata = dict(state.metadata)
     return {
         "ok": True,
-        "target_host": target_host,
-        "target_port": target_port,
+        "target_host": upstream.host if upstream else target_host,
+        "target_port": upstream.port if upstream else target_port,
+        "target_scheme": upstream.scheme if upstream else "http",
         "token_fingerprint": token_fingerprint(state.token),
         "idle_timeout_seconds": int(state.idle_timeout_seconds),
         "max_lifetime_seconds": int(state.max_lifetime_seconds),
@@ -319,14 +360,21 @@ def forward_request(
     body: bytes,
     target_host: str,
     target_port: int,
+    target_base_url: str | None = None,
+    upstream_headers: dict[str, str] | None = None,
 ) -> tuple[int, str, list[tuple[str, str]], bytes]:
+    upstream = build_gateway_upstream(
+        target_host=target_host,
+        target_port=target_port,
+        target_base_url=target_base_url,
+        upstream_headers=upstream_headers or {},
+    )
     conn, response = open_upstream_response(
         method=method,
         path=path,
         headers=headers,
         body=body,
-        target_host=target_host,
-        target_port=target_port,
+        upstream=upstream,
     )
     try:
         response_body = response.read()
@@ -341,28 +389,45 @@ def open_upstream_response(
     path: str,
     headers: Any,
     body: bytes,
-    target_host: str,
-    target_port: int,
+    upstream: GatewayUpstream,
 ) -> tuple[http.client.HTTPConnection, http.client.HTTPResponse]:
-    outbound_headers = rewrite_headers(headers, target_host=target_host, target_port=target_port)
-    conn = http.client.HTTPConnection(target_host, target_port, timeout=30)
+    outbound_headers = rewrite_headers(headers, upstream=upstream)
+    upstream_path = rewrite_upstream_path(path, upstream.base_path)
+    connection_cls = http.client.HTTPSConnection if upstream.scheme == "https" else http.client.HTTPConnection
+    conn = connection_cls(upstream.host, upstream.port, timeout=30)
     try:
-        conn.request(method, path, body=body, headers=outbound_headers)
+        conn.request(method, upstream_path, body=body, headers=outbound_headers)
         return conn, conn.getresponse()
     except Exception:
         conn.close()
         raise
 
 
-def rewrite_headers(headers: Any, *, target_host: str, target_port: int) -> dict[str, str]:
+def rewrite_headers(headers: Any, *, upstream: GatewayUpstream | None = None, target_host: str | None = None, target_port: int | None = None) -> dict[str, str]:
+    if upstream is None:
+        if target_host is None or target_port is None:
+            raise ValueError("Gateway upstream is required.")
+        upstream = GatewayUpstream(scheme="http", host=target_host, port=target_port)
     rewritten: dict[str, str] = {}
     for key, value in headers.items():
         lower = key.lower()
         if lower in HOP_BY_HOP_HEADERS or lower in {"host", "authorization", "x-api-key"}:
             continue
         rewritten[key] = value
-    rewritten["Host"] = f"{target_host}:{target_port}"
+    rewritten.update(upstream.headers)
+    default_port = 443 if upstream.scheme == "https" else 80
+    rewritten["Host"] = upstream.host if upstream.port == default_port else f"{upstream.host}:{upstream.port}"
     return rewritten
+
+
+def rewrite_upstream_path(path: str, base_path: str) -> str:
+    if not base_path:
+        return path
+    request_path, separator, query = path.partition("?")
+    if request_path == base_path or request_path.startswith(f"{base_path}/"):
+        return path
+    joined = f"{base_path}{request_path if request_path.startswith('/') else '/' + request_path}"
+    return f"{joined}{separator}{query}" if separator else joined
 
 
 def is_streaming_response(headers: list[tuple[str, str]]) -> bool:

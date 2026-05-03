@@ -54,6 +54,7 @@ class EnterServerAICommand:
 def build_ai_ssh_command(request: EnterServerAIRequest) -> EnterServerAICommand:
     validate_request(request)
     remote_url = f"http://127.0.0.1:{request.remote_gateway_port}"
+    codex_base_url = f"{remote_url}/v1"
     remote_cwd = normalized_remote_cwd(request.remote_cwd)
     path_prefixes = normalized_remote_path_prefixes(request.remote_path_prefixes)
     claude_command = normalized_remote_command_path(request.claude_command)
@@ -75,7 +76,7 @@ def build_ai_ssh_command(request: EnterServerAIRequest) -> EnterServerAICommand:
     elif request.ai_app == "codex":
         remote_env.update(
             {
-                "OPENAI_BASE_URL": remote_url,
+                "OPENAI_BASE_URL": codex_base_url,
                 "OPENAI_API_KEY": request.session_token,
             }
         )
@@ -288,7 +289,15 @@ def build_codex_app_setup(remote_env: dict[str, str]) -> str:
         },
         separators=(",", ":"),
     )
-    config = f'openai_base_url = "{remote_env["OPENAI_BASE_URL"]}"\n'
+    config = (
+        'model_provider = "labgpu_gateway"\n'
+        "\n"
+        "[model_providers.labgpu_gateway]\n"
+        'name = "LabGPU Gateway"\n'
+        f'base_url = "{remote_env["OPENAI_BASE_URL"]}"\n'
+        'wire_api = "responses"\n'
+        "requires_openai_auth = true\n"
+    )
     wrapper = '#!/bin/sh\nexec "$LABGPU_REAL_CODEX" "$@"\n' if remote_write else '#!/bin/sh\nexport CODEX_HOME="$LABGPU_CODEX_HOME"\nexec "$LABGPU_REAL_CODEX" "$@"\n'
     parts = [
         'LABGPU_REAL_CODEX="${LABGPU_AI_CODEX_COMMAND:-}"',
@@ -414,7 +423,15 @@ def build_codex_remote_config_override(remote_env: dict[str, str]) -> str:
         },
         separators=(",", ":"),
     )
-    config = f'openai_base_url = "{remote_env["OPENAI_BASE_URL"]}"\n'
+    config = (
+        'model_provider = "labgpu_gateway"\n'
+        "\n"
+        "[model_providers.labgpu_gateway]\n"
+        'name = "LabGPU Gateway"\n'
+        f'base_url = "{remote_env["OPENAI_BASE_URL"]}"\n'
+        'wire_api = "responses"\n'
+        "requires_openai_auth = true\n"
+    )
     return " ".join(
         [
             'mkdir -p "$HOME/.codex"',

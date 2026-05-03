@@ -236,7 +236,7 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn('name="provider_id"', html)
         self.assertIn("Switch provider", html)
         self.assertIn("Add new providers and API keys in CC Switch", html)
-        self.assertIn("Real provider secrets stay in CC Switch", html)
+        self.assertIn("Codex Proxy Tunnel may use the selected CC Switch Codex key inside the local gateway only", html)
         self.assertIn("PackyCode", html)
         self.assertIn("Codex CLI", html)
         self.assertIn("127.0.0.1:15721", html)

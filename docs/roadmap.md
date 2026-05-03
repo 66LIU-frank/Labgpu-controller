@@ -23,11 +23,13 @@ These features are implemented and covered by tests or real smoke tests:
 - Claude Code through Proxy Tunnel
 - Codex CLI through Proxy Tunnel (beta)
 - session-scoped local AI gateway with token auth, streaming, and cleanup
+- local Codex provider forwarding through selected CC Switch provider config
 - read-only remote `aiswitch status` / `aiswitch doctor`
 - CC Switch non-secret provider status reading
 - switching among existing CC Switch providers
   - switches CC Switch effective current-provider state only
-  - does not read, store, or create provider API keys
+  - does not create or store provider API keys
+  - Codex Proxy Tunnel may read the selected Codex key locally for gateway forwarding
 
 ## Alpha but Usable With Care
 
@@ -67,7 +69,7 @@ These should not be presented as working product features:
    Codex Proxy Tunnel is wired through the same gateway path. Next verify more
    provider combinations and CLI versions:
 
-   - whether CC Switch proxy supports Codex routing in the same mode
+   - direct local gateway forwarding for more OpenAI-compatible providers
    - whether streaming and config reload behavior match Claude Code
    - whether `CODEX_HOME` temp config works across packaged Codex releases
 

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from labgpu.remote.ccswitch import read_ccswitch_summary, sqlite_truthy, switch_ccswitch_provider
+from labgpu.remote.ccswitch import read_ccswitch_summary, read_codex_provider_runtime, sqlite_truthy, switch_ccswitch_provider
 
 
 class CcSwitchTest(unittest.TestCase):
@@ -93,6 +93,41 @@ class CcSwitchTest(unittest.TestCase):
         self.assertFalse(switched["changed"])
         self.assertTrue(switched["verified"])
         self.assertIn("already the current", switched["message"])
+
+    def test_reads_codex_runtime_for_local_gateway_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_dir = Path(tmp) / ".cc-switch"
+            db_dir.mkdir()
+            db_path = db_dir / "cc-switch.db"
+            settings_config = {
+                "auth": {"OPENAI_API_KEY": "sk-secret"},
+                "config": (
+                    'model_provider = "dmxapi"\n'
+                    'model = "gpt-5.4"\n'
+                    "\n"
+                    "[model_providers.dmxapi]\n"
+                    'base_url = "https://www.dmxapi.com/v1"\n'
+                    'wire_api = "responses"\n'
+                    "requires_openai_auth = true\n"
+                ),
+            }
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                "CREATE TABLE providers (id TEXT, app_type TEXT, name TEXT, settings_config TEXT, is_current BOOLEAN DEFAULT 0, PRIMARY KEY(id, app_type))"
+            )
+            conn.execute("INSERT INTO providers VALUES (?, ?, ?, ?, ?)", ("codex-dmx", "codex", "DMXAPI", json.dumps(settings_config), 1))
+            conn.commit()
+            conn.close()
+            (db_dir / "settings.json").write_text(json.dumps({"currentProviderCodex": "codex-dmx"}), encoding="utf-8")
+
+            runtime = read_codex_provider_runtime(home=tmp)
+
+        self.assertEqual(runtime["provider"], "DMXAPI")
+        self.assertEqual(runtime["base_url"], "https://www.dmxapi.com/v1")
+        self.assertEqual(runtime["api_key"], "sk-secret")
+        self.assertEqual(runtime["model"], "gpt-5.4")
+        self.assertTrue(runtime["secret_access"])
+        self.assertEqual(runtime["secret_scope"], "local_gateway_only")
 
     def test_sqlite_truthy_handles_text_boolean_values(self):
         self.assertTrue(sqlite_truthy("1"))

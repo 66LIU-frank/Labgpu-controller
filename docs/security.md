@@ -77,10 +77,15 @@ mode.
 ## AI Providers and Remote Sessions
 
 LabGPU may read non-secret provider state from local tools such as CC Switch:
-provider names, current selections, and local proxy ports. It should not read
-or display provider secret payloads. LabGPU may also perform a loopback TCP
-check against the configured proxy port to distinguish "configured" from
-"actually listening."
+provider names, current selections, and local proxy ports. Provider summary and
+provider switching should not read or display provider secret payloads. Codex
+Proxy Tunnel is the exception: LabGPU may read the selected CC Switch Codex
+provider API key locally so the LabGPU gateway can forward directly to that
+provider when CC Switch's own Codex proxy route cannot provide a usable
+`base_url`. That key must stay in local process memory only and must not be
+rendered in UI, logs, audit records, generated SSH commands, or remote shell
+environment. LabGPU may also perform a loopback TCP check against the configured
+proxy port to distinguish "configured" from "actually listening."
 
 The preferred remote AI CLI workflow is Proxy Tunnel mode:
 
@@ -94,9 +99,11 @@ in the local provider tool. The remote endpoint points to a session-scoped
 LabGPU gateway, not directly to CC Switch. Claude Code sessions export a
 temporary `ANTHROPIC_API_KEY=labgpu-session-*` token, and Codex CLI sessions use
 a temporary `OPENAI_API_KEY=labgpu-session-*` token. The gateway validates the
-token before forwarding to CC Switch, strips it before it reaches the local
-proxy, and LabGPU does not copy API keys into the remote home directory for this
-workflow. For Claude Code, LabGPU may create a mode-700 temporary directory
+token before forwarding. Claude requests are forwarded to the local provider
+proxy. Codex requests may be forwarded by the local gateway directly to the
+selected CC Switch Codex provider using the local provider key. LabGPU does not
+copy API keys into the remote home directory for this workflow. For Claude Code,
+LabGPU may create a mode-700 temporary directory
 under `/tmp/labgpu-ai-*` containing a per-session `--settings` file and wrapper
 script so `claude` uses the tunnel base URL. For Codex CLI, LabGPU creates a
 temporary `CODEX_HOME` and wrapper under the same `/tmp/labgpu-ai-*` directory
