@@ -114,10 +114,24 @@ def build_macos(pyinstaller: list[str], version: str) -> None:
         stage / "README.txt",
         f"""LabGPU {version} for macOS
 
-Double-click LabGPU.app.
+How to open:
+
+1. Drag LabGPU.app to Applications, or run it from this DMG.
+2. Because this alpha build is not Apple notarized yet, macOS may say it cannot
+   verify the developer.
+3. Use right-click / Control-click -> Open, then choose Open again.
+
+If macOS still blocks the app after download, remove the quarantine attribute:
+
+  xattr -dr com.apple.quarantine /Applications/LabGPU.app
+
+Then open LabGPU.app again.
 
 LabGPU runs locally on 127.0.0.1, reads your normal ~/.ssh/config, and opens
 an app-style browser window. It does not install daemons on remote GPU servers.
+
+This package is unsigned/not notarized in alpha. A future release can remove this
+warning once it is signed with an Apple Developer ID and notarized by Apple.
 """,
     )
     dmg_path = DIST / f"{APP_NAME}-{version}-macOS.dmg"
@@ -139,7 +153,28 @@ def build_windows(pyinstaller: list[str], version: str) -> None:
         stage / "README-Windows.txt",
         f"""LabGPU {version} for Windows
 
-Double-click LabGPU.exe.
+How to open:
+
+1. Double-click LabGPU.exe.
+2. If Windows SmartScreen warns about an unknown publisher, choose More info ->
+   Run anyway.
+3. If your browser says the page is offline or cannot connect, wait a few
+   seconds for LabGPU to finish starting, then refresh the page.
+
+Troubleshooting:
+
+- LabGPU is a local app. It opens http://127.0.0.1:<port> on your own machine.
+- If double-click gives no useful error, run this from PowerShell in the ZIP
+  folder so the local URL and any error stay visible:
+
+    .\\LabGPU.exe desktop --port 8798
+
+- Then open:
+
+    http://127.0.0.1:8798
+
+- Windows Firewall or security software may ask whether to allow LabGPU to bind
+  to localhost. Allow private/local access if prompted.
 
 LabGPU runs locally on 127.0.0.1, reads your normal SSH config/keys, and opens
 your browser. It does not install daemons on remote GPU servers.

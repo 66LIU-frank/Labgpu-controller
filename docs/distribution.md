@@ -53,8 +53,8 @@ create a GitHub Release automatically and attach the generated `.dmg` / `.zip`
 files.
 
 ```bash
-git tag -a v0.1.2-alpha -m "LabGPU v0.1.2 alpha"
-git push origin v0.1.2-alpha
+git tag -a v0.1.3-alpha -m "LabGPU v0.1.3 alpha"
+git push origin v0.1.3-alpha
 ```
 
 Release troubleshooting:
@@ -72,3 +72,13 @@ Release troubleshooting:
 - Windows artifacts are not signed yet.
 - There is no tray/menu-bar controller yet; the app opens the local web UI.
 - First-run onboarding happens inside the local web UI instead of a native wizard.
+
+Unsigned package behavior:
+
+- macOS users may need Control-click / right-click -> Open, or
+  `xattr -dr com.apple.quarantine /Applications/LabGPU.app` after copying the app
+  to Applications.
+- Windows users may see SmartScreen for an unknown publisher. If the browser
+  opens before the local UI is ready, refresh the localhost page or run
+  `LabGPU.exe desktop --port 8798` from PowerShell and open
+  `http://127.0.0.1:8798`.

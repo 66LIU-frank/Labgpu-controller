@@ -3,7 +3,7 @@
 [![CI](https://github.com/66LIU-frank/Labgpu-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/66LIU-frank/Labgpu-controller/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-v0.1.2--alpha-orange)
+![Status](https://img.shields.io/badge/status-v0.1.3--alpha-orange)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -121,6 +121,15 @@ Download a desktop build:
 If Releases is empty or behind `main`, push a fresh version tag. GitHub Actions
 only publishes release artifacts for commits that receive a `v*` tag.
 
+Alpha desktop packages are unsigned:
+
+- macOS may show an unidentified-developer warning. Use Control-click / right-click
+  -> Open, or remove quarantine with
+  `xattr -dr com.apple.quarantine /Applications/LabGPU.app`.
+- Windows may show SmartScreen for an unknown publisher. Choose More info -> Run
+  anyway. If the browser opens before the local server is ready, refresh the
+  `http://127.0.0.1:<port>` page.
+
 Install from GitHub:
 
 ```bash
@@ -174,8 +183,8 @@ to the Actions run; tag pushes also publish a GitHub Release with those
 artifacts attached.
 
 ```bash
-git tag -a v0.1.2-alpha -m "LabGPU v0.1.2 alpha"
-git push origin v0.1.2-alpha
+git tag -a v0.1.3-alpha -m "LabGPU v0.1.3 alpha"
+git push origin v0.1.3-alpha
 ```
 
 For a fixed server set:

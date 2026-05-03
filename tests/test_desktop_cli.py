@@ -55,6 +55,28 @@ class DesktopCliTest(unittest.TestCase):
             self.assertTrue(desktop.open_desktop_window("http://127.0.0.1:8798"))
         open_browser.assert_called_once_with("http://127.0.0.1:8798")
 
+    def test_delayed_open_waits_for_local_ui(self):
+        with patch("labgpu.cli.desktop.wait_for_local_ui", return_value=True) as wait, patch("labgpu.cli.desktop.open_desktop_window", return_value=True) as open_window:
+            desktop.delayed_open_desktop_window("http://127.0.0.1:8798", "auto")
+        wait.assert_called_once_with("http://127.0.0.1:8798")
+        open_window.assert_called_once_with("http://127.0.0.1:8798", browser="auto")
+
+    def test_wait_for_local_ui_returns_true_when_http_responds(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        with patch("labgpu.cli.desktop.urllib.request.urlopen", return_value=Response()) as urlopen:
+            self.assertTrue(desktop.wait_for_local_ui("http://127.0.0.1:8798", timeout=0.01))
+        urlopen.assert_called_once()
+
+    def test_wait_for_local_ui_times_out(self):
+        with patch("labgpu.cli.desktop.urllib.request.urlopen", side_effect=OSError), patch("labgpu.cli.desktop.time.sleep"):
+            self.assertFalse(desktop.wait_for_local_ui("http://127.0.0.1:8798", timeout=0.01, interval=0.01))
+
     def test_install_app_flag_is_registered(self):
         args = build_parser().parse_args(["desktop", "--install-app", "/tmp/LabGPU.app"])
         self.assertEqual(args.install_app, "/tmp/LabGPU.app")

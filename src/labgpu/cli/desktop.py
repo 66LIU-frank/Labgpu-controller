@@ -6,6 +6,7 @@ import socket
 import subprocess
 import threading
 import time
+import urllib.request
 import webbrowser
 from pathlib import Path
 
@@ -50,8 +51,19 @@ def find_free_port(host: str) -> int:
 
 
 def delayed_open_desktop_window(url: str, browser: str) -> None:
-    time.sleep(0.5)
+    wait_for_local_ui(url)
     open_desktop_window(url, browser=browser)
+
+
+def wait_for_local_ui(url: str, *, timeout: float = 20.0, interval: float = 0.2) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=1.0):  # noqa: S310 - local desktop UI readiness probe
+                return True
+        except Exception:  # noqa: BLE001 - readiness probe should keep trying.
+            time.sleep(interval)
+    return False
 
 
 def open_desktop_window(url: str, *, browser: str = "auto") -> bool:

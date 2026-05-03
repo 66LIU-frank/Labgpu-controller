@@ -3,7 +3,7 @@
 [![CI](https://github.com/66LIU-frank/Labgpu-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/66LIU-frank/Labgpu-controller/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-v0.1.2--alpha-orange)
+![Status](https://img.shields.io/badge/status-v0.1.3--alpha-orange)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -114,6 +114,13 @@ key，但远程服务器仍然只拿到 `labgpu-session-*` token。LabGPU 不创
 如果 Releases 是空的，或者比 `main` 落后，需要推一个新的版本 tag。GitHub Actions
 只会给收到 `v*` tag 的 commit 自动发布 release 产物。
 
+Alpha 桌面包目前还没有正式签名：
+
+- macOS 可能提示无法验证开发者。用 Control-click / 右键 -> Open 打开；如果仍被拦，
+  可以执行 `xattr -dr com.apple.quarantine /Applications/LabGPU.app` 后再打开。
+- Windows 可能出现 SmartScreen unknown publisher。选择 More info -> Run anyway。
+  如果浏览器先显示无法连接，等几秒再刷新 `http://127.0.0.1:<port>` 页面。
+
 安装：
 
 ```bash
@@ -166,8 +173,8 @@ standalone 路线使用 PyInstaller。GitHub 上的 `Release Build` workflow 会
 run 里，打 tag 才会自动创建 GitHub Release 并把产物挂上去。
 
 ```bash
-git tag -a v0.1.2-alpha -m "LabGPU v0.1.2 alpha"
-git push origin v0.1.2-alpha
+git tag -a v0.1.3-alpha -m "LabGPU v0.1.3 alpha"
+git push origin v0.1.3-alpha
 ```
 
 固定服务器范围：
