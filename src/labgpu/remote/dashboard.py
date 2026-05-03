@@ -1042,6 +1042,7 @@ def render_providers_page() -> str:
         ("openclaw", "OpenClaw Agent"),
     ]
     cards = "".join(render_provider_card(summary, app, label) for app, label in apps)
+    launch_cards = "".join(render_ai_launch_card(app, label) for app, label in apps)
     detected = bool(summary.get("available"))
     detected_class = "ok" if detected else "warning"
     detected_label = "detected" if detected else "not detected"
@@ -1057,30 +1058,27 @@ def render_providers_page() -> str:
         </section>
         <section class="panel">
           <div class="section-head"><h2>Start a Session</h2><a href="/gpus">Open from Train</a></div>
-          <div class="grid compact">
-            <div class="card">
-              <div class="card-head"><h3>Claude Code</h3><span class="badge ok">ready</span></div>
-              <p class="muted">Use Enter Server from a GPU or server card. LabGPU opens a session-scoped proxy tunnel; real API keys stay local.</p>
-            </div>
-            <div class="card">
-              <div class="card-head"><h3>Codex CLI</h3><span class="badge ok">beta</span></div>
-              <p class="muted">Uses the same gateway tunnel with a temporary remote <code>CODEX_HOME</code>. It does not write remote <code>~/.codex</code>.</p>
-            </div>
-            <div class="card">
-              <div class="card-head"><h3>Gemini / OpenClaw</h3><span class="badge warning">coming soon</span></div>
-              <p class="muted">Provider state can be shown when CC Switch exposes it, but remote launchers stay disabled until their config and streaming behavior are verified.</p>
-            </div>
-            <div class="card">
-              <div class="card-head"><h3>Remote Write</h3><span class="badge warning">disabled</span></div>
-              <p class="muted">Remote config writes stay disabled in Alpha. LabGPU does not copy provider API keys to servers.</p>
-            </div>
+          <div class="ai-flow">
+            <span>Choose GPU/server</span>
+            <span>Pick app/provider</span>
+            <span>Open Proxy Tunnel</span>
           </div>
+          <div class="ai-launch-grid">{launch_cards}</div>
+          <p class="muted">Remote Write stays disabled in Alpha. LabGPU launches remote AI CLIs through a session gateway and does not copy provider API keys to servers.</p>
         </section>
         <section class="panel">
-          <div class="section-head"><h2>Provider Status</h2><a class="json-control" href="/api/integrations/ccswitch">JSON</a></div>
-          <p class="muted">{esc(summary.get("message") or "")} You can switch existing CC Switch providers here. Add new providers in CC Switch for now so LabGPU never handles provider API keys.</p>
-          <p class="muted">Switching updates CC Switch local current-provider state only; LabGPU does not read or store provider secrets.</p>
-          <div class="grid compact">{cards}</div>
+          <div class="section-head"><h2>Provider Console</h2><a class="json-control" href="/api/integrations/ccswitch">JSON</a></div>
+          <p class="muted">{esc(summary.get("message") or "")} Switch existing CC Switch providers here. Add new providers in CC Switch for now.</p>
+          <div class="provider-grid">{cards}</div>
+        </section>
+        <section class="panel">
+          <div class="section-head"><h2>Safety Boundary</h2><span class="badge ok">local-first</span></div>
+          <div class="ai-safety-row">
+            <span>Reads provider names, current selections, and proxy ports only.</span>
+            <span>Switching updates CC Switch local current-provider state only.</span>
+            <span>Uses temporary session tokens for remote tunnels.</span>
+            <span>Never stores or displays real provider secrets.</span>
+          </div>
         </section>
         <section class="panel">
           <h2>Recent AI Sessions</h2>
@@ -1090,6 +1088,25 @@ def render_providers_page() -> str:
         """,
         json_href="/api/integrations/ccswitch",
     )
+
+
+def render_ai_launch_card(app: str, label: str) -> str:
+    states = {
+        "claude": ("ready", "ok", "Proxy Tunnel launch is available from GPU and server cards."),
+        "codex": ("beta", "ok", "Uses temporary remote CODEX_HOME through the same tunnel path."),
+        "gemini": ("coming soon", "warning", "Remote launcher remains disabled until config behavior is verified."),
+        "openclaw": ("coming soon", "warning", "Remote launcher remains disabled until config behavior is verified."),
+    }
+    state, badge_class, description = states.get(app, ("coming soon", "warning", "Remote launcher is not available yet."))
+    return f"""
+    <article class="ai-launch-card">
+      <div>
+        <h3>{esc(label)}</h3>
+        <p class="muted">{esc(description)}</p>
+      </div>
+      <span class="badge {esc(badge_class)}">{esc(state)}</span>
+    </article>
+    """
 
 
 def render_provider_card(summary: dict[str, object], app: str, label: str) -> str:
@@ -1129,8 +1146,10 @@ def render_provider_card(summary: dict[str, object], app: str, label: str) -> st
     proxy_class = "error" if enabled and listening is False else ("ok" if enabled else ("warning" if port else ""))
     proxy_state = "not listening" if enabled and listening is False else ("enabled" if enabled else ("configured" if port else "not configured"))
     tcp_state = "listening" if listening is True else ("not listening" if listening is False and port else ("unknown" if enabled and port else "-"))
+    launch_state = "Proxy Tunnel ready" if app == "claude" else ("Proxy Tunnel beta" if app == "codex" else "Remote launch later")
+    launch_class = "ok" if app in {"claude", "codex"} else "warning"
     return f"""
-    <article class="card">
+    <article class="card provider-card">
       <div class="card-head">
         <div>
           <h3>{esc(label)}</h3>
@@ -1138,13 +1157,17 @@ def render_provider_card(summary: dict[str, object], app: str, label: str) -> st
         </div>
         <span class="badge {esc(proxy_class)}">{esc(proxy_state)}</span>
       </div>
-      <div class="meta">
-        <span><span>Local proxy</span> <code>{esc(proxy_label)}</code></span>
-        <span><span>TCP check</span> <code>{esc(tcp_state)}</code></span>
-        <span><span>App id</span> <code>{esc(app)}</code></span>
+      <div class="provider-summary-grid">
+        <span><strong>Proxy</strong><code>{esc(proxy_label)}</code></span>
+        <span><strong>TCP</strong><code>{esc(tcp_state)}</code></span>
+        <span><strong>Remote</strong><code>{esc(launch_state)}</code></span>
       </div>
+      <span class="badge {esc(launch_class)} provider-support">{esc(launch_state)}</span>
       {switch_form}
-      <table><tr><th>Provider</th><th>Status</th></tr>{choice_rows}</table>
+      <details class="provider-details">
+        <summary>Provider choices ({len(choices)})</summary>
+        <table><tr><th>Provider</th><th>Status</th></tr>{choice_rows}</table>
+      </details>
     </article>
     """
 
@@ -2268,6 +2291,21 @@ summary{{cursor:pointer;color:var(--link);font-weight:600}}
 .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}}
 .grid.compact{{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}}
 .split{{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px;align-items:start}}
+.ai-flow{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 12px}}
+.ai-flow span{{border:1px solid var(--border-soft);background:var(--surface-soft);border-radius:999px;padding:5px 10px;color:var(--link);font-size:13px}}
+.ai-flow span:not(:last-child)::after{{content:"";display:inline-block;width:18px;height:1px;background:var(--border);margin-left:10px;vertical-align:middle}}
+.ai-launch-grid,.provider-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:10px 0}}
+.ai-launch-card{{border:1px solid var(--border-soft);background:var(--surface-soft);border-radius:8px;padding:12px;display:flex;justify-content:space-between;gap:12px;align-items:flex-start}}
+.provider-card{{display:grid;gap:10px}}
+.provider-summary-grid{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}}
+.provider-summary-grid span{{border:1px solid var(--border-soft);background:var(--surface-soft);border-radius:8px;padding:8px;min-width:0}}
+.provider-summary-grid strong{{display:block;color:var(--muted);font-size:11px;font-weight:600;text-transform:uppercase}}
+.provider-summary-grid code{{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:3px}}
+.provider-support{{justify-self:start}}
+.provider-details{{margin-top:0}}
+.provider-details summary{{font-size:13px}}
+.ai-safety-row{{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:10px}}
+.ai-safety-row span{{border:1px solid var(--border-soft);background:var(--surface-soft);border-radius:8px;padding:10px;color:var(--muted)}}
 .card{{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px;overflow:hidden}}
 .card-head{{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:12px}}
 .meta{{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0;color:var(--muted);font-size:13px}}
@@ -2310,7 +2348,7 @@ html[data-theme="dark"] .warn-text{{color:#facc15}}
 html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
 @media(max-width:980px){{.group-actions{{grid-template-columns:1fr}}}}
 @media(max-width:860px){{.topbar{{flex-direction:column}}.top-controls{{justify-content:flex-start;max-width:none}}.cache-message{{max-width:calc(100vw - 96px)}}}}
-@media(max-width:640px){{main{{width:calc(100vw - 20px)}}.grid,.split{{grid-template-columns:1fr}}.toolbar{{align-items:flex-start;flex-direction:column}}.assistant-form{{grid-template-columns:1fr}}}}
+@media(max-width:640px){{main{{width:calc(100vw - 20px)}}.grid,.split,.provider-summary-grid{{grid-template-columns:1fr}}.toolbar{{align-items:flex-start;flex-direction:column}}.assistant-form{{grid-template-columns:1fr}}}}
 </style></head><body><main>{render_nav(status=status, json_href=json_href)}{body}</main>
 <dialog id="stop-modal">
   <h2>Stop process?</h2>
@@ -2391,6 +2429,12 @@ const translations = {{
   "AI Sessions": "AI 会话",
   "Start a Session": "开始会话",
   "Provider Status": "Provider 状态",
+  "Provider Console": "Provider 控制台",
+  "Safety Boundary": "安全边界",
+  "Choose GPU/server": "选择 GPU/服务器",
+  "Pick app/provider": "选择应用/Provider",
+  "Open Proxy Tunnel": "打开 Proxy Tunnel",
+  "Provider choices": "Provider 选项",
   "Recent AI Sessions": "最近 AI 会话",
   "Advanced session options": "高级会话选项",
   "Open from Train": "从训练页打开",
