@@ -501,7 +501,7 @@ class ServerHandler(BaseHTTPRequestHandler):
             if not provider_name:
                 label = AI_PROXY_TUNNEL_APPS[agent]
                 self._json(
-                    {"ok": False, "result": "missing_provider", "message": f"Current CC Switch {label} provider was not found. Switch {label} provider in AI Sessions or CC Switch first."},
+                    {"ok": False, "result": "missing_provider", "message": f"Current CC Switch {label} provider was not found. Switch {label} provider in AI Config Console or CC Switch first."},
                     status=HTTPStatus.CONFLICT,
                 )
                 return
@@ -1061,23 +1061,29 @@ def render_providers_page() -> str:
         ("gemini", "Gemini CLI"),
         ("openclaw", "OpenClaw Agent"),
     ]
+    console_tabs = render_ai_console_tabs(summary, apps)
     cards = "".join(render_provider_card(summary, app, label) for app, label in apps)
     launch_cards = "".join(render_ai_launch_card(app, label) for app, label in apps)
     detected = bool(summary.get("available"))
     detected_class = "ok" if detected else "warning"
     detected_label = "detected" if detected else "not detected"
     return page(
-        "AI Sessions",
+        "AI Config Console",
         f"""
         <section class="toolbar">
           <div>
-            <h1>AI Sessions</h1>
-            <p>Remote Claude Code and Codex CLI sessions through the current local CC Switch provider.</p>
+            <h1>AI Config Console</h1>
+            <p>CC Switch-style provider control plus remote Claude Code and Codex CLI launchers.</p>
           </div>
           <span class="badge {detected_class}">CC Switch {detected_label}</span>
         </section>
         <section class="panel">
-          <div class="section-head"><h2>Start a Session</h2><a href="/gpus">Open from Train</a></div>
+          <div class="section-head"><h2>App Status</h2><a class="json-control" href="/api/integrations/ccswitch">JSON</a></div>
+          <p class="muted">A compact control surface for what is wired today. New provider creation and real API keys still stay in CC Switch for now.</p>
+          {console_tabs}
+        </section>
+        <section class="panel">
+          <div class="section-head"><h2>Remote Launchers</h2><a href="/gpus">Open from Train</a></div>
           <div class="ai-flow">
             <span>Choose GPU/server</span>
             <span>Pick app/provider</span>
@@ -1087,12 +1093,12 @@ def render_providers_page() -> str:
           <p class="muted">Proxy Tunnel stays recommended. Remote Config Override is available for Claude/Codex when you want LabGPU to back up and overwrite remote app config for the current gateway session. Real provider keys are not copied to servers.</p>
         </section>
         <section class="panel">
-          <div class="section-head"><h2>Provider Console</h2><a class="json-control" href="/api/integrations/ccswitch">JSON</a></div>
-          <p class="muted">{esc(summary.get("message") or "")} Switch existing CC Switch providers here. Add new providers in CC Switch for now.</p>
+          <div class="section-head"><h2>Provider Routing</h2><a class="json-control" href="/api/integrations/ccswitch">JSON</a></div>
+          <p class="muted">{esc(summary.get("message") or "")} Switch current providers per app. LabGPU updates CC Switch local current-provider state only; add new providers and API keys in CC Switch for now.</p>
           <div class="provider-grid">{cards}</div>
         </section>
         <section class="panel">
-          <div class="section-head"><h2>Safety Boundary</h2><span class="badge ok">local-first</span></div>
+          <div class="section-head"><h2>Secret Boundary</h2><span class="badge ok">local-first</span></div>
           <div class="ai-safety-row">
             <span>Reads provider names, current selections, and proxy ports only.</span>
             <span>Switching updates CC Switch local current-provider state only.</span>
@@ -1101,13 +1107,61 @@ def render_providers_page() -> str:
           </div>
         </section>
         <section class="panel">
-          <h2>Recent AI Sessions</h2>
+          <h2>Recent Remote Launches</h2>
           <p class="muted">Browser-local launch history only. It does not prove the terminal or tunnel is still alive.</p>
           <table><tr><th>Server</th><th>Folder</th><th>App / Provider</th><th>Proxy Tunnel</th><th>GPU</th><th>Started</th></tr><tbody id="ai-session-rows"><tr><td colspan="6" class="muted">No AI sessions launched from this browser yet.</td></tr></tbody></table>
         </section>
         """,
         json_href="/api/integrations/ccswitch",
     )
+
+
+def render_ai_console_tabs(summary: dict[str, object], apps: list[tuple[str, str]]) -> str:
+    providers = summary.get("providers") if isinstance(summary.get("providers"), dict) else {}
+    proxy = summary.get("proxy") if isinstance(summary.get("proxy"), dict) else {}
+    support = {
+        "claude": ("ready", "ok", "remote launcher"),
+        "codex": ("beta", "ok", "remote launcher"),
+        "gemini": ("coming soon", "warning", "not wired"),
+        "openclaw": ("coming soon", "warning", "not wired"),
+    }
+    items = []
+    for app, label in apps:
+        provider = providers.get(app) if isinstance(providers.get(app), dict) else {}
+        proxy_config = proxy.get(app) if isinstance(proxy.get(app), dict) else {}
+        current = str(provider.get("current") or "-")
+        port = proxy_config.get("listen_port") if isinstance(proxy_config, dict) else None
+        enabled = bool(proxy_config.get("enabled") or proxy_config.get("proxy_enabled")) if isinstance(proxy_config, dict) else False
+        listening = proxy_config.get("listening") if isinstance(proxy_config, dict) else None
+        proxy_text = f"{proxy_config.get('listen_address') or '127.0.0.1'}:{port}" if port else "-"
+        if enabled and listening is False:
+            proxy_state = ("not listening", "error")
+        elif enabled:
+            proxy_state = ("proxy on", "ok")
+        elif port:
+            proxy_state = ("configured", "warning")
+        else:
+            proxy_state = ("no proxy", "warning")
+        remote_state, remote_class, remote_note = support.get(app, ("coming soon", "warning", "not wired"))
+        items.append(
+            f"""
+            <article class="ai-console-tab">
+              <div class="card-head">
+                <div>
+                  <h3>{esc(label)}</h3>
+                  <p>Provider: <strong>{esc(current)}</strong></p>
+                </div>
+                <span class="badge {esc(remote_class)}">{esc(remote_state)}</span>
+              </div>
+              <div class="tab-meta">
+                <span class="badge {esc(proxy_state[1])}">{esc(proxy_state[0])}</span>
+                <code>{esc(proxy_text)}</code>
+                <span>{esc(remote_note)}</span>
+              </div>
+            </article>
+            """
+        )
+    return f"<div class='ai-console-tabs'>{''.join(items)}</div>"
 
 
 def render_ai_launch_card(app: str, label: str) -> str:
@@ -2315,6 +2369,11 @@ summary{{cursor:pointer;color:var(--link);font-weight:600}}
 .ai-flow{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 12px}}
 .ai-flow span{{border:1px solid var(--border-soft);background:var(--surface-soft);border-radius:999px;padding:5px 10px;color:var(--link);font-size:13px}}
 .ai-flow span:not(:last-child)::after{{content:"";display:inline-block;width:18px;height:1px;background:var(--border);margin-left:10px;vertical-align:middle}}
+.ai-console-tabs{{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:12px}}
+.ai-console-tab{{border:1px solid var(--border-soft);background:var(--surface-soft);border-radius:8px;padding:12px;display:grid;gap:8px}}
+.ai-console-tab .card-head{{margin-bottom:0}}
+.tab-meta{{display:flex;align-items:center;gap:7px;flex-wrap:wrap;color:var(--muted);font-size:12px}}
+.tab-meta code{{border:1px solid var(--border-soft);border-radius:999px;padding:2px 7px;background:var(--surface)}}
 .ai-launch-grid,.provider-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin:10px 0}}
 .ai-launch-card{{border:1px solid var(--border-soft);background:var(--surface-soft);border-radius:8px;padding:12px;display:flex;justify-content:space-between;gap:12px;align-items:flex-start}}
 .provider-card{{display:grid;gap:10px}}
@@ -2448,16 +2507,18 @@ const translations = {{
   "Train Now": "现在开跑",
   "My Training": "我的训练",
   "Assistant": "助手",
-  "AI Sessions": "AI 会话",
-  "Start a Session": "开始会话",
+  "AI Config": "AI 配置",
+  "AI Config Console": "AI 配置台",
+  "App Status": "应用状态",
+  "Remote Launchers": "远程启动器",
   "Provider Status": "Provider 状态",
-  "Provider Console": "Provider 控制台",
-  "Safety Boundary": "安全边界",
+  "Provider Routing": "Provider 路由",
+  "Secret Boundary": "Secret 边界",
   "Choose GPU/server": "选择 GPU/服务器",
   "Pick app/provider": "选择应用/Provider",
   "Open Proxy Tunnel": "打开 Proxy Tunnel",
   "Provider choices": "Provider 选项",
-  "Recent AI Sessions": "最近 AI 会话",
+  "Recent Remote Launches": "最近远程启动",
   "Advanced session options": "高级会话选项",
   "Open from Train": "从训练页打开",
   "Manage Groups": "管理分组",
@@ -2944,8 +3005,8 @@ function updateCcswitchProviderOptions() {{
   const modeLabel = selectedAiMode() === "remote_write" ? "Remote Config Override" : "Proxy Tunnel";
   if (providerSummary) {{
     providerSummary.textContent = providerName
-      ? `Using current CC Switch ${{aiAppLabel(agent)}} provider: ${{providerName}}. To change provider, use the AI Sessions page or CC Switch.`
-      : `Current CC Switch ${{aiAppLabel(agent)}} provider was not found. Switch ${{aiAppLabel(agent)}} provider in AI Sessions or CC Switch first.`;
+      ? `Using current CC Switch ${{aiAppLabel(agent)}} provider: ${{providerName}}. To change provider, use AI Config Console or CC Switch.`
+      : `Current CC Switch ${{aiAppLabel(agent)}} provider was not found. Switch ${{aiAppLabel(agent)}} provider in AI Config Console or CC Switch first.`;
   }}
   if (proxySummary) {{
     proxySummary.textContent = proxyConfig && proxyConfig.listen_port && ccswitchProxyIsListening(proxyConfig)
@@ -2992,7 +3053,7 @@ async function runOpenSsh(button) {{
     return;
   }}
   if (!providerName) {{
-    if (result) result.textContent = `Current CC Switch ${{aiAppLabel(agent)}} provider was not found. Switch ${{aiAppLabel(agent)}} provider in AI Sessions or CC Switch first.`;
+    if (result) result.textContent = `Current CC Switch ${{aiAppLabel(agent)}} provider was not found. Switch ${{aiAppLabel(agent)}} provider in AI Config Console or CC Switch first.`;
     return;
   }}
   if (!activeCcswitchProxyConfig(agent)) {{
@@ -3466,7 +3527,7 @@ def render_nav(*, status: str = "", json_href: str = "/api/servers") -> str:
         <a href="/">Home</a>
         <a href="/gpus">Train</a>
         <a href="/servers">Servers</a>
-        <a href="/providers">AI Sessions</a>
+        <a href="/providers">AI Config</a>
         <a href="/settings">Settings</a>
       </div>
       <div class="top-controls" aria-label="Display and refresh controls">

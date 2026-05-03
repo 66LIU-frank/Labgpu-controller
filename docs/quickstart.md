@@ -15,7 +15,7 @@ For specific SSH aliases from your local `~/.ssh/config`:
 labgpu ui --hosts alpha_liu,Song-1
 ```
 
-The main UI is grouped around Home, Train, Servers, AI Sessions, and Settings. Home still summarizes recommended GPUs, current runs, problems, and saved servers.
+The main UI is grouped around Home, Train, Servers, AI Config, and Settings. Home still summarizes recommended GPUs, current runs, problems, and saved servers.
 
 ## 2. Pick a GPU From the Terminal
 

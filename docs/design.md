@@ -22,6 +22,6 @@ Core decisions:
 - LabGPU Home may stop only the current SSH user's processes. Every stop action re-probes PID identity before signaling and writes a local audit record.
 - Process health labels are intentionally conservative. Single-probe idle signals are shown as possible/suspected, not as definitive stuck-process claims.
 - Remote AI CLI sessions should prefer session-scoped local gateway tunnels: provider keys remain on the laptop or local vault, SSH reverse forwarding exposes only a temporary loopback endpoint on the remote server, and the gateway requires a per-session token before forwarding to the local provider proxy. Writing provider keys into remote config is an advanced personal-server workflow, not the default.
-- The local UI should keep the primary navigation focused on Home, Train, Servers, AI Sessions, and Settings. Secondary tools such as Assistant, Alerts, Groups, and raw JSON views should remain reachable from their related pages without competing with the daily workflow.
+- The local UI should keep the primary navigation focused on Home, Train, Servers, AI Config, and Settings. Secondary tools such as Assistant, Alerts, Groups, and raw JSON views should remain reachable from their related pages without competing with the daily workflow.
 
 The project avoids scheduling, reservations, quotas, and admin panels. It focuses on a student's personal loop: find GPU -> run/adopt -> observe -> diagnose -> context/report -> safe action.

@@ -46,7 +46,7 @@ UI 现在收束成五个主入口：
 | Home | 总览、推荐 GPU、当前任务、问题、保存的服务器。 |
 | Train | 找 GPU、打开终端、查看 `My Runs` 和 `My GPU Processes`。 |
 | Servers | 查看 SSH 服务器、磁盘、GPU、健康状态和分组入口。 |
-| AI Sessions | 查看/切换已有 CC Switch provider，启动远程 Claude Code / Codex CLI session。 |
+| AI Config | 类似 CC Switch 的 provider 路由、应用状态和远程 Claude Code / Codex CLI 启动器。 |
 | Settings | 新增/导入 SSH 服务器，选择保存的服务器，管理分组。 |
 
 次级功能仍然保留：
@@ -56,10 +56,11 @@ UI 现在收束成五个主入口：
 - `Assistant` 可以从 Home 进入。
 - JSON/API 链接默认隐藏，可在 Settings 里打开。
 
-## AI Sessions
+## AI 配置台
 
-LabGPU 可以让远程 Claude Code 和 Codex CLI 使用你本机的 CC Switch provider，同时
-不把真实 API key 写到远程服务器。
+LabGPU 现在有一个 AI 配置台，用来做类似 CC Switch 的 provider 路由和远程启动
+配置。它可以让远程 Claude Code 和 Codex CLI 使用你本机的 CC Switch provider，
+同时不把真实 API key 写到远程服务器。
 
 当前支持的链路：
 

@@ -48,7 +48,7 @@ The UI is intentionally grouped into five primary areas:
 | Home | Overview, recommended GPUs, current work, problems, saved servers. |
 | Train | Find GPUs, open terminals, see `My Runs` and `My GPU Processes`. |
 | Servers | Inspect SSH servers, disks, GPUs, health, and group shortcuts. |
-| AI Sessions | View/switch existing CC Switch providers and launch remote Claude Code / Codex CLI sessions. |
+| AI Config | CC Switch-style provider routing, app status, and remote Claude Code / Codex CLI launchers. |
 | Settings | Add/import SSH servers, choose saved servers, and manage groups. |
 
 Secondary tools still exist, but they stay inside related workflows:
@@ -58,10 +58,11 @@ Secondary tools still exist, but they stay inside related workflows:
 - `Assistant` is reachable from Home.
 - raw JSON links are hidden unless enabled in Settings.
 
-## AI Sessions
+## AI Config Console
 
-LabGPU can connect remote Claude Code and Codex CLI sessions to your local CC
-Switch provider without writing API keys to the remote server.
+LabGPU includes an AI Config Console for CC Switch-style provider routing and
+remote launcher setup. It connects remote Claude Code and Codex CLI sessions to
+your local CC Switch provider without writing API keys to the remote server.
 
 The current supported path is:
 

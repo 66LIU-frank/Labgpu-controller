@@ -7,7 +7,7 @@ experimental UI from looking more complete than the implementation really is.
 
 These features are implemented and covered by tests or real smoke tests:
 
-- local UI grouped around Home, Train, Servers, AI Sessions, and Settings
+- local UI grouped around Home, Train, Servers, AI Config, and Settings
 - SSH host discovery from `~/.ssh/config`
 - saved server inventory and server groups
 - agentless GPU/server probing over SSH
@@ -40,7 +40,7 @@ These are useful, but the behavior should stay conservative:
   - currently updates CC Switch provider state directly in the local database
   - switch results are verified after write and labeled as local state updates
   - safer long term path is an official CC Switch API/CLI if available
-- browser-local Recent AI Sessions
+- browser-local Recent Remote Launches
   - launch history only
   - not a tunnel health monitor
 - Remote Config Override for Claude/Codex

@@ -263,7 +263,7 @@ remote gateway port when that option is available.
 If selected app provider state is missing, LabGPU should report:
 
 ```text
-Current CC Switch <app> provider was not found. Switch <app> provider in AI Sessions or CC Switch first.
+Current CC Switch <app> provider was not found. Switch <app> provider in AI Config Console or CC Switch first.
 ```
 
 If Claude Code exists on the server but is not visible to the LabGPU launch
@@ -285,4 +285,4 @@ During the smoke test, confirm that:
 - the remote token starts with `labgpu-session-`, not `sk-`
 - unauthenticated remote gateway requests return `401`
 - Claude Code streaming output is incremental
-- Recent AI Sessions does not claim that a tunnel is online
+- Recent Remote Launches does not claim that a tunnel is online
