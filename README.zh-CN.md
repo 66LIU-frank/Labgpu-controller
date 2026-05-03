@@ -147,7 +147,8 @@ python scripts/build_standalone.py --clean
 ```
 
 standalone 路线使用 PyInstaller。GitHub 上的 `Release Build` workflow 会在打 tag
-或手动触发时构建 macOS `.dmg` 和 Windows `.zip`。
+或手动触发时构建 macOS `.dmg` 和 Windows `.zip`；打 tag 还会自动创建 GitHub
+Release 并把产物挂上去。
 
 固定服务器范围：
 

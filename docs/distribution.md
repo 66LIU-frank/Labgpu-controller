@@ -48,13 +48,18 @@ It builds:
 - macOS DMG on `macos-latest`
 - Windows ZIP on `windows-latest`
 
-The uploaded artifacts are attached to the workflow run. For a formal GitHub
-Release, download those artifacts and attach them to the release entry, or add a
-release-publish step later.
+Manual workflow runs upload artifacts to the workflow run. Tag pushes also
+create a GitHub Release automatically and attach the generated `.dmg` / `.zip`
+files.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
 
 ## Current Limitations
 
 - macOS artifacts are not codesigned or notarized yet.
 - Windows artifacts are not signed yet.
 - There is no tray/menu-bar controller yet; the app opens the local web UI.
-- First-run onboarding happens inside the current UI instead of a native wizard.
+- First-run onboarding happens inside the local web UI instead of a native wizard.

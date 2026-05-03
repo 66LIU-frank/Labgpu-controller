@@ -13,6 +13,7 @@ class ConfigInventoryTest(unittest.TestCase):
 [ui]
 refresh_interval_seconds = 10
 safe_mode = true
+onboarding_completed = true
 
 [groups]
 names = ["AlphaLab", "liusuu"]
@@ -32,6 +33,7 @@ codex_command = "~/.local/bin/codex"
         )
         server = config.servers["alpha_liu"]
         self.assertEqual(config.ui.refresh_interval_seconds, 10)
+        self.assertTrue(config.ui.onboarding_completed)
         self.assertEqual(config.groups, ["AlphaLab", "liusuu"])
         self.assertEqual(server.group, "AlphaLab")
         self.assertEqual(server.tags, ["A100", "training"])
@@ -41,6 +43,7 @@ codex_command = "~/.local/bin/codex"
         self.assertTrue(server.shared_account)
         self.assertFalse(server.allow_stop_own_process)
         rendered = render_config(config)
+        self.assertIn("onboarding_completed = true", rendered)
         self.assertIn('[groups]\nnames = ["AlphaLab", "liusuu"]', rendered)
         self.assertIn("[servers.alpha_liu]", rendered)
         self.assertIn('group = "AlphaLab"', rendered)

@@ -151,7 +151,8 @@ python scripts/build_standalone.py --clean
 ```
 
 The standalone path uses PyInstaller. On GitHub, the `Release Build` workflow
-builds macOS `.dmg` and Windows `.zip` artifacts for tag/manual releases.
+builds macOS `.dmg` and Windows `.zip` artifacts. Tag pushes also publish a
+GitHub Release with those artifacts attached.
 
 For a fixed server set:
 

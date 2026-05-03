@@ -13,6 +13,8 @@ from labgpu.remote.dashboard import (
     format_memory,
     gpu_recommendation,
     process_state_label,
+    render_onboarding_banner,
+    render_onboarding_page,
     render_alerts_page,
     render_assistant_page,
     render_available_gpus,
@@ -283,6 +285,44 @@ class DashboardPagesTest(unittest.TestCase):
             self.assertIn("alpha_liu", html)
             self.assertIn("value='alpha_liu' checked", html)
             self.assertIn("Save selected hosts", html)
+
+    def test_onboarding_page_shows_first_run_checklist(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_home = os.environ.get("LABGPU_HOME")
+            os.environ["LABGPU_HOME"] = tmp
+            ssh_config = Path(tmp) / "ssh_config"
+            ssh_config.write_text("Host alpha_liu\n  HostName 192.168.1.17\n", encoding="utf-8")
+            summary = {
+                "available": True,
+                "message": "CC Switch detected.",
+                "providers": {"claude": {"choices_detail": [{"id": "claude-main", "name": "main"}]}},
+                "proxy": {"claude": {"listen_port": 15721, "enabled": True, "listening": True}},
+            }
+            try:
+                with patch("labgpu.remote.dashboard.read_ccswitch_summary", return_value=summary):
+                    html = render_onboarding_page(ssh_config=ssh_config)
+                    banner = render_onboarding_banner(ssh_config=ssh_config)
+            finally:
+                if old_home is None:
+                    os.environ.pop("LABGPU_HOME", None)
+                else:
+                    os.environ["LABGPU_HOME"] = old_home
+            self.assertIn("First-run Setup", html)
+            self.assertIn("Setup Checklist", html)
+            self.assertIn("SSH Config", html)
+            self.assertIn("Home Servers", html)
+            self.assertIn("AI Providers", html)
+            self.assertIn("1 SSH alias(es) detected", html)
+            self.assertIn("Proxy tunnel ready: yes", html)
+            self.assertIn("Mark setup done", html)
+            self.assertIn("First-run setup", banner)
+            self.assertIn("SSH aliases", banner)
+
+    def test_home_can_show_onboarding_banner_when_state_is_provided(self):
+        data = sample_data()
+        html = render_index(data, onboarding={"completed": False, "ssh_host_count": 2, "saved_server_count": 0, "ccswitch_available": False})
+        self.assertIn("First-run setup", html)
+        self.assertIn("Open setup guide", html)
 
     def test_groups_page_assigns_saved_servers(self):
         with tempfile.TemporaryDirectory() as tmp:

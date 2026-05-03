@@ -8,6 +8,7 @@ experimental UI from looking more complete than the implementation really is.
 These features are implemented and covered by tests or real smoke tests:
 
 - local UI grouped around Home, Train, Servers, AI Config, and Settings
+- first-run setup guide for SSH host import, groups, and CC Switch checks
 - SSH host discovery from `~/.ssh/config`
 - saved server inventory and server groups
 - agentless GPU/server probing over SSH

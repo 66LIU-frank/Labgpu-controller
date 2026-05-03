@@ -26,6 +26,7 @@ class ServerEntry:
 class UIConfig:
     refresh_interval_seconds: int = 300
     safe_mode: bool = True
+    onboarding_completed: bool = False
 
 
 @dataclass
@@ -73,6 +74,8 @@ def parse_config(text: str) -> LabGPUConfig:
                 config.ui.refresh_interval_seconds = value
             elif key == "safe_mode" and isinstance(value, bool):
                 config.ui.safe_mode = value
+            elif key == "onboarding_completed" and isinstance(value, bool):
+                config.ui.onboarding_completed = value
         elif section == "groups":
             if key == "names" and isinstance(value, list):
                 config.groups = unique_strings(value)
@@ -115,6 +118,7 @@ def render_config(config: LabGPUConfig) -> str:
         "[ui]",
         f"refresh_interval_seconds = {config.ui.refresh_interval_seconds}",
         f"safe_mode = {render_bool(config.ui.safe_mode)}",
+        f"onboarding_completed = {render_bool(config.ui.onboarding_completed)}",
         "",
         "[groups]",
         f"names = {render_list(config_group_names(config))}",

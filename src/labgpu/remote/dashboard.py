@@ -304,7 +304,9 @@ class ServerHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         if parsed.path == "/":
-            self._html(render_index(self._data(parsed.query)))
+            self._html(render_index(self._data(parsed.query), onboarding=onboarding_state(ssh_config=self.ssh_config)))
+        elif parsed.path == "/onboarding":
+            self._html(render_onboarding_page(ssh_config=self.ssh_config))
         elif parsed.path == "/gpus":
             self._html(render_gpus_page(self._data(parsed.query)))
         elif parsed.path == "/me":
@@ -371,6 +373,9 @@ class ServerHandler(BaseHTTPRequestHandler):
             return
         if parts == ["api", "settings", "groups", "delete"]:
             self._settings_delete_groups()
+            return
+        if parts == ["api", "onboarding", "complete"]:
+            self._onboarding_complete()
             return
         if parts == ["api", "integrations", "ccswitch", "switch"]:
             self._ccswitch_switch()
@@ -720,6 +725,16 @@ class ServerHandler(BaseHTTPRequestHandler):
         write_config(config)
         self._json({"ok": True, "deleted": sorted(groups), "unassigned": unassigned})
 
+    def _onboarding_complete(self) -> None:
+        payload = self._read_body_payload()
+        if not self._valid_action_token(payload):
+            self.send_error(HTTPStatus.FORBIDDEN, "invalid action token")
+            return
+        config = load_config()
+        config.ui.onboarding_completed = True
+        write_config(config)
+        self._json({"ok": True})
+
     def _assistant_chat(self) -> None:
         payload = self._read_body_payload()
         message = str(payload.get("message") or "")
@@ -759,7 +774,181 @@ class ServerHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def render_index(data: dict[str, object]) -> str:
+def onboarding_state(*, ssh_config: str | Path | None = None) -> dict[str, object]:
+    config = load_config()
+    ssh_hosts = parse_ssh_config(ssh_config)
+    try:
+        ccswitch = read_ccswitch_summary()
+    except Exception:  # noqa: BLE001 - onboarding should not break the UI.
+        ccswitch = {"available": False, "message": "CC Switch status could not be read."}
+    providers = ccswitch.get("providers") if isinstance(ccswitch.get("providers"), dict) else {}
+    proxy = ccswitch.get("proxy") if isinstance(ccswitch.get("proxy"), dict) else {}
+    provider_count = sum(
+        len(provider.get("choices_detail") or [])
+        for provider in providers.values()
+        if isinstance(provider, dict) and isinstance(provider.get("choices_detail"), list)
+    )
+    ai_proxy_ready = any(
+        isinstance(proxy.get(app), dict)
+        and bool(proxy[app].get("listen_port"))
+        and bool(proxy[app].get("enabled") or proxy[app].get("proxy_enabled"))
+        and proxy[app].get("listening") is not False
+        for app in ("claude", "codex")
+    )
+    enabled_servers = [entry for entry in config.servers.values() if entry.enabled]
+    return {
+        "completed": config.ui.onboarding_completed,
+        "ssh_host_count": len(ssh_hosts),
+        "saved_server_count": len(enabled_servers),
+        "group_count": len(config_group_names(config)),
+        "ccswitch_available": bool(ccswitch.get("available")),
+        "ccswitch_message": str(ccswitch.get("message") or ""),
+        "ccswitch_provider_count": provider_count,
+        "ai_proxy_ready": ai_proxy_ready,
+    }
+
+
+def should_show_onboarding(state: dict[str, object]) -> bool:
+    return not bool(state.get("completed")) or int(state.get("saved_server_count") or 0) == 0
+
+
+def render_onboarding_banner(*, state: dict[str, object] | None = None, ssh_config: str | Path | None = None) -> str:
+    state = state or onboarding_state(ssh_config=ssh_config)
+    if not should_show_onboarding(state):
+        return ""
+    saved = int(state.get("saved_server_count") or 0)
+    ssh_hosts = int(state.get("ssh_host_count") or 0)
+    ccswitch = "detected" if state.get("ccswitch_available") else "not detected"
+    return f"""
+    <section class="panel setup-banner">
+      <div>
+        <h2>First-run setup</h2>
+        <p class="muted">Connect SSH servers, organize groups, and check AI provider routing before your first training session.</p>
+      </div>
+      <div class="setup-summary">
+        <span>SSH aliases: <strong>{esc(ssh_hosts)}</strong></span>
+        <span>Saved servers: <strong>{esc(saved)}</strong></span>
+        <span>CC Switch: <strong>{esc(ccswitch)}</strong></span>
+      </div>
+      <div class="actions">
+        <a class="button" href="/onboarding">Open setup guide</a>
+        <a class="button" href="/settings">Import SSH hosts</a>
+      </div>
+    </section>
+    """
+
+
+def render_onboarding_page(*, ssh_config: str | Path | None = None) -> str:
+    state = onboarding_state(ssh_config=ssh_config)
+    saved = int(state.get("saved_server_count") or 0)
+    ssh_hosts = int(state.get("ssh_host_count") or 0)
+    groups = int(state.get("group_count") or 0)
+    provider_count = int(state.get("ccswitch_provider_count") or 0)
+    ccswitch_available = bool(state.get("ccswitch_available"))
+    ai_proxy_ready = bool(state.get("ai_proxy_ready"))
+    steps = [
+        render_setup_step(
+            "1",
+            "SSH Config",
+            f"{ssh_hosts} SSH alias(es) detected.",
+            "ok" if ssh_hosts else "warning",
+            "Detected" if ssh_hosts else "Needs setup",
+            "/settings",
+            "Review SSH hosts",
+        ),
+        render_setup_step(
+            "2",
+            "Home Servers",
+            f"{saved} enabled server(s) saved for the home page.",
+            "ok" if saved else "warning",
+            "Ready" if saved else "Import needed",
+            "/settings",
+            "Import servers",
+        ),
+        render_setup_step(
+            "3",
+            "Groups",
+            f"{groups} server group(s) configured.",
+            "ok" if groups else "warning",
+            "Organized" if groups else "Optional",
+            "/groups",
+            "Manage groups",
+        ),
+        render_setup_step(
+            "4",
+            "AI Providers",
+            f"{provider_count} CC Switch provider option(s) visible. Proxy tunnel ready: {'yes' if ai_proxy_ready else 'no'}.",
+            "ok" if ccswitch_available and ai_proxy_ready else ("warning" if ccswitch_available else "error"),
+            "Ready" if ccswitch_available and ai_proxy_ready else ("Check proxy" if ccswitch_available else "Not detected"),
+            "/providers",
+            "Open AI Config",
+        ),
+        render_setup_step(
+            "5",
+            "Train",
+            "Open Train after saving at least one server.",
+            "ok" if saved else "warning",
+            "Ready" if saved else "Waiting",
+            "/gpus",
+            "Go to Train",
+        ),
+    ]
+    return page(
+        "First-run Setup",
+        f"""
+        <section class="toolbar">
+          <div>
+            <h1>First-run Setup</h1>
+            <p>A short checklist for a clean LabGPU desktop/app install.</p>
+          </div>
+          <div class="actions">
+            <button class="button" id="onboarding-complete" type="button">Mark setup done</button>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="section-head"><h2>Setup Checklist</h2><span class="badge {'ok' if saved and ccswitch_available else 'warning'}">{'ready' if saved and ccswitch_available else 'in progress'}</span></div>
+          <p class="muted">LabGPU reads your normal SSH config, saves only your selected server inventory, and keeps AI provider secrets in CC Switch or local tooling.</p>
+          <div class="setup-grid">{''.join(steps)}</div>
+        </section>
+        <section class="panel">
+          <div class="section-head"><h2>What LabGPU Will Not Do Automatically</h2><span class="badge ok">local-first</span></div>
+          <div class="ai-safety-row">
+            <span>No remote daemon is installed on GPU servers.</span>
+            <span>No SSH private key content is copied into LabGPU.</span>
+            <span>No provider API key is read from CC Switch.</span>
+            <span>Remote AI sessions use temporary tunnel tokens by default.</span>
+          </div>
+        </section>
+        <section class="panel">
+          <h2>Next Actions</h2>
+          <div class="actions">
+            <a class="button" href="/settings">Import SSH hosts</a>
+            <a class="button" href="/groups">Create groups</a>
+            <a class="button" href="/providers">Check AI Config</a>
+            <a class="button" href="/gpus">Find GPUs</a>
+          </div>
+        </section>
+        """,
+    )
+
+
+def render_setup_step(number: str, title: str, description: str, badge_class: str, badge: str, href: str, action: str) -> str:
+    return f"""
+    <article class="setup-step">
+      <div class="step-num">{esc(number)}</div>
+      <div>
+        <div class="card-head">
+          <h3>{esc(title)}</h3>
+          <span class="badge {esc(badge_class)}">{esc(badge)}</span>
+        </div>
+        <p class="muted">{esc(description)}</p>
+        <a class="button" href="{esc(href)}">{esc(action)}</a>
+      </div>
+    </article>
+    """
+
+
+def render_index(data: dict[str, object], *, onboarding: dict[str, object] | None = None) -> str:
     hosts = data.get("hosts") or []
     overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
     ui = data.get("ui") if isinstance(data.get("ui"), dict) else {}
@@ -785,6 +974,7 @@ def render_index(data: dict[str, object]) -> str:
             <a class="button" href="/groups">Groups</a>
           </div>
         </section>
+        {render_onboarding_banner(state=onboarding) if onboarding is not None else ''}
         {render_group_bar(data, path='/')}
         {render_overview(overview)}
         {render_train_now(overview, ui=ui, limit=4)}
@@ -916,6 +1106,7 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
             <p>Choose which SSH GPU servers appear in LabGPU Home.</p>
           </div>
           <div class="actions">
+            <a class="button" href="/onboarding">Setup Guide</a>
             <a class="button" href="/groups">Manage Groups</a>
           </div>
         </section>
@@ -2354,6 +2545,14 @@ dialog fieldset label{{flex-direction:row;align-items:center;color:var(--text);f
 .group-chip.active{{border-color:#75c793;background:#ecfdf3;color:#067647}}
 .group-actions{{display:grid;grid-template-columns:minmax(260px,.8fr) minmax(560px,1.8fr);gap:14px;align-items:start}}
 .group-side{{display:grid;gap:14px}}
+.setup-banner{{display:grid;grid-template-columns:minmax(240px,1fr) auto auto;gap:14px;align-items:center}}
+.setup-summary{{display:flex;gap:8px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:13px}}
+.setup-summary span{{border:1px solid var(--border-soft);background:var(--surface-soft);border-radius:999px;padding:5px 10px}}
+.setup-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:12px}}
+.setup-step{{border:1px solid var(--border-soft);background:var(--surface-soft);border-radius:8px;padding:12px;display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start}}
+.step-num{{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--badge);color:var(--link);font-weight:700}}
+.setup-step .card-head{{margin-bottom:6px}}
+.setup-step .button{{display:inline-flex;margin-top:10px}}
 .filters{{display:flex;gap:10px;align-items:end;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:14px}}
 .filters label{{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:12px}}
 .filters input,.filters select{{border:1px solid var(--border);border-radius:6px;padding:7px 8px;min-width:150px;background:var(--button);color:var(--text)}}
@@ -2427,7 +2626,7 @@ html[data-theme="dark"] .group-chip.active{{background:#143421;color:#86efac;bor
 html[data-theme="dark"] .warn-text{{color:#facc15}}
 html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
 @media(max-width:980px){{.group-actions{{grid-template-columns:1fr}}}}
-@media(max-width:860px){{.topbar{{flex-direction:column}}.top-controls{{justify-content:flex-start;max-width:none}}.cache-message{{max-width:calc(100vw - 96px)}}}}
+@media(max-width:860px){{.topbar{{flex-direction:column}}.top-controls{{justify-content:flex-start;max-width:none}}.cache-message{{max-width:calc(100vw - 96px)}}.setup-banner{{grid-template-columns:1fr}}}}
 @media(max-width:640px){{main{{width:calc(100vw - 20px)}}.grid,.split,.provider-summary-grid{{grid-template-columns:1fr}}.toolbar{{align-items:flex-start;flex-direction:column}}.assistant-form{{grid-template-columns:1fr}}}}
 </style></head><body><main>{render_nav(status=status, json_href=json_href)}{body}</main>
 <dialog id="stop-modal">
@@ -2509,6 +2708,18 @@ const translations = {{
   "Assistant": "助手",
   "AI Config": "AI 配置",
   "AI Config Console": "AI 配置台",
+  "First-run Setup": "首次设置",
+  "Setup Checklist": "设置清单",
+  "Open setup guide": "打开设置向导",
+  "Setup Guide": "设置向导",
+  "Mark setup done": "标记设置完成",
+  "Import SSH hosts": "导入 SSH 主机",
+  "Review SSH hosts": "检查 SSH 主机",
+  "Create groups": "创建分组",
+  "Check AI Config": "检查 AI 配置",
+  "Find GPUs": "找 GPU",
+  "What LabGPU Will Not Do Automatically": "LabGPU 不会自动做什么",
+  "Next Actions": "下一步",
   "App Status": "应用状态",
   "Remote Launchers": "远程启动器",
   "Provider Status": "Provider 状态",
@@ -3248,6 +3459,22 @@ if (settingsAddServer) {{
       window.location.reload();
     }} else {{
       window.alert(payload.message || payload.error || "Adding server failed.");
+    }}
+  }});
+}}
+const onboardingComplete = document.getElementById("onboarding-complete");
+if (onboardingComplete) {{
+  onboardingComplete.addEventListener("click", async () => {{
+    onboardingComplete.disabled = true;
+    const response = await fetch("/api/onboarding/complete", {{
+      method: "POST",
+      headers: {{"X-LabGPU-Action-Token": actionToken, "Content-Type": "application/json"}},
+      body: JSON.stringify({{}})
+    }});
+    if (response.ok) window.location.href = "/";
+    else {{
+      onboardingComplete.disabled = false;
+      window.alert("Saving setup state failed.");
     }}
   }});
 }}
