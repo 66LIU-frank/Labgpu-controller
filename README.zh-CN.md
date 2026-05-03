@@ -80,6 +80,7 @@ Enter Server
 - 创建 SSH reverse tunnel 和 per-session gateway
 - 在远程 `/tmp` 下创建临时 Claude Code wrapper/settings
 - 在远程 `/tmp` 下创建临时 Codex `CODEX_HOME` 和 wrapper（beta）
+- 探查常见远程 AI CLI 路径，并支持每台服务器单独覆盖命令路径
 - 可选备份并覆盖远程 Claude/Codex 配置，让当前 gateway session 接管，但不复制真实 provider key
 - 在远程 shell 里运行只读的 `aiswitch status` / `aiswitch doctor`
 - 真实 provider key 留在本机或 CC Switch

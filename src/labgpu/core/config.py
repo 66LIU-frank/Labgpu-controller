@@ -19,6 +19,7 @@ class ServerEntry:
     allow_stop_own_process: bool = True
     ai_extra_paths: list[str] = field(default_factory=list)
     claude_command: str = ""
+    codex_command: str = ""
 
 
 @dataclass
@@ -95,6 +96,8 @@ def parse_config(text: str) -> LabGPUConfig:
                 server.ai_extra_paths = [str(item) for item in value]
             elif key == "claude_command" and isinstance(value, str):
                 server.claude_command = value
+            elif key == "codex_command" and isinstance(value, str):
+                server.codex_command = value
     return config
 
 
@@ -131,6 +134,7 @@ def render_config(config: LabGPUConfig) -> str:
                 f"allow_stop_own_process = {render_bool(server.allow_stop_own_process)}",
                 f"ai_extra_paths = {render_list(server.ai_extra_paths)}",
                 f"claude_command = {quote_string(server.claude_command)}",
+                f"codex_command = {quote_string(server.codex_command)}",
                 "",
             ]
         )

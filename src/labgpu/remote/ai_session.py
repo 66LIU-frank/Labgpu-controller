@@ -36,6 +36,7 @@ class EnterServerAIRequest:
     ssh_target: str | None = None
     remote_path_prefixes: tuple[str, ...] = DEFAULT_AI_PATH_PREFIXES
     claude_command: str | None = None
+    codex_command: str | None = None
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ def build_ai_ssh_command(request: EnterServerAIRequest) -> EnterServerAICommand:
     remote_cwd = normalized_remote_cwd(request.remote_cwd)
     path_prefixes = normalized_remote_path_prefixes(request.remote_path_prefixes)
     claude_command = normalized_remote_command_path(request.claude_command)
+    codex_command = normalized_remote_command_path(request.codex_command)
     remote_env = {
         "LABGPU_AI_MODE": request.mode,
         "LABGPU_AI_APP": request.ai_app,
@@ -79,6 +81,8 @@ def build_ai_ssh_command(request: EnterServerAIRequest) -> EnterServerAICommand:
         remote_env["LABGPU_AI_PATH_PREFIX"] = ":".join(path_prefixes)
     if claude_command is not None:
         remote_env["LABGPU_AI_CLAUDE_COMMAND"] = claude_command
+    if codex_command is not None:
+        remote_env["LABGPU_AI_CODEX_COMMAND"] = codex_command
     gpu = normalized_gpu_index(request.gpu_index)
     if gpu is not None:
         remote_env["CUDA_VISIBLE_DEVICES"] = gpu
@@ -236,7 +240,9 @@ def build_codex_app_setup(remote_env: dict[str, str]) -> str:
     config = f'openai_base_url = "{remote_env["OPENAI_BASE_URL"]}"\n'
     wrapper = '#!/bin/sh\nexec "$LABGPU_REAL_CODEX" "$@"\n' if remote_write else '#!/bin/sh\nexport CODEX_HOME="$LABGPU_CODEX_HOME"\nexec "$LABGPU_REAL_CODEX" "$@"\n'
     parts = [
-        'LABGPU_REAL_CODEX="$(command -v codex || true)"',
+        'LABGPU_REAL_CODEX="${LABGPU_AI_CODEX_COMMAND:-}"',
+        "&&",
+        'if [ -z "$LABGPU_REAL_CODEX" ]; then LABGPU_REAL_CODEX="$(command -v codex || true)"; fi',
         ";",
         'case "$LABGPU_REAL_CODEX" in "~/"*) LABGPU_REAL_CODEX="${HOME}/${LABGPU_REAL_CODEX#~/}" ;; esac',
         ";",
@@ -521,6 +527,7 @@ def validate_request(request: EnterServerAIRequest) -> None:
     normalized_remote_cwd(request.remote_cwd)
     normalized_remote_path_prefixes(request.remote_path_prefixes)
     normalized_remote_command_path(request.claude_command)
+    normalized_remote_command_path(request.codex_command)
 
 
 def ai_app_label(app: str) -> str:

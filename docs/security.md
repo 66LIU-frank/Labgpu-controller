@@ -122,6 +122,11 @@ restore script is written into the backup directory. Do not use this mode on
 shared Linux accounts unless the user accepts that the temporary session token
 will be stored in that remote home directory until restored or removed.
 
+AI CLI install locations are discovered through the launch PATH first. Server
+entries may also define `ai_extra_paths`, `claude_command`, and `codex_command`
+when a tool is installed in a conda environment or another custom path. These
+fields only point LabGPU at the executable; they are not secret fields.
+
 ## Shared LABGPU_HOME
 
 For a lab-wide run registry, prefer a group-owned directory:

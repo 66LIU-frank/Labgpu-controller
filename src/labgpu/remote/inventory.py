@@ -68,4 +68,5 @@ def apply_server_entry(host: SSHHost, entry: ServerEntry | None) -> SSHHost:
     host.allow_stop_own_process = entry.allow_stop_own_process
     host.ai_extra_paths = list(entry.ai_extra_paths)
     host.claude_command = entry.claude_command
+    host.codex_command = entry.codex_command
     return host

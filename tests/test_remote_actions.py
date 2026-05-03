@@ -189,6 +189,22 @@ class RemoteActionsTest(unittest.TestCase):
         self.assertNotIn("~/.codex", argv[7])
         self.assertNotIn("SECRET", " ".join(argv))
 
+    def test_build_ssh_terminal_command_uses_codex_command_override(self):
+        host = SSHHost(alias="alpha_liu", codex_command="~/.local/bin/codex")
+        argv = build_ssh_terminal_argv(
+            "alpha_liu",
+            host=host,
+            local_proxy_port="15721",
+            remote_proxy_port="27183",
+            agent="codex",
+            ai_mode="proxy_tunnel",
+            provider_name="OpenAI",
+            local_gateway_port="49231",
+            session_token=SESSION_TOKEN,
+        )
+        self.assertIn("LABGPU_AI_CODEX_COMMAND='~/.local/bin/codex'", argv[-1])
+        self.assertIn('LABGPU_REAL_CODEX="${LABGPU_AI_CODEX_COMMAND:-}"', argv[-1])
+
     def test_build_ssh_terminal_command_for_remote_config_override(self):
         argv = build_ssh_terminal_argv(
             "alpha_liu",
@@ -400,6 +416,9 @@ class RemoteActionsTest(unittest.TestCase):
 
         claude = build_ssh_terminal_argv("alpha_liu", agent="claude-code")
         self.assertIn("claude-code", claude[3])
+
+        codex = build_ssh_terminal_argv("alpha_liu", host=SSHHost(alias="alpha_liu", codex_command="~/.local/bin/codex"), agent="codex")
+        self.assertIn("~/.local/bin/codex", codex[3])
 
     def test_build_ssh_terminal_rejects_bad_options(self):
         with self.assertRaises(ValueError):

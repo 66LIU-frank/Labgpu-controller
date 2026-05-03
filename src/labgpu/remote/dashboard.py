@@ -569,6 +569,9 @@ class ServerHandler(BaseHTTPRequestHandler):
         group_value = first_value(payload.get("group"))
         group = str(group_value or "").strip()
         disk_paths = split_csv(str(first_value(payload.get("disk_paths")) or "")) or ["/", "/home", "/data", "/scratch", "/mnt", "/nvme"]
+        ai_extra_paths = split_csv(str(first_value(payload.get("ai_extra_paths")) or ""))
+        claude_command = str(first_value(payload.get("claude_command")) or "").strip()
+        codex_command = str(first_value(payload.get("codex_command")) or "").strip()
         shared_account = truthy(first_value(payload.get("shared_account")))
         allow_stop = truthy(first_value(payload.get("allow_stop_own_process")), default=True)
 
@@ -584,6 +587,9 @@ class ServerHandler(BaseHTTPRequestHandler):
                 entry.group = group
             entry.tags = tags
             entry.disk_paths = disk_paths
+            entry.ai_extra_paths = ai_extra_paths
+            entry.claude_command = claude_command
+            entry.codex_command = codex_command
             entry.shared_account = shared_account
             entry.allow_stop_own_process = allow_stop
             config.servers[entry.name] = entry
@@ -609,6 +615,9 @@ class ServerHandler(BaseHTTPRequestHandler):
         group_value = first_value(payload.get("group"))
         group = str(group_value or "").strip()
         disk_paths = split_csv(str(first_value(payload.get("disk_paths")) or "")) or ["/", "/home", "/data", "/scratch", "/mnt", "/nvme"]
+        ai_extra_paths = split_csv(str(first_value(payload.get("ai_extra_paths")) or ""))
+        claude_command = str(first_value(payload.get("claude_command")) or "").strip()
+        codex_command = str(first_value(payload.get("codex_command")) or "").strip()
         shared_account = truthy(first_value(payload.get("shared_account")))
         allow_stop = truthy(first_value(payload.get("allow_stop_own_process")), default=True)
         if not alias:
@@ -646,6 +655,9 @@ class ServerHandler(BaseHTTPRequestHandler):
             entry.group = group
         entry.tags = tags
         entry.disk_paths = disk_paths
+        entry.ai_extra_paths = ai_extra_paths
+        entry.claude_command = claude_command
+        entry.codex_command = codex_command
         entry.shared_account = shared_account
         entry.allow_stop_own_process = allow_stop
         config.servers[entry.name] = entry
@@ -932,6 +944,9 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
                 <label>ProxyJump <input name="proxyjump" placeholder="bastion"></label>
                 <label>IdentityFile <input name="identity_file" placeholder="~/.ssh/id_ed25519"></label>
                 <label>Disk paths <input name="disk_paths" value="/,/home,/data,/scratch,/mnt,/nvme"></label>
+                <label>AI PATH entries <input name="ai_extra_paths" placeholder="~/miniconda3/bin,~/.local/bin"></label>
+                <label>Claude command <input name="claude_command" placeholder="~/miniconda3/bin/claude"></label>
+                <label>Codex command <input name="codex_command" placeholder="~/.local/bin/codex"></label>
                 <label><input type="checkbox" name="shared_account" value="1"> Shared Linux account</label>
                 <label><input type="checkbox" name="allow_stop_own_process" value="1" checked> Allow stop own process</label>
               </div>
@@ -947,6 +962,9 @@ def render_settings_page(*, ssh_config: str | Path | None = None) -> str:
             <div class="filters">
               <label>Tags <input name="tags" placeholder="A100,training"></label>
               <label>Disk paths <input name="disk_paths" value="/,/home,/data,/scratch,/mnt,/nvme"></label>
+              <label>AI PATH entries <input name="ai_extra_paths" placeholder="~/miniconda3/bin,~/.local/bin"></label>
+              <label>Claude command <input name="claude_command" placeholder="~/miniconda3/bin/claude"></label>
+              <label>Codex command <input name="codex_command" placeholder="~/.local/bin/codex"></label>
               <label><input type="checkbox" name="shared_account" value="1"> Shared Linux account</label>
               <label><input type="checkbox" name="allow_stop_own_process" value="1" checked> Allow stop own process</label>
               <button class="button" type="submit">Save selected hosts</button>
@@ -2616,6 +2634,9 @@ const translations = {{
   "Enabled": "启用",
   "Tags": "标签",
   "Disk paths": "磁盘路径",
+  "AI PATH entries": "AI PATH 条目",
+  "Claude command": "Claude 命令路径",
+  "Codex command": "Codex 命令路径",
   "Shared account": "共享账号",
   "Stop own process": "停止自己的进程",
   "HostName": "主机名",

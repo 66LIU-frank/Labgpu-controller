@@ -366,6 +366,7 @@ def build_ssh_terminal_argv(
     ssh_options, ssh_target = isolated_ssh_args(host) if host and local_port and remote_port else ([], alias)
     remote_path_prefixes = ai_path_prefixes_for_host(host)
     claude_command = normalized_remote_command_path(host.claude_command) if host else None
+    codex_command = normalized_remote_command_path(host.codex_command) if host else None
     if normalized_agent in AI_PROXY_TUNNEL_AGENTS and ai_mode in AI_SESSION_MODES:
         if not local_port or not remote_port:
             raise ValueError(f"{ai_agent_label(normalized_agent)} AI session requires a CC Switch proxy port and remote gateway port.")
@@ -388,6 +389,7 @@ def build_ssh_terminal_argv(
                 ssh_target=ssh_target,
                 remote_path_prefixes=remote_path_prefixes,
                 claude_command=claude_command,
+                codex_command=codex_command,
             )
         ).ssh_args
     remote_command = terminal_remote_command(
@@ -397,6 +399,7 @@ def build_ssh_terminal_argv(
         remote_cwd=remote_cwd,
         remote_path_prefixes=remote_path_prefixes,
         claude_command=claude_command,
+        codex_command=codex_command,
     )
     argv = ["ssh", *ssh_options]
     if local_port and remote_port:
@@ -510,6 +513,7 @@ def terminal_remote_command(
     remote_cwd: str | None = None,
     remote_path_prefixes: tuple[str, ...] | list[str] = DEFAULT_AI_PATH_PREFIXES,
     claude_command: str | None = None,
+    codex_command: str | None = None,
 ) -> str:
     parts: list[str] = []
     cwd = normalized_remote_cwd(remote_cwd)
@@ -519,6 +523,9 @@ def terminal_remote_command(
     command_path = normalized_remote_command_path(claude_command)
     if command_path is not None:
         parts.append(f"export LABGPU_AI_CLAUDE_COMMAND={shlex.quote(command_path)}")
+    codex_path = normalized_remote_command_path(codex_command)
+    if codex_path is not None:
+        parts.append(f"export LABGPU_AI_CODEX_COMMAND={shlex.quote(codex_path)}")
     if cwd is not None:
         parts.append(f"export LABGPU_REMOTE_CWD={shlex.quote(cwd)}")
         parts.append(f"cd {shlex.quote(cwd)} || exit 1")
@@ -528,13 +535,13 @@ def terminal_remote_command(
         local_text = f"127.0.0.1:{local_proxy_port or proxy_port}"
         parts.append(f"echo 'LabGPU proxy: remote HTTP_PROXY/HTTPS_PROXY -> local {local_text}'")
     if agent != "none":
-        parts.append(agent_launcher_command(agent, remote_path_prefixes=remote_path_prefixes, claude_command=command_path))
+        parts.append(agent_launcher_command(agent, remote_path_prefixes=remote_path_prefixes, claude_command=command_path, codex_command=codex_path))
     elif proxy_port or cwd is not None:
         parts.append('if [ -n "${SHELL:-}" ]; then exec "$SHELL" -l; fi; exec /bin/sh')
     return "; ".join(parts)
 
 
-def agent_launcher_command(agent: str, *, remote_path_prefixes: tuple[str, ...] | list[str] = DEFAULT_AI_PATH_PREFIXES, claude_command: str | None = None) -> str:
+def agent_launcher_command(agent: str, *, remote_path_prefixes: tuple[str, ...] | list[str] = DEFAULT_AI_PATH_PREFIXES, claude_command: str | None = None, codex_command: str | None = None) -> str:
     path_export = build_path_export(remote_path_prefixes)
     claude_path = normalized_remote_command_path(claude_command)
     claude_check = "command -v claude >/dev/null 2>&1 || command -v claude-code >/dev/null 2>&1"
@@ -543,8 +550,15 @@ def agent_launcher_command(agent: str, *, remote_path_prefixes: tuple[str, ...] 
         quoted = shlex.quote(claude_path)
         claude_check = f"[ -x {quoted} ] || {claude_check}"
         claude_launch = f"if [ -x {quoted} ]; then {quoted}; elif command -v claude >/dev/null 2>&1; then claude; else claude-code; fi"
+    codex_path = normalized_remote_command_path(codex_command)
+    codex_check = 'command -v codex >/dev/null 2>&1'
+    codex_launch = "codex"
+    if codex_path is not None:
+        quoted = shlex.quote(codex_path)
+        codex_check = f"[ -x {quoted} ] || {codex_check}"
+        codex_launch = f"if [ -x {quoted} ]; then {quoted}; else codex; fi"
     launchers = {
-        "codex": ('command -v codex >/dev/null 2>&1', "codex", "Codex CLI was not found."),
+        "codex": (codex_check, codex_launch, "Codex CLI was not found."),
         "claude": (
             claude_check,
             claude_launch,

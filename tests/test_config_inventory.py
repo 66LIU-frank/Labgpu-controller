@@ -27,6 +27,7 @@ shared_account = true
 allow_stop_own_process = false
 ai_extra_paths = ["~/miniconda3/bin"]
 claude_command = "~/miniconda3/bin/claude"
+codex_command = "~/.local/bin/codex"
 """
         )
         server = config.servers["alpha_liu"]
@@ -36,6 +37,7 @@ claude_command = "~/miniconda3/bin/claude"
         self.assertEqual(server.tags, ["A100", "training"])
         self.assertEqual(server.ai_extra_paths, ["~/miniconda3/bin"])
         self.assertEqual(server.claude_command, "~/miniconda3/bin/claude")
+        self.assertEqual(server.codex_command, "~/.local/bin/codex")
         self.assertTrue(server.shared_account)
         self.assertFalse(server.allow_stop_own_process)
         rendered = render_config(config)
@@ -45,6 +47,7 @@ claude_command = "~/miniconda3/bin/claude"
         self.assertIn('tags = ["A100", "training"]', rendered)
         self.assertIn('ai_extra_paths = ["~/miniconda3/bin"]', rendered)
         self.assertIn('claude_command = "~/miniconda3/bin/claude"', rendered)
+        self.assertIn('codex_command = "~/.local/bin/codex"', rendered)
 
     def test_inventory_uses_saved_servers_when_no_hosts_given(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -62,6 +65,7 @@ claude_command = "~/miniconda3/bin/claude"
                 allow_stop_own_process=False,
                 ai_extra_paths=["~/miniconda3/bin"],
                 claude_command="~/miniconda3/bin/claude",
+                codex_command="~/.local/bin/codex",
             )
             config_path = root / "config.toml"
             write_config(lab_config, config_path)
@@ -72,6 +76,7 @@ claude_command = "~/miniconda3/bin/claude"
             self.assertEqual(hosts[0].disk_paths, ["/", "/data"])
             self.assertEqual(hosts[0].ai_extra_paths, ["~/miniconda3/bin"])
             self.assertEqual(hosts[0].claude_command, "~/miniconda3/bin/claude")
+            self.assertEqual(hosts[0].codex_command, "~/.local/bin/codex")
             self.assertTrue(hosts[0].shared_account)
 
     def test_import_ssh_hosts_writes_config(self):

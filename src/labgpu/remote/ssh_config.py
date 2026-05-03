@@ -24,6 +24,7 @@ class SSHHost:
     allow_stop_own_process: bool = True
     ai_extra_paths: list[str] = field(default_factory=list)
     claude_command: str = ""
+    codex_command: str = ""
 
 
 def default_ssh_config_path() -> Path:
@@ -116,6 +117,7 @@ def resolve_ssh_host(host: SSHHost, *, timeout: int = 3) -> SSHHost:
         allow_stop_own_process=host.allow_stop_own_process,
         ai_extra_paths=list(host.ai_extra_paths),
         claude_command=host.claude_command,
+        codex_command=host.codex_command,
     )
 
 

@@ -82,6 +82,7 @@ What works now:
 - create an SSH reverse tunnel with a per-session gateway
 - inject a temporary Claude Code wrapper/settings file under remote `/tmp`
 - inject a temporary Codex `CODEX_HOME` and wrapper under remote `/tmp` (beta)
+- detect common remote AI CLI locations and allow per-server command overrides
 - optionally back up and overwrite remote Claude/Codex config for the current
   gateway session, without copying real provider keys
 - run read-only `aiswitch status` / `aiswitch doctor` inside the remote shell

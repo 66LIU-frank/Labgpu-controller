@@ -230,6 +230,27 @@ class AISessionTest(unittest.TestCase):
         self.assertIn('LABGPU_REAL_CLAUDE="${HOME}/${LABGPU_REAL_CLAUDE#~/}"', remote)
         self.assertIn("PATH=${HOME}/miniconda3/bin:/opt/claude/bin:$PATH", remote)
 
+    def test_build_ai_ssh_command_supports_codex_override(self):
+        command = build_ai_ssh_command(
+            EnterServerAIRequest(
+                server_alias="alpha_liu",
+                gpu_index=None,
+                ai_app="codex",
+                provider_name="OpenAI",
+                ccswitch_proxy_port=15721,
+                local_gateway_port=49231,
+                remote_gateway_port=27183,
+                session_token=SESSION_TOKEN,
+                remote_path_prefixes=("~/miniconda3/bin", "~/.local/bin"),
+                codex_command="~/.local/bin/codex",
+            )
+        )
+        remote = command.ssh_args[7]
+        self.assertIn("LABGPU_AI_CODEX_COMMAND='~/.local/bin/codex'", remote)
+        self.assertIn('LABGPU_REAL_CODEX="${LABGPU_AI_CODEX_COMMAND:-}"', remote)
+        self.assertIn('LABGPU_REAL_CODEX="${HOME}/${LABGPU_REAL_CODEX#~/}"', remote)
+        self.assertIn("PATH=${HOME}/miniconda3/bin:${HOME}/.local/bin:$PATH", remote)
+
     def test_claude_command_probe_uses_launch_path(self):
         script = build_claude_command_probe(remote_path_prefixes=("~/miniconda3/bin",), claude_command="~/miniconda3/bin/claude")
         self.assertIn("PATH=${HOME}/miniconda3/bin:$PATH", script)
