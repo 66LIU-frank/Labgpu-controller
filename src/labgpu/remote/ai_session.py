@@ -227,7 +227,17 @@ def build_claude_app_setup(remote_env: dict[str, str]) -> str:
         },
         separators=(",", ":"),
     )
-    wrapper = '#!/bin/sh\nexec "$LABGPU_REAL_CLAUDE" "$@"\n' if remote_write else '#!/bin/sh\nexec "$LABGPU_REAL_CLAUDE" --settings "$LABGPU_CLAUDE_SETTINGS" "$@"\n'
+    wrapper_prelude = (
+        "#!/bin/sh\n"
+        "unset ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN\n"
+        'export ANTHROPIC_BASE_URL="$LABGPU_AI_BASE_URL"\n'
+        'export ANTHROPIC_API_KEY="$LABGPU_AI_SESSION_TOKEN"\n'
+    )
+    wrapper = (
+        wrapper_prelude + 'exec "$LABGPU_REAL_CLAUDE" "$@"\n'
+        if remote_write
+        else wrapper_prelude + 'exec "$LABGPU_REAL_CLAUDE" --settings "$LABGPU_CLAUDE_SETTINGS" "$@"\n'
+    )
     parts = [
         'LABGPU_REAL_CLAUDE="${LABGPU_AI_CLAUDE_COMMAND:-}"',
         "&&",
