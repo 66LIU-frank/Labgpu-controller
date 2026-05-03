@@ -492,6 +492,10 @@ class ServerHandler(BaseHTTPRequestHandler):
         remote_cwd = str(first_value(payload.get("remote_cwd")) or "").strip()
         provider_name = str(first_value(payload.get("provider_name")) or "").strip()
         ccswitch_provider_id = str(first_value(payload.get("ccswitch_provider_id")) or "").strip()
+        network_proxy_enabled = truthy(first_value(payload.get("network_proxy_enabled")))
+        network_local_proxy_port = first_value(payload.get("network_local_proxy_port"))
+        network_remote_proxy_port = first_value(payload.get("network_remote_proxy_port"))
+        network_proxy_scheme = str(first_value(payload.get("network_proxy_scheme")) or "http").strip()
         ccswitch_switch = None
         if ccswitch_provider_id:
             try:
@@ -521,6 +525,10 @@ class ServerHandler(BaseHTTPRequestHandler):
             provider_name=provider_name or None,
             gpu_index=gpu_index,
             remote_cwd=remote_cwd or None,
+            network_proxy_enabled=network_proxy_enabled,
+            network_local_proxy_port=network_local_proxy_port,
+            network_remote_proxy_port=network_remote_proxy_port,
+            network_proxy_scheme=network_proxy_scheme,
         )
         if ccswitch_switch:
             result["ccswitch"] = ccswitch_switch
@@ -2678,6 +2686,14 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
       <label><input type="radio" name="ssh-ai-mode" value="proxy_tunnel" checked> Proxy Tunnel <span class="muted">recommended, secrets stay local</span></label>
       <label><input type="radio" name="ssh-ai-mode" value="remote_write"> Remote Config Override <span class="muted">advanced, backs up remote config</span></label>
     </fieldset>
+    <fieldset>
+      <legend>Network Tunnel</legend>
+      <label><input type="checkbox" id="ssh-network-proxy-enabled"> Forward my local proxy after SSH connects</label>
+      <label>Local proxy port <input id="ssh-network-local-port" placeholder="7890"></label>
+      <label>Remote proxy port <input id="ssh-network-remote-port" placeholder="auto"></label>
+      <label>Proxy scheme <select id="ssh-network-scheme"><option value="http">http</option><option value="socks5">socks5</option></select></label>
+      <p class="muted" id="ssh-network-summary">Optional. This does not proxy SSH itself; it creates another SSH RemoteForward so remote shell commands can use your laptop proxy.</p>
+    </fieldset>
     <p class="muted" id="ssh-modal-hint">Proxy Tunnel creates a per-session gateway tunnel and temporary app config under remote <code>/tmp</code>. Remote Config Override also backs up and writes remote Claude/Codex config to the session gateway. Real provider keys stay local. If SSH exits with remote forwarding failure, the selected remote gateway port may already be in use on that server.</p>
   </details>
   <p id="ssh-modal-result" class="muted"></p>
@@ -2769,6 +2785,14 @@ const translations = {{
   "Remote Config Override": "远程配置覆盖",
   "advanced, backs up remote config": "高级，会备份远程配置",
   "recommended, secrets stay local": "推荐，密钥留在本机",
+  "Network Tunnel": "网络隧道",
+  "Forward my local proxy after SSH connects": "SSH 连接后转发本机代理",
+  "Local proxy port": "本机代理端口",
+  "Remote proxy port": "远程代理端口",
+  "Proxy scheme": "代理协议",
+  "Optional. This does not proxy SSH itself; it creates another SSH RemoteForward so remote shell commands can use your laptop proxy.": "可选。这不是让 SSH 本身走代理，而是在 SSH 连上后额外建立 RemoteForward，让远程 shell 命令使用你本机的代理。",
+  "Enter your laptop proxy port, for example 7890 or 33210.": "填写你本机代理端口，例如 7890 或 33210。",
+  "Network Tunnel requires your local proxy port, for example 7890.": "Network Tunnel 需要填写本机代理端口，例如 7890。",
   "coming soon": "即将支持",
   "beta": "Beta",
   "ready": "已就绪",
@@ -3312,8 +3336,39 @@ function selectedLocalProxyPort() {{
 function selectedRemoteProxyPort() {{
   return "";
 }}
+function networkProxyEnabled() {{
+  const input = document.getElementById("ssh-network-proxy-enabled");
+  return Boolean(input && input.checked);
+}}
+function selectedNetworkLocalProxyPort() {{
+  const input = document.getElementById("ssh-network-local-port");
+  return input ? input.value.trim() : "";
+}}
+function selectedNetworkRemoteProxyPort() {{
+  const input = document.getElementById("ssh-network-remote-port");
+  return input ? input.value.trim() : "";
+}}
+function selectedNetworkProxyScheme() {{
+  const input = document.getElementById("ssh-network-scheme");
+  return input ? input.value : "http";
+}}
+function updateNetworkProxySummary() {{
+  const summary = document.getElementById("ssh-network-summary");
+  if (!summary) return;
+  if (!networkProxyEnabled()) {{
+    summary.textContent = "Optional. This does not proxy SSH itself; it creates another SSH RemoteForward so remote shell commands can use your laptop proxy.";
+    return;
+  }}
+  const localPort = selectedNetworkLocalProxyPort();
+  const remotePort = selectedNetworkRemoteProxyPort() || "auto";
+  const scheme = selectedNetworkProxyScheme();
+  summary.textContent = localPort
+    ? `Network Tunnel: remote ${{scheme}}://127.0.0.1:${{remotePort}} -> local proxy 127.0.0.1:${{localPort}}.`
+    : "Enter your laptop proxy port, for example 7890 or 33210.";
+}}
 function updateSshProxyFields() {{
   updateCcswitchProviderOptions();
+  updateNetworkProxySummary();
 }}
 async function runOpenSsh(button) {{
   const original = button.textContent || "Enter Server";
@@ -3342,6 +3397,10 @@ async function runOpenSsh(button) {{
     if (result) result.textContent = `CC Switch ${{aiAppLabel(agent)}} proxy is configured but not listening on 127.0.0.1:${{proxyConfig.listen_port}}.`;
     return;
   }}
+  if (networkProxyEnabled() && !selectedNetworkLocalProxyPort()) {{
+    if (result) result.textContent = "Network Tunnel requires your local proxy port, for example 7890.";
+    return;
+  }}
   button.textContent = translateText("Opening terminal...", currentLanguage());
   button.disabled = true;
   const response = await fetch(`/api/servers/${{encodeURIComponent(button.dataset.openSsh || "")}}/open-ssh`, {{
@@ -3355,14 +3414,18 @@ async function runOpenSsh(button) {{
       provider_name: providerName,
       gpu_index: selectedGpuIndex(),
       remote_cwd: selectedRemoteCwd(),
-      ccswitch_provider_id: selectedCcswitchProviderId()
+      ccswitch_provider_id: selectedCcswitchProviderId(),
+      network_proxy_enabled: networkProxyEnabled(),
+      network_local_proxy_port: selectedNetworkLocalProxyPort(),
+      network_remote_proxy_port: selectedNetworkRemoteProxyPort(),
+      network_proxy_scheme: selectedNetworkProxyScheme()
     }})
   }});
   const payload = await response.json().catch(() => ({{ok: false, message: "Opening terminal failed."}}));
   button.disabled = false;
   if (payload.ok) {{
     button.textContent = translateText("Terminal opened", currentLanguage());
-    rememberAiSession(button, providerName, payload.ai_gateway || {{}});
+    rememberAiSession(button, providerName, payload.ai_gateway || {{}}, payload.network_tunnel || {{}});
     setTimeout(() => button.textContent = original, 1400);
     const dialog = document.getElementById("ssh-modal");
     if (dialog && dialog.open) dialog.close();
@@ -3372,7 +3435,7 @@ async function runOpenSsh(button) {{
     else window.alert(payload.message || "Opening terminal failed.");
   }}
 }}
-function rememberAiSession(button, providerName, gateway) {{
+function rememberAiSession(button, providerName, gateway, networkTunnel) {{
   const localPort = selectedLocalProxyPort();
   const agent = selectedAgent();
   const entry = {{
@@ -3382,6 +3445,9 @@ function rememberAiSession(button, providerName, gateway) {{
     ccswitchProxyPort: gateway.ccswitch_proxy_port || localPort,
     localGatewayPort: gateway.local_gateway_port || "-",
     remoteGatewayPort: gateway.remote_gateway_port || "-",
+    networkProxyUrl: networkTunnel.proxy_url || "",
+    networkLocalProxyPort: networkTunnel.local_proxy_port || "",
+    networkRemoteProxyPort: networkTunnel.remote_proxy_port || "",
     tokenFingerprint: gateway.token_fingerprint || "",
     gpu: selectedGpuIndex() || "none",
     cwd: selectedRemoteCwd() || gateway.remote_cwd || "",
@@ -3407,7 +3473,10 @@ function renderAiSessions() {{
       <td>${{escapeHtml(item.server || "-")}}</td>
       <td><code>${{escapeHtml(item.cwd || "-")}}</code></td>
       <td>${{escapeHtml(item.app || "-")}} / ${{escapeHtml(item.provider || "-")}}</td>
-      <td>remote 127.0.0.1:${{escapeHtml(item.remoteGatewayPort || "-")}} -> local gateway 127.0.0.1:${{escapeHtml(item.localGatewayPort || "-")}} -> CC Switch 127.0.0.1:${{escapeHtml(item.ccswitchProxyPort || "-")}}</td>
+      <td>
+        remote 127.0.0.1:${{escapeHtml(item.remoteGatewayPort || "-")}} -> local gateway 127.0.0.1:${{escapeHtml(item.localGatewayPort || "-")}} -> CC Switch 127.0.0.1:${{escapeHtml(item.ccswitchProxyPort || "-")}}
+        ${{item.networkProxyUrl ? `<br>network ${{escapeHtml(item.networkProxyUrl)}} -> local 127.0.0.1:${{escapeHtml(item.networkLocalProxyPort || "-")}}` : ""}}
+      </td>
       <td>${{escapeHtml(item.gpu || "none")}}</td>
       <td>${{escapeHtml(item.startedAt || "-")}}</td>
     </tr>
@@ -3752,7 +3821,13 @@ const sshProxySelect = document.getElementById("ssh-proxy");
 if (sshProxySelect) sshProxySelect.addEventListener("change", updateSshProxyFields);
 const sshOptionInputs = document.querySelectorAll('input[name="ssh-agent"], input[name="ssh-ai-mode"]');
 sshOptionInputs.forEach((input) => input.addEventListener("change", loadCcswitchSummary));
+["ssh-network-proxy-enabled", "ssh-network-local-port", "ssh-network-remote-port", "ssh-network-scheme"].forEach((id) => {{
+  const input = document.getElementById(id);
+  if (input) input.addEventListener("input", updateNetworkProxySummary);
+  if (input) input.addEventListener("change", updateNetworkProxySummary);
+}});
 if (sshProxySelect || sshOptionInputs.length) loadCcswitchSummary();
+updateNetworkProxySummary();
 function fillStopModal(button) {{
   const pairs = {{
     "modal-server": button.dataset.server || "-",

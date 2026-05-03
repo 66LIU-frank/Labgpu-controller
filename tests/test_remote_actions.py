@@ -145,6 +145,35 @@ class RemoteActionsTest(unittest.TestCase):
         self.assertEqual(argv[:6], ["ssh", "-o", "ExitOnForwardFailure=yes", "-R", "127.0.0.1:51234:127.0.0.1:15721", "-t"])
         self.assertIn("HTTP_PROXY=http://127.0.0.1:51234", argv[7])
 
+    def test_build_ssh_terminal_command_adds_network_proxy_tunnel(self):
+        argv = build_ssh_terminal_argv(
+            "alpha_liu",
+            network_local_proxy_port="7890",
+            network_remote_proxy_port="45678",
+            network_proxy_scheme="socks5",
+        )
+        self.assertEqual(argv[:6], ["ssh", "-o", "ExitOnForwardFailure=yes", "-R", "127.0.0.1:45678:127.0.0.1:7890", "-t"])
+        self.assertIn("HTTP_PROXY=socks5://127.0.0.1:45678", argv[7])
+        self.assertIn("ALL_PROXY=socks5://127.0.0.1:45678", argv[7])
+        self.assertIn("LabGPU network tunnel", argv[7])
+
+    def test_build_ssh_terminal_command_combines_ai_and_network_tunnels(self):
+        argv = build_ssh_terminal_argv(
+            "alpha_liu",
+            local_proxy_port="15721",
+            remote_proxy_port="27183",
+            agent="claude",
+            ai_mode="proxy_tunnel",
+            provider_name="PackyCode",
+            local_gateway_port="49231",
+            session_token=SESSION_TOKEN,
+            network_local_proxy_port="7890",
+            network_remote_proxy_port="45678",
+        )
+        self.assertIn("127.0.0.1:27183:127.0.0.1:49231", argv)
+        self.assertIn("127.0.0.1:45678:127.0.0.1:7890", argv)
+        self.assertIn("HTTP_PROXY=http://127.0.0.1:45678", argv[-1])
+
     def test_build_ssh_terminal_command_for_claude_ai_proxy_tunnel(self):
         argv = build_ssh_terminal_argv(
             "alpha_liu",
@@ -294,6 +323,84 @@ class RemoteActionsTest(unittest.TestCase):
         self.assertEqual(metadata["provider"], "OpenAI")
         self.assertEqual(result["ai_gateway"]["ccswitch_proxy_port"], 15721)
         self.assertNotIn(SESSION_TOKEN, result["command"])
+
+    def test_open_ssh_terminal_reports_network_proxy_not_listening(self):
+        host = SSHHost(alias="alpha_liu")
+        with (
+            patch("labgpu.remote.actions.is_local_tcp_port_open", return_value=False),
+            patch("labgpu.remote.actions.subprocess.run") as run,
+            patch("labgpu.remote.actions.append_audit"),
+        ):
+            result = open_ssh_terminal(
+                host,
+                agent="claude",
+                ai_mode="proxy_tunnel",
+                provider_name="PackyCode",
+                local_proxy_port="15721",
+                remote_proxy_port="27183",
+                network_proxy_enabled=True,
+                network_local_proxy_port="7890",
+            )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["result"], "local_proxy_not_listening")
+        run.assert_not_called()
+
+        def port_open(port):
+            return int(port) == 15721
+
+        with (
+            patch("labgpu.remote.actions.is_local_tcp_port_open", side_effect=port_open),
+            patch("labgpu.remote.actions.subprocess.run") as run,
+            patch("labgpu.remote.actions.append_audit"),
+        ):
+            result = open_ssh_terminal(
+                host,
+                agent="claude",
+                ai_mode="proxy_tunnel",
+                provider_name="PackyCode",
+                local_proxy_port="15721",
+                remote_proxy_port="27183",
+                network_proxy_enabled=True,
+                network_local_proxy_port="7890",
+            )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["result"], "network_proxy_not_listening")
+        self.assertIn("127.0.0.1:7890", result["message"])
+        run.assert_not_called()
+
+    def test_open_ssh_terminal_returns_network_tunnel_metadata(self):
+        host = SSHHost(alias="alpha_liu")
+        gateway = FakeGateway()
+
+        class Result:
+            returncode = 0
+            stderr = ""
+
+        with (
+            patch("labgpu.remote.actions.sys.platform", "darwin"),
+            patch("labgpu.remote.actions.is_local_tcp_port_open", return_value=True),
+            patch("labgpu.remote.actions.start_ai_gateway", return_value=gateway),
+            patch("labgpu.remote.actions.AI_GATEWAY_SESSIONS", []),
+            patch("labgpu.remote.actions.write_terminal_launch_script", return_value=Path("/tmp/labgpu-open.sh")),
+            patch("labgpu.remote.actions.subprocess.run", return_value=Result()),
+            patch("labgpu.remote.actions.append_audit"),
+        ):
+            result = open_ssh_terminal(
+                host,
+                local_proxy_port="15721",
+                remote_proxy_port="27183",
+                agent="codex",
+                ai_mode="proxy_tunnel",
+                provider_name="OpenAI",
+                network_proxy_enabled=True,
+                network_local_proxy_port="7890",
+                network_remote_proxy_port="45678",
+                network_proxy_scheme="socks5",
+            )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["network_tunnel"]["local_proxy_port"], 7890)
+        self.assertEqual(result["network_tunnel"]["remote_proxy_port"], 45678)
+        self.assertEqual(result["network_tunnel"]["proxy_url"], "socks5://127.0.0.1:45678")
 
     def test_open_ssh_terminal_starts_gateway_for_remote_config_override(self):
         host = SSHHost(alias="alpha_liu")

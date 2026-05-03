@@ -89,6 +89,45 @@ class AISessionTest(unittest.TestCase):
         self.assertIn("Codex CLI", command.display_summary)
         self.assertNotIn(SESSION_TOKEN, command.display_summary)
 
+    def test_build_ai_ssh_command_can_add_network_proxy_tunnel(self):
+        command = build_ai_ssh_command(
+            EnterServerAIRequest(
+                server_alias="alpha_liu",
+                gpu_index=None,
+                ai_app="codex",
+                provider_name="OpenAI",
+                ccswitch_proxy_port=15721,
+                local_gateway_port=49231,
+                remote_gateway_port=27183,
+                session_token=SESSION_TOKEN,
+                network_proxy_local_port=7890,
+                network_proxy_remote_port=45678,
+                network_proxy_scheme="socks5",
+            )
+        )
+        self.assertIn("127.0.0.1:27183:127.0.0.1:49231", command.ssh_args)
+        self.assertIn("127.0.0.1:45678:127.0.0.1:7890", command.ssh_args)
+        remote = command.ssh_args[-1]
+        self.assertIn("LABGPU_NETWORK_PROXY_URL=socks5://127.0.0.1:45678", remote)
+        self.assertIn("HTTP_PROXY=socks5://127.0.0.1:45678", remote)
+        self.assertIn("ALL_PROXY=socks5://127.0.0.1:45678", remote)
+        self.assertIn("Network Tunnel remote 127.0.0.1:45678", command.display_summary)
+
+        with self.assertRaisesRegex(ValueError, "Network proxy tunnel requires both"):
+            build_ai_ssh_command(
+                EnterServerAIRequest(
+                    server_alias="alpha_liu",
+                    gpu_index=None,
+                    ai_app="codex",
+                    provider_name="OpenAI",
+                    ccswitch_proxy_port=15721,
+                    local_gateway_port=49231,
+                    remote_gateway_port=27183,
+                    session_token=SESSION_TOKEN,
+                    network_proxy_local_port=7890,
+                )
+            )
+
     def test_build_ai_ssh_command_for_claude_remote_config_override(self):
         command = build_ai_ssh_command(
             EnterServerAIRequest(

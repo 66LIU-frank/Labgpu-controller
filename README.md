@@ -86,6 +86,9 @@ What works now:
 - detect common remote AI CLI locations and allow per-server command overrides
 - optionally back up and overwrite remote Claude/Codex config for the current
   gateway session, without copying real provider keys
+- optionally create a separate Network Tunnel after SSH connects, forwarding a
+  laptop proxy port to the remote shell as `HTTP_PROXY` / `HTTPS_PROXY` /
+  `ALL_PROXY`
 - run read-only `aiswitch status` / `aiswitch doctor` inside the remote shell
 - keep real provider keys on the laptop or in CC Switch
 
@@ -202,7 +205,10 @@ Each GPU card can copy:
 - an Enter Server terminal action
 
 Enter Server can also open the remote shell in a recent VS Code Remote-SSH
-folder and route Claude Code through the local provider tunnel.
+folder, route Claude Code or Codex CLI through the local provider tunnel, and
+optionally expose your laptop proxy to the remote shell through an SSH
+RemoteForward. This Network Tunnel does not proxy SSH itself; it only helps
+commands after login reach the network through your local proxy.
 
 ## Track Your Training
 
@@ -316,6 +322,8 @@ AI session safety:
 - the local gateway validates the token before forwarding
 - Remote Config Override backs up remote Claude/Codex config and writes only the
   session gateway token/base URL, not real provider keys
+- Network Tunnel forwards a local proxy port to the remote shell but does not
+  copy proxy credentials or provider keys
 
 See [docs/security.md](docs/security.md) for the full model.
 

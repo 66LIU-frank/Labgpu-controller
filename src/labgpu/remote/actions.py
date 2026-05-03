@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from labgpu.remote.ai_gateway import AIGatewaySession, start_ai_gateway
-from labgpu.remote.ai_session import AI_APP_LABELS, DEFAULT_AI_PATH_PREFIXES, EnterServerAIRequest, SUPPORTED_AI_APPS, build_ai_ssh_command, build_path_export, normalized_remote_command_path, normalized_remote_cwd, normalized_remote_path_prefixes
+from labgpu.remote.ai_session import AI_APP_LABELS, DEFAULT_AI_PATH_PREFIXES, EnterServerAIRequest, SUPPORTED_AI_APPS, build_ai_ssh_command, build_network_proxy_url, build_path_export, normalized_remote_command_path, normalized_remote_cwd, normalized_remote_path_prefixes
 from labgpu.remote.audit import append_audit
 from labgpu.remote.probe import probe_host
 from labgpu.remote.ssh_config import SSHHost
@@ -161,6 +161,10 @@ def open_ssh_terminal(
     provider_name: str | None = None,
     gpu_index: str | int | None = None,
     remote_cwd: str | None = None,
+    network_proxy_enabled: bool = False,
+    network_local_proxy_port: str | int | None = None,
+    network_remote_proxy_port: str | int | None = None,
+    network_proxy_scheme: str = "http",
 ) -> dict[str, Any]:
     alias = host.alias
     if not is_safe_ssh_alias(alias):
@@ -173,6 +177,8 @@ def open_ssh_terminal(
     gateway: AIGatewaySession | None = None
     ccswitch_proxy_port: int | None = None
     remote_gateway_port: int | None = None
+    network_local_port: int | None = None
+    network_remote_port: int | None = None
     try:
         normalized_agent = normalize_terminal_agent(agent)
         if ai_mode in AI_SESSION_MODES and normalized_agent not in AI_PROXY_TUNNEL_AGENTS:
@@ -193,6 +199,21 @@ def open_ssh_terminal(
                 "message": message,
                 "server": alias,
             }
+        if network_proxy_enabled:
+            network_local_port, network_remote_port = normalize_proxy_ports(
+                local_proxy_port=network_local_proxy_port,
+                remote_proxy_port=network_remote_proxy_port,
+            )
+            if not network_local_port:
+                raise ValueError("Network Tunnel requires a local proxy port.")
+            network_port_state = is_local_tcp_port_open(network_local_port)
+            if network_port_state is False:
+                return {
+                    "ok": False,
+                    "result": "network_proxy_not_listening",
+                    "message": f"Local network proxy port 127.0.0.1:{network_local_port} is not listening.",
+                    "server": alias,
+                }
         if normalized_agent in AI_PROXY_TUNNEL_AGENTS and ai_mode in AI_SESSION_MODES:
             if not ccswitch_proxy_port:
                 raise ValueError(f"{ai_agent_label(normalized_agent)} AI session requires a CC Switch proxy port.")
@@ -221,6 +242,9 @@ def open_ssh_terminal(
             remote_cwd=remote_cwd,
             local_gateway_port=gateway.listen_port if gateway else None,
             session_token=gateway.token if gateway else None,
+            network_local_proxy_port=network_local_port,
+            network_remote_proxy_port=network_remote_port,
+            network_proxy_scheme=network_proxy_scheme,
         )
     except ValueError as exc:
         if gateway:
@@ -293,6 +317,8 @@ def open_ssh_terminal(
             f"Opening SSH terminal for {alias}. If SSH reports remote port forwarding failed, "
             f"remote gateway port {remote_gateway_port} may already be in use on this server."
         )
+    if network_remote_port:
+        message += f" Network Tunnel: remote 127.0.0.1:{network_remote_port} -> local proxy 127.0.0.1:{network_local_port}."
     payload = terminal_result(host, "opened", ok=True, message=message, command=redacted_command)
     if gateway and ccswitch_proxy_port and remote_gateway_port:
         payload["ai_gateway"] = {
@@ -304,6 +330,12 @@ def open_ssh_terminal(
         cwd = normalized_remote_cwd(remote_cwd)
         if cwd is not None:
             payload["ai_gateway"]["remote_cwd"] = cwd
+    if network_local_port and network_remote_port:
+        payload["network_tunnel"] = {
+            "local_proxy_port": network_local_port,
+            "remote_proxy_port": network_remote_port,
+            "proxy_url": build_network_proxy_url(network_remote_port, scheme=network_proxy_scheme),
+        }
     return payload
 
 
@@ -352,6 +384,9 @@ def build_ssh_terminal_argv(
     remote_cwd: str | None = None,
     local_gateway_port: str | int | None = None,
     session_token: str | None = None,
+    network_local_proxy_port: str | int | None = None,
+    network_remote_proxy_port: str | int | None = None,
+    network_proxy_scheme: str = "http",
 ) -> list[str]:
     if not is_safe_ssh_alias(alias):
         raise ValueError("Unsafe SSH alias.")
@@ -363,7 +398,12 @@ def build_ssh_terminal_argv(
         local_proxy_port=local_proxy_port,
         remote_proxy_port=remote_proxy_port,
     )
-    ssh_options, ssh_target = isolated_ssh_args(host) if host and local_port and remote_port else ([], alias)
+    network_local_port, network_remote_port = normalize_proxy_ports(
+        local_proxy_port=network_local_proxy_port,
+        remote_proxy_port=network_remote_proxy_port,
+    )
+    forward_requested = bool((local_port and remote_port) or (network_local_port and network_remote_port))
+    ssh_options, ssh_target = isolated_ssh_args(host) if host and forward_requested else ([], alias)
     remote_path_prefixes = ai_path_prefixes_for_host(host)
     claude_command = normalized_remote_command_path(host.claude_command) if host else None
     codex_command = normalized_remote_command_path(host.codex_command) if host else None
@@ -390,6 +430,9 @@ def build_ssh_terminal_argv(
                 remote_path_prefixes=remote_path_prefixes,
                 claude_command=claude_command,
                 codex_command=codex_command,
+                network_proxy_local_port=network_local_port,
+                network_proxy_remote_port=network_remote_port,
+                network_proxy_scheme=network_proxy_scheme,
             )
         ).ssh_args
     remote_command = terminal_remote_command(
@@ -400,10 +443,17 @@ def build_ssh_terminal_argv(
         remote_path_prefixes=remote_path_prefixes,
         claude_command=claude_command,
         codex_command=codex_command,
+        network_proxy_port=network_remote_port,
+        network_local_proxy_port=network_local_port,
+        network_proxy_scheme=network_proxy_scheme,
     )
     argv = ["ssh", *ssh_options]
     if local_port and remote_port:
         argv.extend(["-o", "ExitOnForwardFailure=yes", "-R", f"127.0.0.1:{remote_port}:127.0.0.1:{local_port}"])
+    if network_local_port and network_remote_port:
+        if "-o" not in argv or "ExitOnForwardFailure=yes" not in argv:
+            argv.extend(["-o", "ExitOnForwardFailure=yes"])
+        argv.extend(["-R", f"127.0.0.1:{network_remote_port}:127.0.0.1:{network_local_port}"])
     if remote_command:
         argv.extend(["-t", ssh_target, remote_command])
     else:
@@ -514,6 +564,9 @@ def terminal_remote_command(
     remote_path_prefixes: tuple[str, ...] | list[str] = DEFAULT_AI_PATH_PREFIXES,
     claude_command: str | None = None,
     codex_command: str | None = None,
+    network_proxy_port: int | None = None,
+    network_local_proxy_port: int | None = None,
+    network_proxy_scheme: str = "http",
 ) -> str:
     parts: list[str] = []
     cwd = normalized_remote_cwd(remote_cwd)
@@ -534,9 +587,19 @@ def terminal_remote_command(
         parts.append(f"export HTTP_PROXY={shlex.quote(proxy_url)} HTTPS_PROXY={shlex.quote(proxy_url)}")
         local_text = f"127.0.0.1:{local_proxy_port or proxy_port}"
         parts.append(f"echo 'LabGPU proxy: remote HTTP_PROXY/HTTPS_PROXY -> local {local_text}'")
+    network_proxy_url = build_network_proxy_url(network_proxy_port, scheme=network_proxy_scheme)
+    if network_proxy_url:
+        parts.append(
+            " ".join(
+                f"export {name}={shlex.quote(network_proxy_url)}"
+                for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
+            )
+        )
+        local_text = f"127.0.0.1:{network_local_proxy_port or network_proxy_port}"
+        parts.append(f"echo 'LabGPU network tunnel: remote proxy {network_proxy_url} -> local {local_text}'")
     if agent != "none":
         parts.append(agent_launcher_command(agent, remote_path_prefixes=remote_path_prefixes, claude_command=command_path, codex_command=codex_path))
-    elif proxy_port or cwd is not None:
+    elif proxy_port or network_proxy_port or cwd is not None:
         parts.append('if [ -n "${SHELL:-}" ]; then exec "$SHELL" -l; fi; exec /bin/sh')
     return "; ".join(parts)
 

@@ -127,6 +127,14 @@ entries may also define `ai_extra_paths`, `claude_command`, and `codex_command`
 when a tool is installed in a conda environment or another custom path. These
 fields only point LabGPU at the executable; they are not secret fields.
 
+Network Tunnel is a separate optional SSH `RemoteForward` for laptop network
+proxies. It does not proxy the SSH connection itself. After SSH connects,
+LabGPU can forward `127.0.0.1:<local_proxy_port>` on the laptop to a loopback
+port on the remote server and inject `HTTP_PROXY`, `HTTPS_PROXY`, and
+`ALL_PROXY` into the remote shell. This can help remote tools use a local
+network proxy, but the remote account can use that forwarded proxy while the
+tunnel is alive. It should be treated as a temporary network capability.
+
 ## Shared LABGPU_HOME
 
 For a lab-wide run registry, prefer a group-owned directory:

@@ -15,6 +15,8 @@ This smoke test covers:
 - current CC Switch provider for the selected app
 - per-session LabGPU AI gateway
 - optional remote working directory selected from VS Code Remote-SSH recents
+- optional Network Tunnel for forwarding a laptop proxy port into the remote
+  shell after SSH connects
 - no vault, no copied real provider API keys
 
 ## Security Model
@@ -32,6 +34,10 @@ This smoke test covers:
 - Remote Config Override is advanced. It backs up and overwrites remote
   Claude/Codex config with the session gateway token/base URL, not real
   provider keys.
+- Network Tunnel is separate from SSH connectivity. It does not make SSH itself
+  use a proxy. After SSH connects, LabGPU can create an extra `ssh -R` so remote
+  shell commands see your laptop proxy as `HTTP_PROXY`, `HTTPS_PROXY`, and
+  `ALL_PROXY`.
 
 The session token is a temporary capability token, not a real provider key. On
 shared Linux accounts, other processes running as the same Unix user may still
@@ -91,8 +97,11 @@ write controls.
 5. Select `Proxy Tunnel`.
 6. Optionally choose a working directory imported from VS Code Remote-SSH
    recents, or type an absolute remote path such as `/data/lsg/work/OPSD`.
-7. Confirm Remote Config Override is marked advanced, while Gemini and OpenClaw are disabled.
-8. Click `Open Terminal`.
+7. Optional: enable `Network Tunnel` and enter your laptop proxy port, for
+   example `7890` or `33210`. Leave the remote proxy port empty unless you need
+   a fixed port.
+8. Confirm Remote Config Override is marked advanced, while Gemini and OpenClaw are disabled.
+9. Click `Open Terminal`.
 
 The SSH command should include these properties:
 
@@ -100,6 +109,7 @@ The SSH command should include these properties:
 -tt
 -o ExitOnForwardFailure=yes
 -R 127.0.0.1:<remote_gateway_port>:127.0.0.1:<local_gateway_port>
+-R 127.0.0.1:<remote_network_proxy_port>:127.0.0.1:<local_proxy_port>  # Network Tunnel only
 ANTHROPIC_BASE_URL=http://127.0.0.1:<remote_gateway_port>
 ANTHROPIC_API_KEY=labgpu-session-...
 OPENAI_BASE_URL=http://127.0.0.1:<remote_gateway_port>     # Codex only
@@ -107,6 +117,8 @@ OPENAI_API_KEY=labgpu-session-...                          # Codex only
 CODEX_HOME=/tmp/labgpu-ai-.../codex-home                   # Codex only
 LABGPU_REMOTE_CWD=<selected folder, if any>
 LABGPU_CLAUDE_SETTINGS=/tmp/labgpu-ai-.../claude-settings.json  # Claude only
+HTTP_PROXY=http://127.0.0.1:<remote_network_proxy_port>     # Network Tunnel only
+ALL_PROXY=http://127.0.0.1:<remote_network_proxy_port>      # Network Tunnel only
 ```
 
 It must not include a real provider key. The session token should not appear in
@@ -134,6 +146,9 @@ echo "$LABGPU_REMOTE_CWD"
 echo "$LABGPU_CLAUDE_SETTINGS"
 echo "$LABGPU_REAL_CLAUDE"
 echo "$LABGPU_REAL_CODEX"
+echo "$LABGPU_NETWORK_PROXY_URL"
+echo "$HTTP_PROXY"
+echo "$ALL_PROXY"
 command -v claude
 command -v codex
 pwd

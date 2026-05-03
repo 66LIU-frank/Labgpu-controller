@@ -83,6 +83,8 @@ Enter Server
 - 在远程 `/tmp` 下创建临时 Codex `CODEX_HOME` 和 wrapper（beta）
 - 探查常见远程 AI CLI 路径，并支持每台服务器单独覆盖命令路径
 - 可选备份并覆盖远程 Claude/Codex 配置，让当前 gateway session 接管，但不复制真实 provider key
+- 可选建立单独的 Network Tunnel：SSH 连上后把本机代理端口转发到远程 shell，
+  并注入 `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY`
 - 在远程 shell 里运行只读的 `aiswitch status` / `aiswitch doctor`
 - 真实 provider key 留在本机或 CC Switch
 
@@ -197,8 +199,10 @@ labgpu pick --min-vram 24G --prefer 4090 --cmd "python train.py --config configs
 - 启动片段
 - Enter Server 终端入口
 
-Enter Server 还可以自动填 VS Code Remote-SSH 最近目录，并让远程 Claude Code 通过本机
-provider tunnel 工作。
+Enter Server 还可以自动填 VS Code Remote-SSH 最近目录，让远程 Claude Code 或
+Codex CLI 通过本机 provider tunnel 工作，并可选把你本机的梯子端口通过 SSH
+RemoteForward 暴露给远程 shell。这个 Network Tunnel 不是让 SSH 本身走代理，只是
+让登录后的远程命令能用你本机代理访问网络。
 
 ## 追踪训练
 
@@ -303,6 +307,7 @@ AI session 安全：
 - 远程服务器只拿到临时 `labgpu-session-*` token
 - 本机 gateway 校验 token 后才转发
 - Remote Config Override 会先备份远程 Claude/Codex 配置，只写 session gateway token/base URL，不写真实 provider key
+- Network Tunnel 只转发本机代理端口到远程 shell，不复制代理凭据或 provider key
 
 完整安全说明见 [docs/security.md](docs/security.md)。
 

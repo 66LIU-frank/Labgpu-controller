@@ -18,6 +18,7 @@ SAFE_SSH_ALIAS_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
 SAFE_GPU_INDEX_RE = re.compile(r"^\d+(,\d+)*$")
 SAFE_SESSION_TOKEN_RE = re.compile(r"^labgpu-session-[A-Za-z0-9_-]{24,}$")
 DEFAULT_AI_PATH_PREFIXES = ("~/miniconda3/bin", "~/.local/bin")
+SUPPORTED_NETWORK_PROXY_SCHEMES = {"http", "socks5"}
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,9 @@ class EnterServerAIRequest:
     remote_path_prefixes: tuple[str, ...] = DEFAULT_AI_PATH_PREFIXES
     claude_command: str | None = None
     codex_command: str | None = None
+    network_proxy_local_port: int | None = None
+    network_proxy_remote_port: int | None = None
+    network_proxy_scheme: str = "http"
 
 
 @dataclass(frozen=True)
@@ -77,6 +81,22 @@ def build_ai_ssh_command(request: EnterServerAIRequest) -> EnterServerAICommand:
         )
     if remote_cwd is not None:
         remote_env["LABGPU_REMOTE_CWD"] = remote_cwd
+    network_proxy_url = build_network_proxy_url(
+        request.network_proxy_remote_port,
+        scheme=request.network_proxy_scheme,
+    )
+    if network_proxy_url:
+        remote_env.update(
+            {
+                "LABGPU_NETWORK_PROXY_URL": network_proxy_url,
+                "HTTP_PROXY": network_proxy_url,
+                "HTTPS_PROXY": network_proxy_url,
+                "ALL_PROXY": network_proxy_url,
+                "http_proxy": network_proxy_url,
+                "https_proxy": network_proxy_url,
+                "all_proxy": network_proxy_url,
+            }
+        )
     if path_prefixes:
         remote_env["LABGPU_AI_PATH_PREFIX"] = ":".join(path_prefixes)
     if claude_command is not None:
@@ -93,26 +113,47 @@ def build_ai_ssh_command(request: EnterServerAIRequest) -> EnterServerAICommand:
         setup_ai_session=True,
     )
     tunnel = f"127.0.0.1:{request.remote_gateway_port}:127.0.0.1:{request.local_gateway_port}"
+    ssh_args = [
+        "ssh",
+        "-tt",
+        "-o",
+        "ExitOnForwardFailure=yes",
+        *request.ssh_options,
+        "-R",
+        tunnel,
+    ]
+    if request.network_proxy_local_port and request.network_proxy_remote_port:
+        ssh_args.extend(
+            [
+                "-R",
+                f"127.0.0.1:{request.network_proxy_remote_port}:127.0.0.1:{request.network_proxy_local_port}",
+            ]
+        )
+    ssh_args.extend([request.ssh_target or request.server_alias, remote_command])
+    network_summary = ""
+    if request.network_proxy_local_port and request.network_proxy_remote_port:
+        network_summary = (
+            f" / Network Tunnel remote 127.0.0.1:{request.network_proxy_remote_port} -> "
+            f"local proxy 127.0.0.1:{request.network_proxy_local_port}"
+        )
     return EnterServerAICommand(
-        ssh_args=[
-            "ssh",
-            "-tt",
-            "-o",
-            "ExitOnForwardFailure=yes",
-            *request.ssh_options,
-            "-R",
-            tunnel,
-            request.ssh_target or request.server_alias,
-            remote_command,
-        ],
+        ssh_args=ssh_args,
         remote_env=remote_env,
         display_summary=(
             f"{request.server_alias} / {ai_app_label(request.ai_app)} / {request.provider_name} / "
             f"Proxy Tunnel remote 127.0.0.1:{request.remote_gateway_port} -> "
             f"local gateway 127.0.0.1:{request.local_gateway_port} -> CC Switch 127.0.0.1:{request.ccswitch_proxy_port}"
+            f"{network_summary}"
         ),
         token_fingerprint=request.session_token[-8:],
     )
+
+
+def build_network_proxy_url(remote_port: int | None, *, scheme: str = "http") -> str | None:
+    if remote_port is None:
+        return None
+    normalized_scheme = normalized_network_proxy_scheme(scheme)
+    return f"{normalized_scheme}://127.0.0.1:{remote_port}"
 
 
 def build_remote_shell_command(
@@ -523,6 +564,8 @@ def validate_request(request: EnterServerAIRequest) -> None:
     validate_port(request.ccswitch_proxy_port, "CC Switch proxy port")
     validate_port(request.local_gateway_port, "Local gateway port")
     validate_port(request.remote_gateway_port, "Remote gateway port")
+    validate_network_proxy_pair(request.network_proxy_local_port, request.network_proxy_remote_port)
+    normalized_network_proxy_scheme(request.network_proxy_scheme)
     validate_session_token(request.session_token)
     normalized_remote_cwd(request.remote_cwd)
     normalized_remote_path_prefixes(request.remote_path_prefixes)
@@ -537,6 +580,29 @@ def ai_app_label(app: str) -> str:
 def validate_port(value: int, label: str) -> None:
     if value < 1 or value > 65535:
         raise ValueError(f"{label} must be between 1 and 65535.")
+
+
+def validate_optional_port(value: int | None, label: str) -> None:
+    if value is not None:
+        validate_port(value, label)
+
+
+def validate_network_proxy_pair(local_port: int | None, remote_port: int | None) -> None:
+    validate_optional_port(local_port, "Network proxy local port")
+    validate_optional_port(remote_port, "Network proxy remote port")
+    if bool(local_port) != bool(remote_port):
+        raise ValueError("Network proxy tunnel requires both local and remote ports.")
+
+
+def validate_network_proxy_scheme(value: str) -> None:
+    normalized_network_proxy_scheme(value)
+
+
+def normalized_network_proxy_scheme(value: str) -> str:
+    scheme = str(value or "").strip().lower()
+    if scheme not in SUPPORTED_NETWORK_PROXY_SCHEMES:
+        raise ValueError("Network proxy scheme must be http or socks5.")
+    return scheme
 
 
 def validate_session_token(value: str) -> None:
