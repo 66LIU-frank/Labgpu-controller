@@ -26,7 +26,7 @@ These features are implemented and covered by tests or real smoke tests:
 - read-only remote `aiswitch status` / `aiswitch doctor`
 - CC Switch non-secret provider status reading
 - switching among existing CC Switch providers
-  - switches local current-provider state only
+  - switches CC Switch effective current-provider state only
   - does not read, store, or create provider API keys
 
 ## Alpha but Usable With Care
@@ -38,12 +38,9 @@ These are useful, but the behavior should stay conservative:
   - BYO API mode sends redacted context to the configured endpoint
   - no tool execution or automatic actions
 - CC Switch provider switching
-  - currently updates CC Switch provider state directly in the local database
-  - switch results are verified after write and labeled as local state updates
+  - updates CC Switch settings current-provider id and the database current flag
+  - switch results are verified after write and labeled as CC Switch state updates
   - safer long term path is an official CC Switch API/CLI if available
-- browser-local Recent Remote Launches
-  - launch history only
-  - not a tunnel health monitor
 - Remote Config Override for Claude/Codex
   - backs up remote config before writing
   - writes only the LabGPU session token/base URL, not real provider keys

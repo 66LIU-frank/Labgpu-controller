@@ -46,7 +46,7 @@ UI 现在收束成五个主入口：
 | Home | 总览、推荐 GPU、当前任务、问题、保存的服务器。 |
 | Train | 找 GPU、打开终端、查看 `My Runs` 和 `My GPU Processes`。 |
 | Servers | 查看 SSH 服务器、磁盘、GPU、健康状态和分组入口。 |
-| AI Config | 类似 CC Switch 的 provider 路由、应用状态和远程 Claude Code / Codex CLI 启动器。 |
+| AI Config | 类似 CC Switch 的 provider 路由、紧凑应用状态和远程 Claude Code / Codex CLI 会话默认值。 |
 | Settings | 新增/导入 SSH 服务器，选择保存的服务器，管理分组。 |
 
 次级功能仍然保留：
@@ -76,7 +76,7 @@ Enter Server
 现在已经支持：
 
 - 读取非 secret 的 CC Switch provider 状态
-- 在 LabGPU 中通过更新本机 current-provider 状态切换已有 CC Switch provider
+- 在 LabGPU 中切换已有 CC Switch provider，并同步 CC Switch 的有效 current-provider 状态
 - 打开远程 shell 并进入指定 working directory
 - 创建 SSH reverse tunnel 和 per-session gateway
 - 在远程 `/tmp` 下创建临时 Claude Code wrapper/settings
@@ -93,11 +93,11 @@ Enter Server
 - 在 LabGPU 里新增带 API key 的 provider
 - 写 provider key 到远程 `~/.claude`、`~/.codex`、`~/.gemini`
 - 多用户 provider vault
-- Gemini/OpenClaw 远程 session launcher
+- Gemini/OpenClaw 远程 AI session
 
 新增 provider 先在 CC Switch 里做。LabGPU 刷新后会读到它，并可以在已有 provider
-之间切换。切换只更新 CC Switch 本机 current-provider 状态；LabGPU 不创建或保存
-provider key。
+之间切换。切换只更新 CC Switch 的 current-provider settings 和数据库标记；
+LabGPU 不创建或保存 provider key。
 
 ## 快速开始
 

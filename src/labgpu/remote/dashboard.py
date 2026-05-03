@@ -1262,7 +1262,6 @@ def render_providers_page() -> str:
     ]
     console_tabs = render_ai_console_tabs(summary, apps)
     cards = "".join(render_provider_card(summary, app, label) for app, label in apps)
-    launch_cards = "".join(render_ai_launch_card(app, label) for app, label in apps)
     detected = bool(summary.get("available"))
     detected_class = "ok" if detected else "warning"
     detected_label = "detected" if detected else "not detected"
@@ -1272,43 +1271,16 @@ def render_providers_page() -> str:
         <section class="toolbar">
           <div>
             <h1>AI Config Console</h1>
-            <p>CC Switch-style provider control plus remote Claude Code and Codex CLI launchers.</p>
+            <p>CC Switch-style provider control, routing port status, and Enter Server defaults.</p>
           </div>
           <span class="badge {detected_class}">CC Switch {detected_label}</span>
         </section>
         <section class="panel">
-          <div class="section-head"><h2>App Status</h2><a class="json-control" href="/api/integrations/ccswitch">JSON</a></div>
-          <p class="muted">A compact control surface for what is wired today. New provider creation and real API keys still stay in CC Switch for now.</p>
-          {console_tabs}
-        </section>
-        <section class="panel">
-          <div class="section-head"><h2>Remote Launchers</h2><a href="/gpus">Open from Train</a></div>
-          <div class="ai-flow">
-            <span>Choose GPU/server</span>
-            <span>Pick app/provider</span>
-            <span>Open Proxy Tunnel</span>
-          </div>
-          <div class="ai-launch-grid">{launch_cards}</div>
-          <p class="muted">Proxy Tunnel stays recommended. Remote Config Override is available for Claude/Codex when you want LabGPU to back up and overwrite remote app config for the current gateway session. Real provider keys are not copied to servers.</p>
-        </section>
-        <section class="panel">
           <div class="section-head"><h2>Provider Routing</h2><a class="json-control" href="/api/integrations/ccswitch">JSON</a></div>
-          <p class="muted">{esc(summary.get("message") or "")} Switch current providers per app. LabGPU updates CC Switch local current-provider state only; add new providers and API keys in CC Switch for now.</p>
+          <p class="muted">{esc(summary.get("message") or "")} Choose existing providers and check the CC Switch routing port. Add new providers and API keys in CC Switch for now.</p>
+          {console_tabs}
           <div class="provider-grid">{cards}</div>
-        </section>
-        <section class="panel">
-          <div class="section-head"><h2>Secret Boundary</h2><span class="badge ok">local-first</span></div>
-          <div class="ai-safety-row">
-            <span>Reads provider names, current selections, and proxy ports only.</span>
-            <span>Switching updates CC Switch local current-provider state only.</span>
-            <span>Uses temporary session tokens for remote tunnels.</span>
-            <span>Never stores or displays real provider secrets.</span>
-          </div>
-        </section>
-        <section class="panel">
-          <h2>Recent Remote Launches</h2>
-          <p class="muted">Browser-local launch history only. It does not prove the terminal or tunnel is still alive.</p>
-          <table><tr><th>Server</th><th>Folder</th><th>App / Provider</th><th>Proxy Tunnel</th><th>GPU</th><th>Started</th></tr><tbody id="ai-session-rows"><tr><td colspan="6" class="muted">No AI sessions launched from this browser yet.</td></tr></tbody></table>
+          <p class="muted">LabGPU reads provider names, current selections, and proxy ports only. Real provider secrets stay in CC Switch. Remote launch happens from Train / GPU cards.</p>
         </section>
         """,
         json_href="/api/integrations/ccswitch",
@@ -1319,8 +1291,8 @@ def render_ai_console_tabs(summary: dict[str, object], apps: list[tuple[str, str
     providers = summary.get("providers") if isinstance(summary.get("providers"), dict) else {}
     proxy = summary.get("proxy") if isinstance(summary.get("proxy"), dict) else {}
     support = {
-        "claude": ("ready", "ok", "remote launcher"),
-        "codex": ("beta", "ok", "remote launcher"),
+        "claude": ("ready", "ok", "Proxy Tunnel"),
+        "codex": ("beta", "ok", "Proxy Tunnel"),
         "gemini": ("coming soon", "warning", "not wired"),
         "openclaw": ("coming soon", "warning", "not wired"),
     }
@@ -1363,25 +1335,6 @@ def render_ai_console_tabs(summary: dict[str, object], apps: list[tuple[str, str
     return f"<div class='ai-console-tabs'>{''.join(items)}</div>"
 
 
-def render_ai_launch_card(app: str, label: str) -> str:
-    states = {
-        "claude": ("ready", "ok", "Proxy Tunnel launch is available from GPU and server cards."),
-        "codex": ("beta", "ok", "Uses temporary remote CODEX_HOME through the same tunnel path."),
-        "gemini": ("coming soon", "warning", "Remote launcher remains disabled until config behavior is verified."),
-        "openclaw": ("coming soon", "warning", "Remote launcher remains disabled until config behavior is verified."),
-    }
-    state, badge_class, description = states.get(app, ("coming soon", "warning", "Remote launcher is not available yet."))
-    return f"""
-    <article class="ai-launch-card">
-      <div>
-        <h3>{esc(label)}</h3>
-        <p class="muted">{esc(description)}</p>
-      </div>
-      <span class="badge {esc(badge_class)}">{esc(state)}</span>
-    </article>
-    """
-
-
 def render_provider_card(summary: dict[str, object], app: str, label: str) -> str:
     providers = summary.get("providers") if isinstance(summary.get("providers"), dict) else {}
     proxy = summary.get("proxy") if isinstance(summary.get("proxy"), dict) else {}
@@ -1389,11 +1342,6 @@ def render_provider_card(summary: dict[str, object], app: str, label: str) -> st
     proxy_config = proxy.get(app) if isinstance(proxy.get(app), dict) else {}
     current = str(provider.get("current") or "-")
     choices = provider.get("choices_detail") if isinstance(provider.get("choices_detail"), list) else []
-    choice_rows = "".join(
-        f"<tr><td>{esc(item.get('name') or '-')}</td><td>{esc('current' if item.get('current') else '')}</td></tr>"
-        for item in choices
-        if isinstance(item, dict)
-    ) or "<tr><td colspan='2' class='muted'>No providers found.</td></tr>"
     switch_options = "".join(
         f"<option value='{esc(item.get('id') or '')}' {'selected' if item.get('current') else ''}>{esc(item.get('name') or '-')}</option>"
         for item in choices
@@ -1406,7 +1354,6 @@ def render_provider_card(summary: dict[str, object], app: str, label: str) -> st
           <label>Switch provider <select name="provider_id">{switch_options}</select></label>
           <button class="button" type="submit">Switch</button>
           <span class="muted ccswitch-switch-result"></span>
-          <p class="muted">Updates CC Switch local provider state. Keys stay in CC Switch.</p>
         </form>
         """
         if switch_options
@@ -1419,28 +1366,24 @@ def render_provider_card(summary: dict[str, object], app: str, label: str) -> st
     proxy_class = "error" if enabled and listening is False else ("ok" if enabled else ("warning" if port else ""))
     proxy_state = "not listening" if enabled and listening is False else ("enabled" if enabled else ("configured" if port else "not configured"))
     tcp_state = "listening" if listening is True else ("not listening" if listening is False and port else ("unknown" if enabled and port else "-"))
-    launch_state = "Proxy Tunnel ready" if app == "claude" else ("Proxy Tunnel beta" if app == "codex" else "Remote launch later")
-    launch_class = "ok" if app in {"claude", "codex"} else "warning"
+    launch_state = "ready" if app == "claude" else ("beta" if app == "codex" else "coming soon")
+    source = str(provider.get("current_source") or "")
+    source_note = f" · {source}" if source else ""
     return f"""
     <article class="card provider-card">
       <div class="card-head">
         <div>
           <h3>{esc(label)}</h3>
-          <p>Current provider: <strong>{esc(current)}</strong></p>
+          <p>Current provider: <strong>{esc(current)}</strong>{esc(source_note)}</p>
         </div>
         <span class="badge {esc(proxy_class)}">{esc(proxy_state)}</span>
       </div>
       <div class="provider-summary-grid">
         <span><strong>Proxy</strong><code>{esc(proxy_label)}</code></span>
         <span><strong>TCP</strong><code>{esc(tcp_state)}</code></span>
-        <span><strong>Remote</strong><code>{esc(launch_state)}</code></span>
+        <span><strong>App</strong><code>{esc(launch_state)}</code></span>
       </div>
-      <span class="badge {esc(launch_class)} provider-support">{esc(launch_state)}</span>
       {switch_form}
-      <details class="provider-details">
-        <summary>Provider choices ({len(choices)})</summary>
-        <table><tr><th>Provider</th><th>Status</th></tr>{choice_rows}</table>
-      </details>
     </article>
     """
 
@@ -2669,31 +2612,32 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
     </td></tr>
   </table>
   <input type="hidden" id="ssh-proxy" value="ccswitch">
+  <fieldset>
+    <legend>AI App</legend>
+    <label><input type="radio" name="ssh-agent" value="claude" checked> Claude Code</label>
+    <label><input type="radio" name="ssh-agent" value="codex"> Codex CLI <span class="muted">beta</span></label>
+    <label><input type="radio" name="ssh-agent" value="gemini" disabled> Gemini <span class="muted">coming soon</span></label>
+    <label><input type="radio" name="ssh-agent" value="openclaw" disabled> OpenClaw <span class="muted">coming soon</span></label>
+  </fieldset>
+  <label>Provider <select id="ssh-provider-select"></select></label>
   <p class="muted" id="ssh-provider-summary">Using current CC Switch provider: -</p>
   <p class="muted" id="ssh-proxy-summary">Proxy tunnel: -</p>
   <p class="muted" id="ssh-ccswitch-status">Checking CC Switch...</p>
+  <fieldset>
+    <legend>Mode</legend>
+    <label><input type="radio" name="ssh-ai-mode" value="proxy_tunnel" checked> Proxy Tunnel <span class="muted">recommended, secrets stay local</span></label>
+    <label><input type="radio" name="ssh-ai-mode" value="remote_write"> Remote Config Override <span class="muted">advanced, backs up remote config</span></label>
+  </fieldset>
+  <fieldset>
+    <legend>Network Tunnel</legend>
+    <label><input type="checkbox" id="ssh-network-proxy-enabled"> Forward my local proxy after SSH connects</label>
+    <label>Local proxy port <input id="ssh-network-local-port" placeholder="7890"></label>
+    <label>Remote proxy port <input id="ssh-network-remote-port" placeholder="auto"></label>
+    <label>Proxy scheme <select id="ssh-network-scheme"><option value="http">http</option><option value="socks5">socks5</option></select></label>
+    <p class="muted" id="ssh-network-summary">Optional. This does not proxy SSH itself; it creates another SSH RemoteForward so remote shell commands can use your laptop proxy.</p>
+  </fieldset>
   <details>
-    <summary>Advanced session options</summary>
-    <fieldset>
-      <legend>AI App</legend>
-      <label><input type="radio" name="ssh-agent" value="claude" checked> Claude Code</label>
-      <label><input type="radio" name="ssh-agent" value="codex"> Codex CLI <span class="muted">beta</span></label>
-      <label><input type="radio" name="ssh-agent" value="gemini" disabled> Gemini <span class="muted">coming soon</span></label>
-      <label><input type="radio" name="ssh-agent" value="openclaw" disabled> OpenClaw <span class="muted">coming soon</span></label>
-    </fieldset>
-    <fieldset>
-      <legend>Mode</legend>
-      <label><input type="radio" name="ssh-ai-mode" value="proxy_tunnel" checked> Proxy Tunnel <span class="muted">recommended, secrets stay local</span></label>
-      <label><input type="radio" name="ssh-ai-mode" value="remote_write"> Remote Config Override <span class="muted">advanced, backs up remote config</span></label>
-    </fieldset>
-    <fieldset>
-      <legend>Network Tunnel</legend>
-      <label><input type="checkbox" id="ssh-network-proxy-enabled"> Forward my local proxy after SSH connects</label>
-      <label>Local proxy port <input id="ssh-network-local-port" placeholder="7890"></label>
-      <label>Remote proxy port <input id="ssh-network-remote-port" placeholder="auto"></label>
-      <label>Proxy scheme <select id="ssh-network-scheme"><option value="http">http</option><option value="socks5">socks5</option></select></label>
-      <p class="muted" id="ssh-network-summary">Optional. This does not proxy SSH itself; it creates another SSH RemoteForward so remote shell commands can use your laptop proxy.</p>
-    </fieldset>
+    <summary>Session notes</summary>
     <p class="muted" id="ssh-modal-hint">Proxy Tunnel creates a per-session gateway tunnel and temporary app config under remote <code>/tmp</code>. Remote Config Override also backs up and writes remote Claude/Codex config to the session gateway. Real provider keys stay local. If SSH exits with remote forwarding failure, the selected remote gateway port may already be in use on that server.</p>
   </details>
   <p id="ssh-modal-result" class="muted"></p>
@@ -2709,6 +2653,7 @@ let selectedStopButton = null;
 let selectedSshButton = null;
 let ccswitchSummary = null;
 let vscodeRecentFolders = [];
+const aiLaunchPrefsKey = "labgpu-ai-launch-prefs";
 const aiAppLabels = {{claude: "Claude Code", codex: "Codex CLI", gemini: "Gemini", openclaw: "OpenClaw"}};
 const proxyTunnelApps = new Set(["claude", "codex"]);
 const aiSessionModes = new Set(["proxy_tunnel", "remote_write"]);
@@ -2754,21 +2699,21 @@ const translations = {{
   "Waiting": "等待中",
   "in progress": "进行中",
   "App Status": "应用状态",
-  "Remote Launchers": "远程启动器",
   "Provider Status": "Provider 状态",
   "Provider Routing": "Provider 路由",
+  "Provider": "Provider",
   "Secret Boundary": "密钥边界",
   "Choose GPU/server": "选择 GPU/服务器",
   "Pick app/provider": "选择应用/Provider",
   "Open Proxy Tunnel": "打开 Proxy Tunnel",
   "Provider choices": "Provider 选项",
-  "Recent Remote Launches": "最近远程启动",
   "Browser-local launch history only. It does not prove the terminal or tunnel is still alive.": "仅保存在浏览器本地的启动历史；不代表终端或隧道仍然在线。",
   "Reads provider names, current selections, and proxy ports only.": "只读取 provider 名称、当前选择和代理端口。",
-  "Switching updates CC Switch local current-provider state only.": "切换只更新 CC Switch 本机 current-provider 状态。",
+  "Switching updates CC Switch effective current-provider state only.": "切换只更新 CC Switch 的有效 current-provider 状态。",
   "Uses temporary session tokens for remote tunnels.": "远程隧道使用临时 session token。",
   "Never stores or displays real provider secrets.": "绝不保存或展示真实 provider secret。",
   "Advanced session options": "高级会话选项",
+  "Session notes": "会话说明",
   "Open from Train": "从训练页打开",
   "Manage Groups": "管理分组",
   "Switch provider": "切换 provider",
@@ -2803,11 +2748,8 @@ const translations = {{
   "configured": "已配置",
   "proxy on": "代理已开",
   "no proxy": "无代理",
-  "remote launcher": "远程启动器",
   "not wired": "尚未接入",
-  "Remote launcher remains disabled until config behavior is verified.": "配置行为验证完成前，远程启动器保持禁用。",
   "Uses temporary remote CODEX_HOME through the same tunnel path.": "通过同一条隧道链路使用远程临时 CODEX_HOME。",
-  "Remote launch later": "远程启动稍后支持",
   "Remote": "远程",
   "TCP": "TCP",
   "Mode": "模式",
@@ -3211,17 +3153,78 @@ function selectedAgent() {{
 function aiAppLabel(agent) {{
   return aiAppLabels[agent] || agent || "AI app";
 }}
+function readAiLaunchPrefs() {{
+  try {{
+    const value = JSON.parse(localStorage.getItem(aiLaunchPrefsKey) || "{{}}");
+    return value && typeof value === "object" ? value : {{}};
+  }} catch (error) {{
+    return {{}};
+  }}
+}}
+function writeAiLaunchPrefs(update) {{
+  const prefs = Object.assign({{}}, readAiLaunchPrefs(), update || {{}});
+  localStorage.setItem(aiLaunchPrefsKey, JSON.stringify(prefs));
+  return prefs;
+}}
+function setCheckedRadio(name, value) {{
+  const radio = document.querySelector(`input[name="${{name}}"][value="${{value}}"]`);
+  if (radio && !radio.disabled) radio.checked = true;
+}}
+function restoreAiLaunchPrefs() {{
+  const prefs = readAiLaunchPrefs();
+  if (prefs.agent) setCheckedRadio("ssh-agent", prefs.agent);
+  if (prefs.mode) setCheckedRadio("ssh-ai-mode", prefs.mode);
+  const networkEnabled = document.getElementById("ssh-network-proxy-enabled");
+  const networkLocal = document.getElementById("ssh-network-local-port");
+  const networkRemote = document.getElementById("ssh-network-remote-port");
+  const networkScheme = document.getElementById("ssh-network-scheme");
+  if (networkEnabled) networkEnabled.checked = Boolean(prefs.networkProxyEnabled);
+  if (networkLocal && prefs.networkLocalProxyPort) networkLocal.value = prefs.networkLocalProxyPort;
+  if (networkRemote && prefs.networkRemoteProxyPort) networkRemote.value = prefs.networkRemoteProxyPort;
+  if (networkScheme && prefs.networkProxyScheme) networkScheme.value = prefs.networkProxyScheme;
+}}
+function saveAiLaunchPrefs() {{
+  const prefs = readAiLaunchPrefs();
+  const providerIds = Object.assign({{}}, prefs.providerIds || {{}});
+  const providerId = selectedCcswitchProviderId();
+  if (providerId) providerIds[selectedAgent()] = providerId;
+  writeAiLaunchPrefs({{
+    agent: selectedAgent(),
+    mode: selectedAiMode(),
+    providerIds,
+    networkProxyEnabled: networkProxyEnabled(),
+    networkLocalProxyPort: selectedNetworkLocalProxyPort(),
+    networkRemoteProxyPort: selectedNetworkRemoteProxyPort(),
+    networkProxyScheme: selectedNetworkProxyScheme()
+  }});
+}}
 function selectedCcswitchProviderId() {{
-  return "";
+  const select = document.getElementById("ssh-provider-select");
+  return select ? select.value : "";
 }}
 function selectedAiMode() {{
   const selected = document.querySelector('input[name="ssh-ai-mode"]:checked');
   return selected ? selected.value : "proxy_tunnel";
 }}
 function currentCcswitchProviderName(agent) {{
+  const select = document.getElementById("ssh-provider-select");
+  if (select && select.value && (!agent || agent === selectedAgent())) {{
+    const option = select.options[select.selectedIndex];
+    return option ? option.textContent || "" : "";
+  }}
   const providers = ccswitchSummary && ccswitchSummary.providers ? ccswitchSummary.providers : {{}};
   const provider = providers[agent] || {{}};
   return provider.current || "";
+}}
+function currentCcswitchProviderId(agent) {{
+  const providers = ccswitchSummary && ccswitchSummary.providers ? ccswitchSummary.providers : {{}};
+  const provider = providers[agent] || {{}};
+  return provider.current_id || "";
+}}
+function ccswitchProviderChoices(agent) {{
+  const providers = ccswitchSummary && ccswitchSummary.providers ? ccswitchSummary.providers : {{}};
+  const provider = providers[agent] || {{}};
+  return Array.isArray(provider.choices_detail) ? provider.choices_detail : [];
 }}
 function selectedGpuIndex() {{
   const gpu = document.getElementById("ssh-gpu");
@@ -3300,13 +3303,31 @@ function describeCcswitch(summary) {{
 function updateCcswitchProviderOptions() {{
   const agent = selectedAgent();
   const providerSummary = document.getElementById("ssh-provider-summary");
+  const providerSelect = document.getElementById("ssh-provider-select");
   const proxySummary = document.getElementById("ssh-proxy-summary");
+  const choices = ccswitchProviderChoices(agent);
+  if (providerSelect) {{
+    const prefs = readAiLaunchPrefs();
+    const choiceIds = new Set(choices.map((item) => item && item.id).filter(Boolean));
+    const preferredRaw = prefs.providerIds && prefs.providerIds[agent] ? prefs.providerIds[agent] : "";
+    const preferred = choiceIds.has(preferredRaw) ? preferredRaw : currentCcswitchProviderId(agent);
+    providerSelect.innerHTML = "";
+    choices.forEach((item) => {{
+      if (!item || !item.id) return;
+      const option = document.createElement("option");
+      option.value = item.id;
+      option.textContent = item.name || item.id;
+      option.selected = item.id === preferred || (!preferred && item.current);
+      providerSelect.appendChild(option);
+    }});
+    providerSelect.disabled = choices.length === 0;
+  }}
   const providerName = currentCcswitchProviderName(agent);
   const proxyConfig = activeCcswitchProxyConfig(agent);
   const modeLabel = selectedAiMode() === "remote_write" ? "Remote Config Override" : "Proxy Tunnel";
   if (providerSummary) {{
     providerSummary.textContent = providerName
-      ? `Using current CC Switch ${{aiAppLabel(agent)}} provider: ${{providerName}}. To change provider, use AI Config Console or CC Switch.`
+      ? `Selected CC Switch ${{aiAppLabel(agent)}} provider: ${{providerName}}. LabGPU will switch to this provider before opening the session.`
       : `Current CC Switch ${{aiAppLabel(agent)}} provider was not found. Switch ${{aiAppLabel(agent)}} provider in AI Config Console or CC Switch first.`;
   }}
   if (proxySummary) {{
@@ -3373,6 +3394,7 @@ function updateSshProxyFields() {{
 async function runOpenSsh(button) {{
   const original = button.textContent || "Enter Server";
   const result = document.getElementById("ssh-modal-result");
+  await loadCcswitchSummary();
   const agent = selectedAgent();
   const mode = selectedAiMode();
   const providerName = currentCcswitchProviderName(agent);
@@ -3401,6 +3423,7 @@ async function runOpenSsh(button) {{
     if (result) result.textContent = "Network Tunnel requires your local proxy port, for example 7890.";
     return;
   }}
+  saveAiLaunchPrefs();
   button.textContent = translateText("Opening terminal...", currentLanguage());
   button.disabled = true;
   const response = await fetch(`/api/servers/${{encodeURIComponent(button.dataset.openSsh || "")}}/open-ssh`, {{
@@ -3425,7 +3448,8 @@ async function runOpenSsh(button) {{
   button.disabled = false;
   if (payload.ok) {{
     button.textContent = translateText("Terminal opened", currentLanguage());
-    rememberAiSession(button, providerName, payload.ai_gateway || {{}}, payload.network_tunnel || {{}});
+    const launchedProvider = payload.ccswitch && payload.ccswitch.switched && payload.ccswitch.switched.provider ? payload.ccswitch.switched.provider : providerName;
+    rememberAiSession(button, launchedProvider, payload.ai_gateway || {{}}, payload.network_tunnel || {{}});
     setTimeout(() => button.textContent = original, 1400);
     const dialog = document.getElementById("ssh-modal");
     if (dialog && dialog.open) dialog.close();
@@ -3501,6 +3525,7 @@ document.addEventListener("click", async (event) => {{
   const result = document.getElementById("ssh-modal-result");
   if (serverCell) serverCell.textContent = button.dataset.openSsh || "";
   if (cwdInput) cwdInput.value = "";
+  restoreAiLaunchPrefs();
   if (gpuSelect) {{
     const selectedGpu = button.dataset.gpuIndex || "";
     gpuSelect.innerHTML = "<option value=''>none</option>";
@@ -3514,7 +3539,7 @@ document.addEventListener("click", async (event) => {{
   }}
   if (result) result.textContent = "";
   updateSshProxyFields();
-  loadCcswitchSummary();
+  await loadCcswitchSummary();
   loadVscodeRecentFolders(button.dataset.openSsh || "");
   setRefreshPaused(true);
   dialog.showModal();
@@ -3820,11 +3845,19 @@ if (sshModalOpen) sshModalOpen.addEventListener("click", async () => {{
 const sshProxySelect = document.getElementById("ssh-proxy");
 if (sshProxySelect) sshProxySelect.addEventListener("change", updateSshProxyFields);
 const sshOptionInputs = document.querySelectorAll('input[name="ssh-agent"], input[name="ssh-ai-mode"]');
-sshOptionInputs.forEach((input) => input.addEventListener("change", loadCcswitchSummary));
+sshOptionInputs.forEach((input) => input.addEventListener("change", () => {{
+  saveAiLaunchPrefs();
+  loadCcswitchSummary();
+}}));
+const sshProviderSelect = document.getElementById("ssh-provider-select");
+if (sshProviderSelect) sshProviderSelect.addEventListener("change", () => {{
+  saveAiLaunchPrefs();
+  updateCcswitchProviderOptions();
+}});
 ["ssh-network-proxy-enabled", "ssh-network-local-port", "ssh-network-remote-port", "ssh-network-scheme"].forEach((id) => {{
   const input = document.getElementById(id);
-  if (input) input.addEventListener("input", updateNetworkProxySummary);
-  if (input) input.addEventListener("change", updateNetworkProxySummary);
+  if (input) input.addEventListener("input", () => {{ updateNetworkProxySummary(); saveAiLaunchPrefs(); }});
+  if (input) input.addEventListener("change", () => {{ updateNetworkProxySummary(); saveAiLaunchPrefs(); }});
 }});
 if (sshProxySelect || sshOptionInputs.length) loadCcswitchSummary();
 updateNetworkProxySummary();

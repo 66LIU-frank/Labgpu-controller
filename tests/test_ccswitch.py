@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -26,14 +27,18 @@ class CcSwitchTest(unittest.TestCase):
             conn.execute("INSERT INTO proxy_config VALUES ('codex', '127.0.0.1', 15721, 1, 1)")
             conn.commit()
             conn.close()
+            (db_dir / "settings.json").write_text(json.dumps({"currentProviderCodex": "codex-alt"}), encoding="utf-8")
 
             with patch("labgpu.remote.ccswitch.is_local_proxy_listening", return_value=True):
                 summary = read_ccswitch_summary(tmp)
 
         self.assertTrue(summary["available"])
-        self.assertEqual(summary["providers"]["codex"]["current"], "pro")
-        self.assertEqual(summary["providers"]["codex"]["current_id"], "codex-pro")
-        self.assertEqual(summary["providers"]["codex"]["choices_detail"][0]["id"], "codex-pro")
+        self.assertEqual(summary["providers"]["codex"]["current"], "alt")
+        self.assertEqual(summary["providers"]["codex"]["current_id"], "codex-alt")
+        self.assertEqual(summary["providers"]["codex"]["current_source"], "settings")
+        self.assertEqual(summary["providers"]["codex"]["db_current"], "pro")
+        current_choices = [item["id"] for item in summary["providers"]["codex"]["choices_detail"] if item["current"]]
+        self.assertEqual(current_choices, ["codex-alt"])
         self.assertEqual(summary["providers"]["claude"]["current"], "main")
         self.assertEqual(summary["proxy"]["codex"]["listen_port"], 15721)
         self.assertTrue(summary["proxy"]["codex"]["listening"])
@@ -55,15 +60,18 @@ class CcSwitchTest(unittest.TestCase):
 
             switched = switch_ccswitch_provider("codex", "codex-alt", tmp)
             summary = read_ccswitch_summary(tmp)
+            settings = json.loads((Path(tmp) / ".cc-switch" / "settings.json").read_text(encoding="utf-8"))
 
         self.assertEqual(switched["provider"], "alt")
         self.assertTrue(switched["changed"])
         self.assertTrue(switched["verified"])
-        self.assertEqual(switched["method"], "ccswitch_local_db_state")
+        self.assertEqual(switched["method"], "ccswitch_settings_and_db_state")
         self.assertFalse(switched["secret_access"])
         self.assertIn("does not read", switched["warning"])
         self.assertEqual(summary["providers"]["codex"]["current"], "alt")
         self.assertEqual(summary["providers"]["codex"]["current_id"], "codex-alt")
+        self.assertEqual(summary["providers"]["codex"]["current_source"], "settings")
+        self.assertEqual(settings["currentProviderCodex"], "codex-alt")
         self.assertNotIn("SECRET", str(summary))
         self.assertNotIn("SECRET", str(switched))
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import socket
 import sqlite3
@@ -8,11 +9,18 @@ from typing import Any
 
 
 CCSWITCH_DB = ".cc-switch/cc-switch.db"
+CCSWITCH_SETTINGS = ".cc-switch/settings.json"
 CCSWITCH_APP = "/Applications/CC Switch.app"
 SUPPORTED_APPS = ("codex", "claude", "gemini", "openclaw")
-SWITCH_METHOD = "ccswitch_local_db_state"
+SETTINGS_PROVIDER_KEYS = {
+    "claude": "currentProviderClaude",
+    "codex": "currentProviderCodex",
+    "gemini": "currentProviderGemini",
+    "openclaw": "currentProviderOpenclaw",
+}
+SWITCH_METHOD = "ccswitch_settings_and_db_state"
 SWITCH_WARNING = (
-    "LabGPU switches existing CC Switch providers by updating local current-provider state only. "
+    "LabGPU switches existing CC Switch providers by updating CC Switch current-provider state only. "
     "It does not read, store, or create provider API keys."
 )
 
@@ -24,6 +32,11 @@ class CcSwitchError(RuntimeError):
 def ccswitch_db_path(home: str | Path | None = None) -> Path:
     base = Path(home) if home is not None else Path(os.environ.get("HOME") or "~").expanduser()
     return base / CCSWITCH_DB
+
+
+def ccswitch_settings_path(home: str | Path | None = None) -> Path:
+    base = Path(home) if home is not None else Path(os.environ.get("HOME") or "~").expanduser()
+    return base / CCSWITCH_SETTINGS
 
 
 def read_ccswitch_summary(home: str | Path | None = None) -> dict[str, Any]:
@@ -45,7 +58,7 @@ def read_ccswitch_summary(home: str | Path | None = None) -> dict[str, Any]:
         summary["message"] = f"Could not open CC Switch database: {exc}"
         return summary
     try:
-        summary["providers"] = read_provider_state(conn)
+        summary["providers"] = read_provider_state(conn, read_current_provider_settings(home))
         summary["proxy"] = read_proxy_state(conn)
         summary["available"] = True
         summary["message"] = "CC Switch detected. LabGPU reads provider names and proxy ports without reading secrets."
@@ -57,8 +70,9 @@ def read_ccswitch_summary(home: str | Path | None = None) -> dict[str, Any]:
         conn.close()
 
 
-def read_provider_state(conn: sqlite3.Connection) -> dict[str, Any]:
+def read_provider_state(conn: sqlite3.Connection, settings_current: dict[str, str] | None = None) -> dict[str, Any]:
     providers: dict[str, Any] = {}
+    settings_current = settings_current or {}
     if not table_exists(conn, "providers"):
         return providers
     for app_type in SUPPORTED_APPS:
@@ -69,16 +83,25 @@ def read_provider_state(conn: sqlite3.Connection) -> dict[str, Any]:
         if not rows:
             continue
         choices = [str(row[1] or "") for row in rows if row[1]]
+        row_by_id = {str(row[0] or ""): row for row in rows if row[0]}
+        db_current = next((str(row[1]) for row in rows if sqlite_truthy(row[2])), "")
+        db_current_id = next((str(row[0]) for row in rows if sqlite_truthy(row[2])), "")
+        settings_current_id = settings_current.get(app_type, "")
+        effective_current_id = settings_current_id if settings_current_id in row_by_id else db_current_id
+        effective_current_row = row_by_id.get(effective_current_id)
+        current = str(effective_current_row[1] or "") if effective_current_row else db_current
+        current_id = effective_current_id or db_current_id
         choice_items = [
-            {"id": str(row[0] or ""), "name": str(row[1] or ""), "current": sqlite_truthy(row[2])}
+            {"id": str(row[0] or ""), "name": str(row[1] or ""), "current": str(row[0] or "") == current_id}
             for row in rows
             if row[0] and row[1]
         ]
-        current = next((str(row[1]) for row in rows if sqlite_truthy(row[2])), "")
-        current_id = next((str(row[0]) for row in rows if sqlite_truthy(row[2])), "")
         providers[app_type] = {
             "current": current,
             "current_id": current_id,
+            "current_source": "settings" if current_id and current_id == settings_current_id else "database",
+            "db_current": db_current,
+            "db_current_id": db_current_id,
             "choices": choices,
             "choices_detail": choice_items,
         }
@@ -114,6 +137,10 @@ def switch_ccswitch_provider(app_type: str, provider_id: str, home: str | Path |
         with conn:
             conn.execute("UPDATE providers SET is_current = 0 WHERE app_type = ?", (app,))
             conn.execute("UPDATE providers SET is_current = 1 WHERE app_type = ? AND id = ?", (app, selected_id))
+        try:
+            write_current_provider_setting(app, selected_id, home)
+        except OSError as exc:
+            raise CcSwitchError(f"Could not update CC Switch settings: {exc}") from exc
         current_rows = conn.execute(
             "SELECT id FROM providers WHERE app_type = ? AND is_current = 1",
             (app,),
@@ -183,3 +210,37 @@ def sqlite_truthy(value: Any) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
     return bool(value)
+
+
+def read_current_provider_settings(home: str | Path | None = None) -> dict[str, str]:
+    path = ccswitch_settings_path(home)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    current: dict[str, str] = {}
+    for app, key in SETTINGS_PROVIDER_KEYS.items():
+        value = str(data.get(key) or "").strip()
+        if value:
+            current[app] = value
+    return current
+
+
+def write_current_provider_setting(app_type: str, provider_id: str, home: str | Path | None = None) -> None:
+    key = SETTINGS_PROVIDER_KEYS.get(app_type)
+    if not key:
+        return
+    path = ccswitch_settings_path(home)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, ValueError, TypeError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data[key] = provider_id
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".labgpu-tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)

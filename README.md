@@ -48,7 +48,7 @@ The UI is intentionally grouped into five primary areas:
 | Home | Overview, recommended GPUs, current work, problems, saved servers. |
 | Train | Find GPUs, open terminals, see `My Runs` and `My GPU Processes`. |
 | Servers | Inspect SSH servers, disks, GPUs, health, and group shortcuts. |
-| AI Config | CC Switch-style provider routing, app status, and remote Claude Code / Codex CLI launchers. |
+| AI Config | CC Switch-style provider routing, compact app status, and remote Claude Code / Codex CLI session defaults. |
 | Settings | Add/import SSH servers, choose saved servers, and manage groups. |
 
 Secondary tools still exist, but they stay inside related workflows:
@@ -61,7 +61,7 @@ Secondary tools still exist, but they stay inside related workflows:
 ## AI Config Console
 
 LabGPU includes an AI Config Console for CC Switch-style provider routing and
-remote launcher setup. It connects remote Claude Code and Codex CLI sessions to
+remote session setup. It connects remote Claude Code and Codex CLI sessions to
 your local CC Switch provider without writing API keys to the remote server.
 
 The current supported path is:
@@ -78,7 +78,8 @@ Enter Server
 What works now:
 
 - read non-secret CC Switch provider state
-- switch existing CC Switch providers from LabGPU by updating local current-provider state
+- switch existing CC Switch providers from LabGPU by updating CC Switch's
+  effective current-provider state
 - open a remote shell in a selected working directory
 - create an SSH reverse tunnel with a per-session gateway
 - inject a temporary Claude Code wrapper/settings file under remote `/tmp`
@@ -97,12 +98,12 @@ What is intentionally not built into LabGPU yet:
 - adding new providers with API keys
 - writing provider keys into remote `~/.claude`, `~/.codex`, or `~/.gemini`
 - multi-user provider vaults
-- Gemini/OpenClaw remote session launchers
+- Gemini/OpenClaw remote AI sessions
 
 Add new providers in CC Switch for now. LabGPU will show them after refresh and
 can switch among existing providers without reading their secrets. Switching is
-limited to CC Switch local current-provider state; LabGPU does not create or
-store provider keys.
+limited to CC Switch's current-provider settings and database flag; LabGPU does
+not create or store provider keys.
 
 ## Quick Start
 
