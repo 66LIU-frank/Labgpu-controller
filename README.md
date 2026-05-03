@@ -48,7 +48,7 @@ The UI is intentionally grouped into five primary areas:
 | Home | Overview, recommended GPUs, current work, problems, saved servers. |
 | Train | Find GPUs, open terminals, see `My Runs` and `My GPU Processes`. |
 | Servers | Inspect SSH servers, disks, GPUs, health, and group shortcuts. |
-| AI Sessions | View/switch existing CC Switch providers and launch remote Claude Code sessions. |
+| AI Sessions | View/switch existing CC Switch providers and launch remote Claude Code / Codex CLI sessions. |
 | Settings | Add/import SSH servers, choose saved servers, and manage groups. |
 
 Secondary tools still exist, but they stay inside related workflows:
@@ -60,14 +60,14 @@ Secondary tools still exist, but they stay inside related workflows:
 
 ## AI Sessions
 
-LabGPU can connect remote Claude Code sessions to your local CC Switch provider
-without writing API keys to the remote server.
+LabGPU can connect remote Claude Code and Codex CLI sessions to your local CC
+Switch provider without writing API keys to the remote server.
 
 The current supported path is:
 
 ```text
 Enter Server
-  -> Claude Code
+  -> Claude Code or Codex CLI
   -> Proxy Tunnel
   -> local LabGPU session gateway
   -> local CC Switch proxy
@@ -81,6 +81,7 @@ What works now:
 - open a remote shell in a selected working directory
 - create an SSH reverse tunnel with a per-session gateway
 - inject a temporary Claude Code wrapper/settings file under remote `/tmp`
+- inject a temporary Codex `CODEX_HOME` and wrapper under remote `/tmp` (beta)
 - run read-only `aiswitch status` / `aiswitch doctor` inside the remote shell
 - keep real provider keys on the laptop or in CC Switch
 
@@ -89,7 +90,7 @@ What is intentionally not built into LabGPU yet:
 - adding new providers with API keys
 - writing provider keys into remote `~/.claude`, `~/.codex`, or `~/.gemini`
 - multi-user provider vaults
-- Codex/Gemini remote session launchers
+- Gemini/OpenClaw remote session launchers
 
 Add new providers in CC Switch for now. LabGPU will show them after refresh and
 can switch among existing providers without reading their secrets. Switching is

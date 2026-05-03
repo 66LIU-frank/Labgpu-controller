@@ -6,7 +6,11 @@ import shlex
 from dataclasses import dataclass
 
 
-SUPPORTED_AI_APPS = {"claude"}
+SUPPORTED_AI_APPS = {"claude", "codex"}
+AI_APP_LABELS = {
+    "claude": "Claude Code",
+    "codex": "Codex CLI",
+}
 SUPPORTED_MODES = {"proxy_tunnel"}
 DUMMY_PROXY_API_KEY = "labgpu-proxy"
 SESSION_TOKEN_PREFIX = "labgpu-session-"
@@ -52,9 +56,23 @@ def build_ai_ssh_command(request: EnterServerAIRequest) -> EnterServerAICommand:
         "LABGPU_AI_MODE": request.mode,
         "LABGPU_AI_APP": request.ai_app,
         "LABGPU_AI_PROVIDER": request.provider_name,
-        "ANTHROPIC_BASE_URL": remote_url,
-        "ANTHROPIC_API_KEY": request.session_token,
+        "LABGPU_AI_BASE_URL": remote_url,
+        "LABGPU_AI_SESSION_TOKEN": request.session_token,
     }
+    if request.ai_app == "claude":
+        remote_env.update(
+            {
+                "ANTHROPIC_BASE_URL": remote_url,
+                "ANTHROPIC_API_KEY": request.session_token,
+            }
+        )
+    elif request.ai_app == "codex":
+        remote_env.update(
+            {
+                "OPENAI_BASE_URL": remote_url,
+                "OPENAI_API_KEY": request.session_token,
+            }
+        )
     if remote_cwd is not None:
         remote_env["LABGPU_REMOTE_CWD"] = remote_cwd
     if path_prefixes:
@@ -68,7 +86,7 @@ def build_ai_ssh_command(request: EnterServerAIRequest) -> EnterServerAICommand:
         remote_env,
         remote_cwd=remote_cwd,
         remote_path_prefixes=path_prefixes,
-        setup_claude_wrapper=request.ai_app == "claude",
+        setup_ai_session=True,
     )
     tunnel = f"127.0.0.1:{request.remote_gateway_port}:127.0.0.1:{request.local_gateway_port}"
     return EnterServerAICommand(
@@ -85,7 +103,7 @@ def build_ai_ssh_command(request: EnterServerAIRequest) -> EnterServerAICommand:
         ],
         remote_env=remote_env,
         display_summary=(
-            f"{request.server_alias} / Claude Code / {request.provider_name} / "
+            f"{request.server_alias} / {ai_app_label(request.ai_app)} / {request.provider_name} / "
             f"Proxy Tunnel remote 127.0.0.1:{request.remote_gateway_port} -> "
             f"local gateway 127.0.0.1:{request.local_gateway_port} -> CC Switch 127.0.0.1:{request.ccswitch_proxy_port}"
         ),
@@ -98,21 +116,60 @@ def build_remote_shell_command(
     *,
     remote_cwd: str | None = None,
     remote_path_prefixes: tuple[str, ...] | list[str] = (),
-    setup_claude_wrapper: bool = False,
+    setup_ai_session: bool = False,
 ) -> str:
     exports = [f"export {key}={shlex.quote(value)}" for key, value in remote_env.items()]
     path_export = build_path_export(remote_path_prefixes)
     if path_export:
         exports.append(path_export)
-    if setup_claude_wrapper:
-        exports.append(build_claude_wrapper_setup(remote_env))
+    if setup_ai_session:
+        exports.append(build_ai_session_setup(remote_env))
     if remote_cwd is not None:
         exports.append(f"cd {shlex.quote(remote_cwd)} || exit 1")
-    exports.append(build_interactive_shell_exec(setup_claude_wrapper=setup_claude_wrapper))
+    exports.append(build_interactive_shell_exec(setup_ai_session=setup_ai_session))
     return "; ".join(exports)
 
 
-def build_claude_wrapper_setup(remote_env: dict[str, str]) -> str:
+def build_ai_session_setup(remote_env: dict[str, str]) -> str:
+    aiswitch = build_aiswitch_helper()
+    bashrc = build_ai_shell_rc(".bashrc")
+    zshrc = build_ai_shell_rc(".zshrc")
+    parts = [
+        'LABGPU_AI_TMPDIR="${TMPDIR:-/tmp}/labgpu-ai-${USER:-user}-$$"',
+        "&&",
+        'mkdir -p "$LABGPU_AI_TMPDIR"',
+        "&&",
+        'chmod 700 "$LABGPU_AI_TMPDIR"',
+        "&&",
+        'export LABGPU_AI_TMPDIR',
+        "&&",
+        f"printf %s {shlex.quote(aiswitch)} > \"$LABGPU_AI_TMPDIR/aiswitch\"",
+        "&&",
+        'chmod 700 "$LABGPU_AI_TMPDIR/aiswitch"',
+        "&&",
+        f"printf %s {shlex.quote(bashrc)} > \"$LABGPU_AI_TMPDIR/bashrc\"",
+        "&&",
+        f"printf %s {shlex.quote(zshrc)} > \"$LABGPU_AI_TMPDIR/.zshrc\"",
+        "&&",
+        'export PATH="$LABGPU_AI_TMPDIR:$PATH"',
+    ]
+    app = remote_env.get("LABGPU_AI_APP")
+    if app == "claude":
+        parts.extend([";", build_claude_app_setup(remote_env)])
+    elif app == "codex":
+        parts.extend([";", build_codex_app_setup(remote_env)])
+    return " ".join(parts)
+
+
+def build_ai_shell_rc(user_rc: str) -> str:
+    return (
+        f'if [ -r "$HOME/{user_rc}" ]; then . "$HOME/{user_rc}"; fi\n'
+        'export PATH="$LABGPU_AI_TMPDIR:$PATH"\n'
+        'if [ -n "$LABGPU_REMOTE_CWD" ]; then cd "$LABGPU_REMOTE_CWD" 2>/dev/null || true; fi\n'
+    )
+
+
+def build_claude_app_setup(remote_env: dict[str, str]) -> str:
     settings = json.dumps(
         {
             "env": {
@@ -123,17 +180,6 @@ def build_claude_wrapper_setup(remote_env: dict[str, str]) -> str:
         separators=(",", ":"),
     )
     wrapper = '#!/bin/sh\nexec "$LABGPU_REAL_CLAUDE" --settings "$LABGPU_CLAUDE_SETTINGS" "$@"\n'
-    aiswitch = build_aiswitch_helper()
-    bashrc = (
-        'if [ -r "$HOME/.bashrc" ]; then . "$HOME/.bashrc"; fi\n'
-        'export PATH="$LABGPU_AI_TMPDIR:$PATH"\n'
-        'if [ -n "$LABGPU_REMOTE_CWD" ]; then cd "$LABGPU_REMOTE_CWD" 2>/dev/null || true; fi\n'
-    )
-    zshrc = (
-        'if [ -r "$HOME/.zshrc" ]; then . "$HOME/.zshrc"; fi\n'
-        'export PATH="$LABGPU_AI_TMPDIR:$PATH"\n'
-        'if [ -n "$LABGPU_REMOTE_CWD" ]; then cd "$LABGPU_REMOTE_CWD" 2>/dev/null || true; fi\n'
-    )
     return " ".join(
         [
             'LABGPU_REAL_CLAUDE="${LABGPU_AI_CLAUDE_COMMAND:-}"',
@@ -142,23 +188,7 @@ def build_claude_wrapper_setup(remote_env: dict[str, str]) -> str:
             ";",
             'case "$LABGPU_REAL_CLAUDE" in "~/"*) LABGPU_REAL_CLAUDE="${HOME}/${LABGPU_REAL_CLAUDE#~/}" ;; esac',
             ";",
-            'LABGPU_AI_TMPDIR="${TMPDIR:-/tmp}/labgpu-ai-${USER:-user}-$$"',
-            "&&",
-            'mkdir -p "$LABGPU_AI_TMPDIR"',
-            "&&",
-            'chmod 700 "$LABGPU_AI_TMPDIR"',
-            "&&",
-            'export LABGPU_REAL_CLAUDE LABGPU_AI_TMPDIR',
-            "&&",
-            f"printf %s {shlex.quote(aiswitch)} > \"$LABGPU_AI_TMPDIR/aiswitch\"",
-            "&&",
-            'chmod 700 "$LABGPU_AI_TMPDIR/aiswitch"',
-            "&&",
-            f"printf %s {shlex.quote(bashrc)} > \"$LABGPU_AI_TMPDIR/bashrc\"",
-            "&&",
-            f"printf %s {shlex.quote(zshrc)} > \"$LABGPU_AI_TMPDIR/.zshrc\"",
-            "&&",
-            'export PATH="$LABGPU_AI_TMPDIR:$PATH"',
+            'export LABGPU_REAL_CLAUDE',
             ";",
             'if [ -n "$LABGPU_REAL_CLAUDE" ]; then',
             'LABGPU_CLAUDE_SETTINGS="$LABGPU_AI_TMPDIR/claude-settings.json"',
@@ -178,12 +208,64 @@ def build_claude_wrapper_setup(remote_env: dict[str, str]) -> str:
     )
 
 
+def build_codex_app_setup(remote_env: dict[str, str]) -> str:
+    auth = json.dumps(
+        {
+            "OPENAI_API_KEY": remote_env["OPENAI_API_KEY"],
+            "auth_mode": "apikey",
+        },
+        separators=(",", ":"),
+    )
+    config = f'openai_base_url = "{remote_env["OPENAI_BASE_URL"]}"\n'
+    wrapper = '#!/bin/sh\nexport CODEX_HOME="$LABGPU_CODEX_HOME"\nexec "$LABGPU_REAL_CODEX" "$@"\n'
+    return " ".join(
+        [
+            'LABGPU_REAL_CODEX="$(command -v codex || true)"',
+            ";",
+            'case "$LABGPU_REAL_CODEX" in "~/"*) LABGPU_REAL_CODEX="${HOME}/${LABGPU_REAL_CODEX#~/}" ;; esac',
+            ";",
+            'export LABGPU_REAL_CODEX',
+            ";",
+            'if [ -n "$LABGPU_REAL_CODEX" ]; then',
+            'LABGPU_CODEX_HOME="$LABGPU_AI_TMPDIR/codex-home"',
+            "&&",
+            'mkdir -p "$LABGPU_CODEX_HOME"',
+            "&&",
+            'chmod 700 "$LABGPU_CODEX_HOME"',
+            "&&",
+            'export LABGPU_CODEX_HOME CODEX_HOME="$LABGPU_CODEX_HOME"',
+            "&&",
+            f"umask 077 && printf %s {shlex.quote(auth)} > \"$LABGPU_CODEX_HOME/auth.json\"",
+            "&&",
+            f"umask 077 && printf %s {shlex.quote(config)} > \"$LABGPU_CODEX_HOME/config.toml\"",
+            "&&",
+            f"printf %s {shlex.quote(wrapper)} > \"$LABGPU_AI_TMPDIR/codex\"",
+            "&&",
+            'chmod 700 "$LABGPU_AI_TMPDIR/codex"',
+            ";",
+            "fi",
+        ]
+    )
+
+
 def build_aiswitch_helper() -> str:
     return """#!/bin/sh
 set +x
 cmd="${1:-status}"
-base="${ANTHROPIC_BASE_URL:-}"
-token="${ANTHROPIC_API_KEY:-}"
+base="${LABGPU_AI_BASE_URL:-}"
+if [ -z "$base" ] && [ -n "${ANTHROPIC_BASE_URL:-}" ]; then base="$ANTHROPIC_BASE_URL"; fi
+if [ -z "$base" ] && [ -n "${OPENAI_BASE_URL:-}" ]; then base="$OPENAI_BASE_URL"; fi
+token="${LABGPU_AI_SESSION_TOKEN:-}"
+if [ -z "$token" ] && [ -n "${ANTHROPIC_API_KEY:-}" ]; then token="$ANTHROPIC_API_KEY"; fi
+if [ -z "$token" ] && [ -n "${OPENAI_API_KEY:-}" ]; then token="$OPENAI_API_KEY"; fi
+
+app_wrapper() {
+  case "${LABGPU_AI_APP:-}" in
+    claude) command -v claude 2>/dev/null || command -v claude-code 2>/dev/null || printf missing ;;
+    codex) command -v codex 2>/dev/null || printf missing ;;
+    *) printf missing ;;
+  esac
+}
 
 print_status() {
   printf '%s\\n' "LabGPU AI Session"
@@ -197,7 +279,7 @@ print_status() {
     printf '%s\\n' "Token: missing"
   fi
   printf 'Working directory: %s\\n' "$(pwd 2>/dev/null || printf unknown)"
-  printf 'Claude wrapper: %s\\n' "$(command -v claude 2>/dev/null || command -v claude-code 2>/dev/null || printf missing)"
+  printf 'App wrapper: %s\\n' "$(app_wrapper)"
 }
 
 case "$cmd" in
@@ -245,8 +327,8 @@ esac
 """
 
 
-def build_interactive_shell_exec(*, setup_claude_wrapper: bool) -> str:
-    if not setup_claude_wrapper:
+def build_interactive_shell_exec(*, setup_ai_session: bool) -> str:
+    if not setup_ai_session:
         return 'exec "${SHELL:-/bin/sh}" -i'
     return (
         'case "$(basename "${SHELL:-/bin/sh}")" in '
@@ -263,9 +345,9 @@ def validate_request(request: EnterServerAIRequest) -> None:
     if request.mode not in SUPPORTED_MODES:
         raise ValueError("Only Proxy Tunnel mode is available in this alpha.")
     if request.ai_app not in SUPPORTED_AI_APPS:
-        raise ValueError("Only Claude Code AI sessions are available in this alpha.")
+        raise ValueError("Only Claude Code and Codex CLI AI sessions are available in this alpha.")
     if not request.provider_name.strip():
-        raise ValueError("Current CC Switch provider is required for Claude Code.")
+        raise ValueError(f"Current CC Switch provider is required for {ai_app_label(request.ai_app)}.")
     if request.ssh_target is not None and not request.ssh_target.strip():
         raise ValueError("SSH target is required.")
     if any(not isinstance(item, str) or not item for item in request.ssh_options):
@@ -277,6 +359,10 @@ def validate_request(request: EnterServerAIRequest) -> None:
     normalized_remote_cwd(request.remote_cwd)
     normalized_remote_path_prefixes(request.remote_path_prefixes)
     normalized_remote_command_path(request.claude_command)
+
+
+def ai_app_label(app: str) -> str:
+    return AI_APP_LABELS.get(str(app or "").strip().lower(), str(app or "AI app"))
 
 
 def validate_port(value: int, label: str) -> None:

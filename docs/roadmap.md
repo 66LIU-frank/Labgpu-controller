@@ -20,6 +20,7 @@ These features are implemented and covered by tests or real smoke tests:
 - Enter Server with working directory selection
 - VS Code Remote-SSH recent folder import
 - Claude Code through Proxy Tunnel
+- Codex CLI through Proxy Tunnel (beta)
 - session-scoped local AI gateway with token auth, streaming, and cleanup
 - read-only remote `aiswitch status` / `aiswitch doctor`
 - CC Switch non-secret provider status reading
@@ -50,7 +51,6 @@ These should not be presented as working product features:
 - adding new AI providers or API keys inside LabGPU
 - local encrypted provider vault
 - Remote Write into remote `~/.claude`, `~/.codex`, `~/.gemini`
-- Codex remote AI session launcher
 - Gemini remote AI session launcher
 - OpenClaw remote AI session launcher
 - remote `aiswitch use`
@@ -60,13 +60,14 @@ These should not be presented as working product features:
 
 ## Recommended Next PRs
 
-1. Codex Session Design
+1. Codex Real-World Hardening
 
-   Do not simply copy the Claude path. First verify:
+   Codex Proxy Tunnel is wired through the same gateway path. Next verify more
+   provider combinations and CLI versions:
 
-   - what Codex CLI expects for base URL and auth
    - whether CC Switch proxy supports Codex routing in the same mode
    - whether streaming and config reload behavior match Claude Code
+   - whether `CODEX_HOME` temp config works across packaged Codex releases
 
 2. CC Switch API/CLI Adapter
 

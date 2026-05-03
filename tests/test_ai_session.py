@@ -33,6 +33,7 @@ class AISessionTest(unittest.TestCase):
         self.assertIn('"$LABGPU_AI_TMPDIR/aiswitch"', remote)
         self.assertIn("__labgpu/session", remote)
         self.assertIn("Token: present (redacted)", remote)
+        self.assertIn("App wrapper:", remote)
         self.assertIn('export PATH="$LABGPU_AI_TMPDIR:$PATH"', remote)
         self.assertIn('--rcfile "$LABGPU_AI_TMPDIR/bashrc"', remote)
         self.assertIn("ANTHROPIC_BASE_URL=http://127.0.0.1:27183", remote)
@@ -44,6 +45,48 @@ class AISessionTest(unittest.TestCase):
         self.assertNotIn("Authorization", " ".join(command.ssh_args))
         self.assertNotIn("Bearer", " ".join(command.ssh_args))
         self.assertNotIn("ANTHROPIC_API_KEY=sk-", " ".join(command.ssh_args))
+        self.assertNotIn(SESSION_TOKEN, command.display_summary)
+
+    def test_build_ai_ssh_command_for_codex_proxy_tunnel(self):
+        command = build_ai_ssh_command(
+            EnterServerAIRequest(
+                server_alias="alpha_liu",
+                gpu_index="auto",
+                ai_app="codex",
+                provider_name="OpenAI",
+                ccswitch_proxy_port=15721,
+                local_gateway_port=49231,
+                remote_gateway_port=27183,
+                session_token=SESSION_TOKEN,
+                remote_cwd="/data/lsg/work/OPSD",
+            )
+        )
+
+        self.assertEqual(command.ssh_args[:6], ["ssh", "-tt", "-o", "ExitOnForwardFailure=yes", "-R", "127.0.0.1:27183:127.0.0.1:49231"])
+        remote = command.ssh_args[7]
+        self.assertIn("LABGPU_AI_APP=codex", remote)
+        self.assertIn("LABGPU_AI_PROVIDER=OpenAI", remote)
+        self.assertIn("LABGPU_AI_BASE_URL=http://127.0.0.1:27183", remote)
+        self.assertIn(f"LABGPU_AI_SESSION_TOKEN={SESSION_TOKEN}", remote)
+        self.assertIn("OPENAI_BASE_URL=http://127.0.0.1:27183", remote)
+        self.assertIn(f"OPENAI_API_KEY={SESSION_TOKEN}", remote)
+        self.assertIn("LABGPU_CODEX_HOME", remote)
+        self.assertIn("CODEX_HOME", remote)
+        self.assertIn("auth.json", remote)
+        self.assertIn("auth_mode", remote)
+        self.assertIn("apikey", remote)
+        self.assertIn("config.toml", remote)
+        self.assertIn("openai_base_url", remote)
+        self.assertIn('exec "$LABGPU_REAL_CODEX" "$@"', remote)
+        self.assertIn("App wrapper:", remote)
+        self.assertIn("cd /data/lsg/work/OPSD || exit 1", remote)
+        self.assertNotIn("~/.codex", remote)
+        self.assertNotIn("ANTHROPIC_BASE_URL=http://127.0.0.1:27183", remote)
+        self.assertNotIn(f"ANTHROPIC_API_KEY={SESSION_TOKEN}", remote)
+        self.assertNotIn("sk-", " ".join(command.ssh_args))
+        self.assertNotIn("Authorization", " ".join(command.ssh_args))
+        self.assertNotIn("Bearer", " ".join(command.ssh_args))
+        self.assertIn("Codex CLI", command.display_summary)
         self.assertNotIn(SESSION_TOKEN, command.display_summary)
 
     def test_build_ai_ssh_command_quotes_provider_and_validates_gpu(self):
@@ -139,7 +182,7 @@ class AISessionTest(unittest.TestCase):
         self.assertIn("$HOME/miniconda3/bin/claude", script)
         self.assertIn("claude not found in LabGPU launch PATH", script)
 
-    def test_build_ai_ssh_command_requires_provider_and_claude(self):
+    def test_build_ai_ssh_command_requires_provider_and_supported_app(self):
         with self.assertRaisesRegex(ValueError, "provider"):
             build_ai_ssh_command(
                 EnterServerAIRequest(
@@ -153,12 +196,12 @@ class AISessionTest(unittest.TestCase):
                     session_token=SESSION_TOKEN,
                 )
             )
-        with self.assertRaisesRegex(ValueError, "Only Claude"):
+        with self.assertRaisesRegex(ValueError, "Only Claude Code and Codex CLI"):
             build_ai_ssh_command(
                 EnterServerAIRequest(
                     server_alias="alpha_liu",
                     gpu_index=None,
-                    ai_app="codex",
+                    ai_app="gemini",
                     provider_name="PackyCode",
                     ccswitch_proxy_port=15721,
                     local_gateway_port=49231,

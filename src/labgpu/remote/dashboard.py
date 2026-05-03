@@ -287,6 +287,9 @@ def current_ccswitch_provider(summary: dict[str, object], app: str) -> str:
     return str(provider.get("current") or "").strip()
 
 
+AI_PROXY_TUNNEL_APPS = {"claude": "Claude Code", "codex": "Codex CLI"}
+
+
 class ServerHandler(BaseHTTPRequestHandler):
     ssh_config: str | Path | None = None
     names: list[str] | None = None
@@ -490,12 +493,13 @@ class ServerHandler(BaseHTTPRequestHandler):
             except CcSwitchError as exc:
                 self._json({"ok": False, "result": "ccswitch_switch_failed", "message": str(exc)}, status=HTTPStatus.CONFLICT)
                 return
-        if agent == "claude" and ai_mode == "proxy_tunnel":
+        if agent in AI_PROXY_TUNNEL_APPS and ai_mode == "proxy_tunnel":
             summary = read_ccswitch_summary()
-            provider_name = provider_name or current_ccswitch_provider(summary, "claude")
+            provider_name = provider_name or current_ccswitch_provider(summary, agent)
             if not provider_name:
+                label = AI_PROXY_TUNNEL_APPS[agent]
                 self._json(
-                    {"ok": False, "result": "missing_provider", "message": "Current CC Switch Claude provider was not found. Switch Claude provider in AI Sessions or CC Switch first."},
+                    {"ok": False, "result": "missing_provider", "message": f"Current CC Switch {label} provider was not found. Switch {label} provider in AI Sessions or CC Switch first."},
                     status=HTTPStatus.CONFLICT,
                 )
                 return
@@ -1047,7 +1051,7 @@ def render_providers_page() -> str:
         <section class="toolbar">
           <div>
             <h1>AI Sessions</h1>
-            <p>Remote Claude Code sessions through the current local CC Switch provider.</p>
+            <p>Remote Claude Code and Codex CLI sessions through the current local CC Switch provider.</p>
           </div>
           <span class="badge {detected_class}">CC Switch {detected_label}</span>
         </section>
@@ -1059,8 +1063,16 @@ def render_providers_page() -> str:
               <p class="muted">Use Enter Server from a GPU or server card. LabGPU opens a session-scoped proxy tunnel; real API keys stay local.</p>
             </div>
             <div class="card">
+              <div class="card-head"><h3>Codex CLI</h3><span class="badge ok">beta</span></div>
+              <p class="muted">Uses the same gateway tunnel with a temporary remote <code>CODEX_HOME</code>. It does not write remote <code>~/.codex</code>.</p>
+            </div>
+            <div class="card">
+              <div class="card-head"><h3>Gemini / OpenClaw</h3><span class="badge warning">coming soon</span></div>
+              <p class="muted">Provider state can be shown when CC Switch exposes it, but remote launchers stay disabled until their config and streaming behavior are verified.</p>
+            </div>
+            <div class="card">
               <div class="card-head"><h3>Remote Write</h3><span class="badge warning">disabled</span></div>
-              <p class="muted">Remote config writes stay disabled in Alpha. Codex and Gemini session launchers are kept for later.</p>
+              <p class="muted">Remote config writes stay disabled in Alpha. LabGPU does not copy provider API keys to servers.</p>
             </div>
           </div>
         </section>
@@ -2321,7 +2333,7 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
 </dialog>
 <dialog id="ssh-modal">
   <h2>Enter Server</h2>
-  <p class="muted">Open a server shell in the selected folder with Claude Code routed through the local CC Switch provider.</p>
+  <p class="muted">Open a server shell in the selected folder with Claude Code or Codex CLI routed through the local CC Switch provider.</p>
   <table>
     <tr><th>Server</th><td id="ssh-modal-server"></td></tr>
     <tr><th>GPU</th><td><select id="ssh-gpu"><option value="">none</option></select></td></tr>
@@ -2332,7 +2344,7 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
     </td></tr>
   </table>
   <input type="hidden" id="ssh-proxy" value="ccswitch">
-  <p class="muted" id="ssh-provider-summary">Using current CC Switch Claude provider: -</p>
+  <p class="muted" id="ssh-provider-summary">Using current CC Switch provider: -</p>
   <p class="muted" id="ssh-proxy-summary">Proxy tunnel: -</p>
   <p class="muted" id="ssh-ccswitch-status">Checking CC Switch...</p>
   <details>
@@ -2340,15 +2352,16 @@ html[data-theme="dark"] .danger{{color:#fca5a5;border-color:#7f1d1d}}
     <fieldset>
       <legend>AI App</legend>
       <label><input type="radio" name="ssh-agent" value="claude" checked> Claude Code</label>
-      <label><input type="radio" name="ssh-agent" value="codex" disabled> Codex <span class="muted">coming soon</span></label>
+      <label><input type="radio" name="ssh-agent" value="codex"> Codex CLI <span class="muted">beta</span></label>
       <label><input type="radio" name="ssh-agent" value="gemini" disabled> Gemini <span class="muted">coming soon</span></label>
+      <label><input type="radio" name="ssh-agent" value="openclaw" disabled> OpenClaw <span class="muted">coming soon</span></label>
     </fieldset>
     <fieldset>
       <legend>Mode</legend>
       <label><input type="radio" name="ssh-ai-mode" value="proxy_tunnel" checked> Proxy Tunnel <span class="muted">recommended, secrets stay local</span></label>
       <label><input type="radio" name="ssh-ai-mode" value="remote_write" disabled> Remote Write <span class="muted">advanced, coming soon</span></label>
     </fieldset>
-    <p class="muted" id="ssh-modal-hint">This flow exports <code>ANTHROPIC_BASE_URL</code> to a per-session gateway tunnel and uses a temporary <code>ANTHROPIC_API_KEY</code> session token. Real provider keys stay local. If SSH exits with remote forwarding failure, the selected remote gateway port may already be in use on that server.</p>
+    <p class="muted" id="ssh-modal-hint">This flow creates a per-session gateway tunnel and temporary app config under remote <code>/tmp</code>. Real provider keys stay local. If SSH exits with remote forwarding failure, the selected remote gateway port may already be in use on that server.</p>
   </details>
   <p id="ssh-modal-result" class="muted"></p>
   <div class="modal-actions">
@@ -2363,6 +2376,8 @@ let selectedStopButton = null;
 let selectedSshButton = null;
 let ccswitchSummary = null;
 let vscodeRecentFolders = [];
+const aiAppLabels = {{claude: "Claude Code", codex: "Codex CLI", gemini: "Gemini", openclaw: "OpenClaw"}};
+const proxyTunnelApps = new Set(["claude", "codex"]);
 const themeButton = document.getElementById("theme-toggle");
 const languageButton = document.getElementById("language-toggle");
 const jsonToggle = document.getElementById("show-json-toggle");
@@ -2759,6 +2774,9 @@ function selectedAgent() {{
   const selected = document.querySelector('input[name="ssh-agent"]:checked');
   return selected ? selected.value : "claude";
 }}
+function aiAppLabel(agent) {{
+  return aiAppLabels[agent] || agent || "AI app";
+}}
 function selectedCcswitchProviderId() {{
   return "";
 }}
@@ -2853,8 +2871,8 @@ function updateCcswitchProviderOptions() {{
   const proxyConfig = activeCcswitchProxyConfig(agent);
   if (providerSummary) {{
     providerSummary.textContent = providerName
-      ? `Using current CC Switch Claude provider: ${{providerName}}. To change provider, use the AI Sessions page or CC Switch.`
-      : "Current CC Switch Claude provider was not found. Switch Claude provider in AI Sessions or CC Switch first.";
+      ? `Using current CC Switch ${{aiAppLabel(agent)}} provider: ${{providerName}}. To change provider, use the AI Sessions page or CC Switch.`
+      : `Current CC Switch ${{aiAppLabel(agent)}} provider was not found. Switch ${{aiAppLabel(agent)}} provider in AI Sessions or CC Switch first.`;
   }}
   if (proxySummary) {{
     proxySummary.textContent = proxyConfig && proxyConfig.listen_port && ccswitchProxyIsListening(proxyConfig)
@@ -2892,8 +2910,8 @@ async function runOpenSsh(button) {{
   const agent = selectedAgent();
   const mode = selectedAiMode();
   const providerName = currentCcswitchProviderName(agent);
-  if (agent !== "claude") {{
-    if (result) result.textContent = "Only Claude Code AI sessions are available in this alpha.";
+  if (!proxyTunnelApps.has(agent)) {{
+    if (result) result.textContent = "Only Claude Code and Codex CLI AI sessions are available in this alpha.";
     return;
   }}
   if (mode !== "proxy_tunnel") {{
@@ -2901,16 +2919,16 @@ async function runOpenSsh(button) {{
     return;
   }}
   if (!providerName) {{
-    if (result) result.textContent = "Current CC Switch Claude provider was not found. Switch Claude provider in AI Sessions or CC Switch first.";
+    if (result) result.textContent = `Current CC Switch ${{aiAppLabel(agent)}} provider was not found. Switch ${{aiAppLabel(agent)}} provider in AI Sessions or CC Switch first.`;
     return;
   }}
   if (!activeCcswitchProxyConfig(agent)) {{
-    if (result) result.textContent = "CC Switch proxy is not running or not configured for Claude. Start CC Switch proxy first, then reopen this session.";
+    if (result) result.textContent = `CC Switch proxy is not running or not configured for ${{aiAppLabel(agent)}}. Start CC Switch proxy first, then reopen this session.`;
     return;
   }}
   const proxyConfig = activeCcswitchProxyConfig(agent);
   if (!ccswitchProxyIsListening(proxyConfig)) {{
-    if (result) result.textContent = `CC Switch proxy is configured but not listening on 127.0.0.1:${{proxyConfig.listen_port}}.`;
+    if (result) result.textContent = `CC Switch ${{aiAppLabel(agent)}} proxy is configured but not listening on 127.0.0.1:${{proxyConfig.listen_port}}.`;
     return;
   }}
   button.textContent = translateText("Opening terminal...", currentLanguage());
@@ -2945,9 +2963,10 @@ async function runOpenSsh(button) {{
 }}
 function rememberAiSession(button, providerName, gateway) {{
   const localPort = selectedLocalProxyPort();
+  const agent = selectedAgent();
   const entry = {{
     server: button.dataset.openSsh || "",
-    app: "Claude Code",
+    app: aiAppLabel(agent),
     provider: providerName || "-",
     ccswitchProxyPort: gateway.ccswitch_proxy_port || localPort,
     localGatewayPort: gateway.local_gateway_port || "-",

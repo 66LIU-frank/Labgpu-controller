@@ -9,7 +9,7 @@
 
 LabGPU 是给学生和研究者个人使用的本地优先 GPU 工作台。它面向共享 SSH GPU
 服务器：帮你找可用 GPU、进入正确服务器和目录、追踪自己的训练、诊断失败，并让远程
-Claude Code 走本机 CC Switch provider，而不是把 API key 写到服务器上。
+Claude Code / Codex CLI 走本机 CC Switch provider，而不是把 API key 写到服务器上。
 
 不需要 root，不需要远程 daemon，不要求 Slurm/Kubernetes，也不需要共享 tracking
 server。
@@ -46,7 +46,7 @@ UI 现在收束成五个主入口：
 | Home | 总览、推荐 GPU、当前任务、问题、保存的服务器。 |
 | Train | 找 GPU、打开终端、查看 `My Runs` 和 `My GPU Processes`。 |
 | Servers | 查看 SSH 服务器、磁盘、GPU、健康状态和分组入口。 |
-| AI Sessions | 查看/切换已有 CC Switch provider，启动远程 Claude Code session。 |
+| AI Sessions | 查看/切换已有 CC Switch provider，启动远程 Claude Code / Codex CLI session。 |
 | Settings | 新增/导入 SSH 服务器，选择保存的服务器，管理分组。 |
 
 次级功能仍然保留：
@@ -58,14 +58,14 @@ UI 现在收束成五个主入口：
 
 ## AI Sessions
 
-LabGPU 可以让远程 Claude Code 使用你本机的 CC Switch provider，同时不把真实 API key
-写到远程服务器。
+LabGPU 可以让远程 Claude Code 和 Codex CLI 使用你本机的 CC Switch provider，同时
+不把真实 API key 写到远程服务器。
 
 当前支持的链路：
 
 ```text
 Enter Server
-  -> Claude Code
+  -> Claude Code 或 Codex CLI
   -> Proxy Tunnel
   -> 本机 LabGPU session gateway
   -> 本机 CC Switch proxy
@@ -79,6 +79,7 @@ Enter Server
 - 打开远程 shell 并进入指定 working directory
 - 创建 SSH reverse tunnel 和 per-session gateway
 - 在远程 `/tmp` 下创建临时 Claude Code wrapper/settings
+- 在远程 `/tmp` 下创建临时 Codex `CODEX_HOME` 和 wrapper（beta）
 - 在远程 shell 里运行只读的 `aiswitch status` / `aiswitch doctor`
 - 真实 provider key 留在本机或 CC Switch
 
@@ -87,7 +88,7 @@ Enter Server
 - 在 LabGPU 里新增带 API key 的 provider
 - 写 provider key 到远程 `~/.claude`、`~/.codex`、`~/.gemini`
 - 多用户 provider vault
-- Codex/Gemini 远程 session launcher
+- Gemini/OpenClaw 远程 session launcher
 
 新增 provider 先在 CC Switch 里做。LabGPU 刷新后会读到它，并可以在已有 provider
 之间切换。切换只更新 CC Switch 本机 current-provider 状态；LabGPU 不创建或保存

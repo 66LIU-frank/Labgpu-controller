@@ -92,13 +92,17 @@ The remote server sees a loopback endpoint such as
 `http://127.0.0.1:REMOTE_GATEWAY_PORT`; the real API key stays on the laptop or
 in the local provider tool. The remote endpoint points to a session-scoped
 LabGPU gateway, not directly to CC Switch. Claude Code sessions export a
-temporary `ANTHROPIC_API_KEY=labgpu-session-*` token that the gateway validates
-before forwarding to CC Switch. The gateway strips this token before it reaches
-the local proxy, and LabGPU does not copy API keys into the remote home
-directory for this workflow. For Claude Code, LabGPU may create a mode-700
-temporary directory under `/tmp/labgpu-ai-*` containing a per-session
-`--settings` file and wrapper script so `claude` uses the tunnel base URL. That
-temporary file contains only the session token, not the real provider key.
+temporary `ANTHROPIC_API_KEY=labgpu-session-*` token, and Codex CLI sessions use
+a temporary `OPENAI_API_KEY=labgpu-session-*` token. The gateway validates the
+token before forwarding to CC Switch, strips it before it reaches the local
+proxy, and LabGPU does not copy API keys into the remote home directory for this
+workflow. For Claude Code, LabGPU may create a mode-700 temporary directory
+under `/tmp/labgpu-ai-*` containing a per-session `--settings` file and wrapper
+script so `claude` uses the tunnel base URL. For Codex CLI, LabGPU creates a
+temporary `CODEX_HOME` and wrapper under the same `/tmp/labgpu-ai-*` directory
+with only `auth.json` and `config.toml` for the session gateway. These temporary
+files contain only the session token, not the real provider key, and LabGPU does
+not write remote `~/.codex` in Proxy Tunnel mode.
 
 The session token is not a provider key, but it is still a temporary capability
 token while the gateway is alive. On shared Linux accounts, other processes

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from labgpu.remote.ai_gateway import AIGatewaySession, start_ai_gateway
-from labgpu.remote.ai_session import DEFAULT_AI_PATH_PREFIXES, EnterServerAIRequest, build_ai_ssh_command, build_path_export, normalized_remote_command_path, normalized_remote_cwd, normalized_remote_path_prefixes
+from labgpu.remote.ai_session import AI_APP_LABELS, DEFAULT_AI_PATH_PREFIXES, EnterServerAIRequest, SUPPORTED_AI_APPS, build_ai_ssh_command, build_path_export, normalized_remote_command_path, normalized_remote_cwd, normalized_remote_path_prefixes
 from labgpu.remote.audit import append_audit
 from labgpu.remote.probe import probe_host
 from labgpu.remote.ssh_config import SSHHost
@@ -45,6 +45,7 @@ fi
 SAFE_SSH_ALIAS_RE = re.compile(r"^[A-Za-z0-9_.@-]+$")
 AI_SESSION_TOKEN_RE = re.compile(r"labgpu-session-[A-Za-z0-9_-]{24,}")
 SUPPORTED_TERMINAL_AGENTS = {"none", "codex", "claude", "gemini", "openclaw"}
+AI_PROXY_TUNNEL_AGENTS = set(SUPPORTED_AI_APPS)
 AI_GATEWAY_SESSIONS: list[AIGatewaySession] = []
 
 
@@ -181,17 +182,17 @@ def open_ssh_terminal(
         port_state = is_local_tcp_port_open(ccswitch_proxy_port) if ccswitch_proxy_port else True
         if ccswitch_proxy_port and port_state is False:
             message = f"Local proxy port 127.0.0.1:{ccswitch_proxy_port} is not listening."
-            if normalized_agent == "claude" and ai_mode == "proxy_tunnel":
-                message = f"CC Switch proxy is configured but not listening on 127.0.0.1:{ccswitch_proxy_port}."
+            if normalized_agent in AI_PROXY_TUNNEL_AGENTS and ai_mode == "proxy_tunnel":
+                message = f"CC Switch {ai_agent_label(normalized_agent)} proxy is configured but not listening on 127.0.0.1:{ccswitch_proxy_port}."
             return {
                 "ok": False,
                 "result": "local_proxy_not_listening",
                 "message": message,
                 "server": alias,
             }
-        if normalized_agent == "claude" and ai_mode == "proxy_tunnel":
+        if normalized_agent in AI_PROXY_TUNNEL_AGENTS and ai_mode == "proxy_tunnel":
             if not ccswitch_proxy_port:
-                raise ValueError("Claude Code Proxy Tunnel requires a CC Switch proxy port.")
+                raise ValueError(f"{ai_agent_label(normalized_agent)} Proxy Tunnel requires a CC Switch proxy port.")
             gateway = start_ai_gateway(
                 target_port=ccswitch_proxy_port,
                 metadata={
@@ -284,7 +285,7 @@ def open_ssh_terminal(
         return terminal_result(host, "open_error", ok=False, message=str(exc), command=redacted_command)
 
     message = f"Opening SSH terminal for {alias}."
-    if normalize_terminal_agent(agent) == "claude" and ai_mode == "proxy_tunnel" and remote_gateway_port:
+    if normalize_terminal_agent(agent) in AI_PROXY_TUNNEL_AGENTS and ai_mode == "proxy_tunnel" and remote_gateway_port:
         message = (
             f"Opening SSH terminal for {alias}. If SSH reports remote port forwarding failed, "
             f"remote gateway port {remote_gateway_port} may already be in use on this server."
@@ -360,17 +361,17 @@ def build_ssh_terminal_argv(
     ssh_options, ssh_target = isolated_ssh_args(host) if host and local_port and remote_port else ([], alias)
     remote_path_prefixes = ai_path_prefixes_for_host(host)
     claude_command = normalized_remote_command_path(host.claude_command) if host else None
-    if normalized_agent == "claude" and ai_mode == "proxy_tunnel":
+    if normalized_agent in AI_PROXY_TUNNEL_AGENTS and ai_mode == "proxy_tunnel":
         if not local_port or not remote_port:
-            raise ValueError("Claude Code Proxy Tunnel requires a CC Switch proxy port and remote gateway port.")
+            raise ValueError(f"{ai_agent_label(normalized_agent)} Proxy Tunnel requires a CC Switch proxy port and remote gateway port.")
         gateway_port = normalize_proxy_port(local_gateway_port)
         if not gateway_port:
-            raise ValueError("Claude Code Proxy Tunnel requires a local AI gateway port.")
+            raise ValueError(f"{ai_agent_label(normalized_agent)} Proxy Tunnel requires a local AI gateway port.")
         return build_ai_ssh_command(
             EnterServerAIRequest(
                 server_alias=alias,
                 gpu_index=str(gpu_index or ""),
-                ai_app="claude",
+                ai_app=normalized_agent,
                 provider_name=str(provider_name or ""),
                 ccswitch_proxy_port=local_port,
                 local_gateway_port=gateway_port,
@@ -450,6 +451,10 @@ def normalize_terminal_agent(value: str | None) -> str:
     if agent not in SUPPORTED_TERMINAL_AGENTS:
         raise ValueError("Unsupported terminal launcher.")
     return agent
+
+
+def ai_agent_label(agent: str) -> str:
+    return AI_APP_LABELS.get(agent, agent)
 
 
 def normalize_proxy_port(value: str | int | None) -> int | None:

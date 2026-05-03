@@ -167,6 +167,28 @@ class RemoteActionsTest(unittest.TestCase):
         self.assertIn("cd /data/lsg/work/OPSD || exit 1", argv[7])
         self.assertNotIn("SECRET", " ".join(argv))
 
+    def test_build_ssh_terminal_command_for_codex_ai_proxy_tunnel(self):
+        argv = build_ssh_terminal_argv(
+            "alpha_liu",
+            local_proxy_port="15721",
+            remote_proxy_port="27183",
+            agent="codex",
+            ai_mode="proxy_tunnel",
+            provider_name="OpenAI",
+            remote_cwd="/data/lsg/work/OPSD",
+            local_gateway_port="49231",
+            session_token=SESSION_TOKEN,
+        )
+        self.assertEqual(argv[:6], ["ssh", "-tt", "-o", "ExitOnForwardFailure=yes", "-R", "127.0.0.1:27183:127.0.0.1:49231"])
+        self.assertEqual(argv[6], "alpha_liu")
+        self.assertIn("LABGPU_AI_APP=codex", argv[7])
+        self.assertIn("OPENAI_BASE_URL=http://127.0.0.1:27183", argv[7])
+        self.assertIn(f"OPENAI_API_KEY={SESSION_TOKEN}", argv[7])
+        self.assertIn("CODEX_HOME", argv[7])
+        self.assertIn("auth.json", argv[7])
+        self.assertNotIn("~/.codex", argv[7])
+        self.assertNotIn("SECRET", " ".join(argv))
+
     def test_build_ssh_terminal_command_can_isolate_config_forwardings(self):
         host = SSHHost(alias="alpha_liu", hostname="210.45.70.34", user="lsg", port="22", options={"remoteforward": "127.0.0.1:29890 127.0.0.1:33210"})
         argv = build_ssh_terminal_argv(
@@ -205,8 +227,40 @@ class RemoteActionsTest(unittest.TestCase):
             )
         self.assertFalse(result["ok"])
         self.assertEqual(result["result"], "local_proxy_not_listening")
-        self.assertIn("CC Switch proxy is configured but not listening on 127.0.0.1:15721", result["message"])
+        self.assertIn("CC Switch Claude Code proxy is configured but not listening on 127.0.0.1:15721", result["message"])
         run.assert_not_called()
+
+    def test_open_ssh_terminal_starts_gateway_for_codex_proxy_tunnel(self):
+        host = SSHHost(alias="alpha_liu")
+        gateway = FakeGateway()
+
+        class Result:
+            returncode = 0
+            stderr = ""
+
+        with (
+            patch("labgpu.remote.actions.sys.platform", "darwin"),
+            patch("labgpu.remote.actions.is_local_tcp_port_open", return_value=True),
+            patch("labgpu.remote.actions.start_ai_gateway", return_value=gateway) as start_gateway,
+            patch("labgpu.remote.actions.AI_GATEWAY_SESSIONS", []),
+            patch("labgpu.remote.actions.write_terminal_launch_script", return_value=Path("/tmp/labgpu-open.sh")),
+            patch("labgpu.remote.actions.subprocess.run", return_value=Result()),
+            patch("labgpu.remote.actions.append_audit"),
+        ):
+            result = open_ssh_terminal(
+                host,
+                local_proxy_port="15721",
+                remote_proxy_port="27183",
+                agent="codex",
+                ai_mode="proxy_tunnel",
+                provider_name="OpenAI",
+            )
+        self.assertTrue(result["ok"])
+        metadata = start_gateway.call_args.kwargs["metadata"]
+        self.assertEqual(metadata["app"], "codex")
+        self.assertEqual(metadata["provider"], "OpenAI")
+        self.assertEqual(result["ai_gateway"]["ccswitch_proxy_port"], 15721)
+        self.assertNotIn(SESSION_TOKEN, result["command"])
 
     def test_open_ssh_terminal_mentions_remote_proxy_port_conflict(self):
         host = SSHHost(alias="alpha_liu")

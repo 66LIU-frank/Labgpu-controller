@@ -137,8 +137,11 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn('value="ccswitch"', html)
         self.assertIn("AI App", html)
         self.assertIn('value="claude" checked', html)
-        self.assertIn('value="codex" disabled', html)
+        self.assertIn('value="codex"', html)
+        self.assertIn("Codex CLI", html)
+        self.assertNotIn('value="codex" disabled', html)
         self.assertIn('value="gemini" disabled', html)
+        self.assertIn('value="openclaw" disabled', html)
         self.assertIn("Proxy Tunnel", html)
         self.assertIn('value="remote_write" disabled', html)
         self.assertIn("ssh-ccswitch-status", html)
@@ -146,7 +149,7 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn("Working directory", html)
         self.assertIn("ssh-remote-cwd", html)
         self.assertIn("/api/integrations/vscode/recent-folders", html)
-        self.assertIn("ANTHROPIC_BASE_URL", html)
+        self.assertIn("temporary app config", html)
         self.assertIn("selected remote gateway port may already be in use", html)
         filtered = filter_available_gpu_items(data["overview"]["available_gpu_items"], {"min_mem_gb": "80", "model": "A100"})
         self.assertEqual(filtered[0]["server"], "alpha_liu")
@@ -205,6 +208,7 @@ class DashboardPagesTest(unittest.TestCase):
             },
             "proxy": {
                 "claude": {"listen_address": "127.0.0.1", "listen_port": 15721, "enabled": True, "proxy_enabled": True, "listening": True},
+                "codex": {"listen_address": "127.0.0.1", "listen_port": 15722, "enabled": True, "proxy_enabled": True, "listening": True},
             },
         }
         with patch("labgpu.remote.dashboard.read_ccswitch_summary", return_value=summary):
@@ -217,13 +221,17 @@ class DashboardPagesTest(unittest.TestCase):
         self.assertIn("Recent AI Sessions", html)
         self.assertIn('class="ccswitch-switch-form"', html)
         self.assertIn('data-app="claude"', html)
+        self.assertIn('data-app="codex"', html)
         self.assertIn('name="provider_id"', html)
         self.assertIn("Switch provider", html)
         self.assertIn("Add new providers in CC Switch", html)
         self.assertIn("Switching updates CC Switch local current-provider state only", html)
         self.assertIn("Keys stay in CC Switch", html)
         self.assertIn("PackyCode", html)
+        self.assertIn("Codex CLI", html)
+        self.assertIn("temporary remote", html)
         self.assertIn("127.0.0.1:15721", html)
+        self.assertIn("127.0.0.1:15722", html)
         self.assertIn("TCP check", html)
         self.assertIn("listening", html)
         self.assertIn("real API keys stay local", html)
