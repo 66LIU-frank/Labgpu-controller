@@ -71,7 +71,7 @@ Enter Server
   -> Claude Code or Codex CLI
   -> Proxy Tunnel
   -> local LabGPU session gateway
-  -> local CC Switch proxy for Claude, or selected CC Switch Codex provider directly
+  -> selected CC Switch provider through the local LabGPU gateway
   -> current provider
 ```
 
@@ -84,8 +84,8 @@ What works now:
 - create an SSH reverse tunnel with a per-session gateway
 - inject a temporary Claude Code wrapper/settings file under remote `/tmp`
 - inject a temporary Codex `CODEX_HOME` and wrapper under remote `/tmp` (beta)
-- use the selected CC Switch Codex provider config locally when CC Switch's
-  Codex proxy route cannot supply a usable `base_url`
+- use the selected CC Switch Claude/Codex provider config locally inside the
+  gateway, without copying real provider keys to the remote server
 - detect common remote AI CLI locations and allow per-server command overrides
 - optionally back up and overwrite remote Claude/Codex config for the current
   gateway session, without copying real provider keys
@@ -104,8 +104,8 @@ What is intentionally not built into LabGPU yet:
 
 Add new providers in CC Switch for now. LabGPU will show them after refresh and
 can switch among existing providers without reading their secrets. Switching is
-limited to CC Switch's current-provider settings and database flag. For Codex
-Proxy Tunnel, LabGPU may read the selected CC Switch Codex provider key locally
+limited to CC Switch's current-provider settings and database flag. For
+Claude/Codex Proxy Tunnel, LabGPU may read the selected CC Switch provider key locally
 inside the session gateway so remote servers still receive only a
 `labgpu-session-*` token. LabGPU does not create or store provider keys.
 
@@ -322,8 +322,8 @@ Safe stop actions:
 AI session safety:
 
 - LabGPU reads provider names, current selections, and proxy ports for summary/switching
-- real provider keys stay in CC Switch or local provider tooling; Codex Proxy
-  Tunnel may use the selected CC Switch Codex key inside the local gateway only
+- real provider keys stay in CC Switch or local provider tooling; Claude/Codex
+  Proxy Tunnel may use the selected CC Switch provider key inside the local gateway only
 - remote servers receive only a temporary `labgpu-session-*` token
 - the local gateway validates the token before forwarding
 - Remote Config Override backs up remote Claude/Codex config and writes only the

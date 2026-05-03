@@ -27,7 +27,7 @@ class EnterServerAIRequest:
     gpu_index: str | None
     ai_app: str
     provider_name: str
-    ccswitch_proxy_port: int
+    ccswitch_proxy_port: int | None
     local_gateway_port: int
     remote_gateway_port: int
     session_token: str
@@ -131,6 +131,11 @@ def build_ai_ssh_command(request: EnterServerAIRequest) -> EnterServerAICommand:
             ]
         )
     ssh_args.extend([request.ssh_target or request.server_alias, remote_command])
+    upstream_summary = (
+        f"CC Switch 127.0.0.1:{request.ccswitch_proxy_port}"
+        if request.ccswitch_proxy_port
+        else "selected provider"
+    )
     network_summary = ""
     if request.network_proxy_local_port and request.network_proxy_remote_port:
         network_summary = (
@@ -143,7 +148,7 @@ def build_ai_ssh_command(request: EnterServerAIRequest) -> EnterServerAICommand:
         display_summary=(
             f"{request.server_alias} / {ai_app_label(request.ai_app)} / {request.provider_name} / "
             f"Proxy Tunnel remote 127.0.0.1:{request.remote_gateway_port} -> "
-            f"local gateway 127.0.0.1:{request.local_gateway_port} -> CC Switch 127.0.0.1:{request.ccswitch_proxy_port}"
+            f"local gateway 127.0.0.1:{request.local_gateway_port} -> {upstream_summary}"
             f"{network_summary}"
         ),
         token_fingerprint=request.session_token[-8:],
@@ -588,7 +593,8 @@ def validate_request(request: EnterServerAIRequest) -> None:
         raise ValueError("SSH target is required.")
     if any(not isinstance(item, str) or not item for item in request.ssh_options):
         raise ValueError("SSH options must be non-empty argv strings.")
-    validate_port(request.ccswitch_proxy_port, "CC Switch proxy port")
+    if request.ccswitch_proxy_port is not None:
+        validate_port(request.ccswitch_proxy_port, "CC Switch proxy port")
     validate_port(request.local_gateway_port, "Local gateway port")
     validate_port(request.remote_gateway_port, "Remote gateway port")
     validate_network_proxy_pair(request.network_proxy_local_port, request.network_proxy_remote_port)

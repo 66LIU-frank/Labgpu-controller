@@ -22,15 +22,14 @@ This smoke test covers:
 ## Security Model
 
 - LabGPU does not copy provider secrets to the remote server in Proxy Tunnel
-  mode. Claude uses the local provider proxy. Codex may read the selected CC
-  Switch Codex provider key locally inside the LabGPU gateway when direct
-  provider forwarding is needed.
+  mode. Claude/Codex may read the selected CC Switch provider key locally inside
+  the LabGPU gateway when direct provider forwarding is needed.
 - Remote servers receive only a temporary `labgpu-session-*` access token.
 - Remote Claude Code or Codex CLI talks to a LabGPU gateway through an SSH
   reverse tunnel.
-- The gateway validates the session token before forwarding to CC Switch.
+- The gateway validates the session token before forwarding.
 - The gateway is bound to `127.0.0.1` on the laptop.
-- The gateway strips the session token before forwarding to CC Switch.
+- The gateway strips the session token before forwarding upstream.
 - Streaming responses such as `text/event-stream` are forwarded incrementally.
 - Gateways have an idle timeout and a hard lifetime so abandoned sessions do
   not keep a local port open forever.
@@ -50,8 +49,8 @@ keeps real provider secrets local, but it is not strong account isolation.
 ## Prerequisites
 
 1. CC Switch is installed and has a current provider for the selected app.
-2. For Codex tests, CC Switch has a current Codex provider with API key and
-   `base_url` in its provider config.
+2. For Claude/Codex tests, CC Switch has a current provider with API key/token
+   and base URL in its provider config.
 3. The selected CC Switch app proxy is enabled and listening on loopback,
    usually:
 
@@ -272,7 +271,7 @@ streaming/output behavior in the same way as Claude.
 
 ## Expected Failure Modes
 
-If the local proxy is configured but not listening, LabGPU should report:
+If a local proxy-backed app is configured but not listening, LabGPU should report:
 
 ```text
 CC Switch proxy is configured but not listening on 127.0.0.1:<port>.

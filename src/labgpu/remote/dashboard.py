@@ -1281,7 +1281,7 @@ def render_providers_page() -> str:
           <p class="muted">{esc(summary.get("message") or "")} Choose existing providers and check the CC Switch routing port. Add new providers and API keys in CC Switch for now.</p>
           {console_tabs}
           <div class="provider-grid">{cards}</div>
-          <p class="muted">LabGPU reads provider names, current selections, and proxy ports for summary/switching. Codex Proxy Tunnel may use the selected CC Switch Codex key inside the local gateway only; remote servers still receive only a session token.</p>
+          <p class="muted">LabGPU reads provider names, current selections, and proxy ports for summary/switching. Claude/Codex Proxy Tunnel may use the selected CC Switch provider key inside the local gateway only; remote servers still receive only a session token.</p>
         </section>
         """,
         json_href="/api/integrations/ccswitch",
@@ -3332,8 +3332,8 @@ function updateCcswitchProviderOptions() {{
       : `Current CC Switch ${{aiAppLabel(agent)}} provider was not found. Switch ${{aiAppLabel(agent)}} provider in AI Config Console or CC Switch first.`;
   }}
   if (proxySummary) {{
-    proxySummary.textContent = proxyConfig && proxyConfig.listen_port && agent === "codex"
-      ? `${{modeLabel}}: remote random port -> local LabGPU gateway -> selected CC Switch Codex provider`
+    proxySummary.textContent = proxyTunnelApps.has(agent)
+      ? `${{modeLabel}}: remote random port -> local LabGPU gateway -> selected CC Switch ${{aiAppLabel(agent)}} provider`
       : proxyConfig && proxyConfig.listen_port && ccswitchProxyIsListening(proxyConfig)
         ? `${{modeLabel}}: remote random port -> local LabGPU gateway -> CC Switch 127.0.0.1:${{proxyConfig.listen_port}}`
       : proxyConfig && proxyConfig.listen_port
@@ -3413,12 +3413,8 @@ async function runOpenSsh(button) {{
     if (result) result.textContent = `Current CC Switch ${{aiAppLabel(agent)}} provider was not found. Switch ${{aiAppLabel(agent)}} provider in AI Config Console or CC Switch first.`;
     return;
   }}
-  if (!activeCcswitchProxyConfig(agent)) {{
-    if (result) result.textContent = `CC Switch proxy is not running or not configured for ${{aiAppLabel(agent)}}. Start CC Switch proxy first, then reopen this session.`;
-    return;
-  }}
   const proxyConfig = activeCcswitchProxyConfig(agent);
-  if (!ccswitchProxyIsListening(proxyConfig) && agent !== "codex") {{
+  if (proxyConfig && !ccswitchProxyIsListening(proxyConfig) && !proxyTunnelApps.has(agent)) {{
     if (result) result.textContent = `CC Switch ${{aiAppLabel(agent)}} proxy is configured but not listening on 127.0.0.1:${{proxyConfig.listen_port}}.`;
     return;
   }}

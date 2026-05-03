@@ -176,10 +176,22 @@ def read_codex_provider_runtime(provider_id: str | None = None, home: str | Path
     non-secret. The returned API key is for local gateway forwarding only and
     must never be rendered in UI, logs, commands, or remote shell env.
     """
+    return read_ai_provider_runtime("codex", provider_id, home)
+
+
+def read_claude_provider_runtime(provider_id: str | None = None, home: str | Path | None = None) -> dict[str, Any]:
+    """Read the selected Claude provider runtime config for local gateway forwarding."""
+    return read_ai_provider_runtime("claude", provider_id, home)
+
+
+def read_ai_provider_runtime(app_type: str, provider_id: str | None = None, home: str | Path | None = None) -> dict[str, Any]:
+    app = str(app_type or "").strip().lower()
+    if app not in {"claude", "codex"}:
+        raise CcSwitchError("Only Claude and Codex provider runtime config is supported.")
     db_path = ccswitch_db_path(home)
     if not db_path.exists():
         raise CcSwitchError("CC Switch database was not found.")
-    settings_current = read_current_provider_settings(home).get("codex", "")
+    settings_current = read_current_provider_settings(home).get(app, "")
     selected_id = str(provider_id or settings_current or "").strip()
     try:
         conn = sqlite3.connect(db_path, timeout=1.0)
@@ -191,44 +203,73 @@ def read_codex_provider_runtime(provider_id: str | None = None, home: str | Path
         if selected_id:
             row = conn.execute(
                 "SELECT id, name, settings_config FROM providers WHERE app_type = ? AND id = ?",
-                ("codex", selected_id),
+                (app, selected_id),
             ).fetchone()
         else:
             row = conn.execute(
                 "SELECT id, name, settings_config FROM providers WHERE app_type = ? AND is_current = 1",
-                ("codex",),
+                (app,),
             ).fetchone()
         if not row:
-            raise CcSwitchError("Selected Codex provider was not found.")
+            raise CcSwitchError(f"Selected {app} provider was not found.")
         provider_id_value = str(row[0] or "")
         provider_name = str(row[1] or "")
         settings = parse_provider_settings_config(row[2])
-        auth = normalize_provider_mapping(settings.get("auth"))
-        config_text = str(settings.get("config") or "")
-        config = parse_codex_config_toml(config_text)
-        api_key = str(auth.get("OPENAI_API_KEY") or auth.get("api_key") or "").strip()
-        base_url = codex_config_base_url(config)
-        model = str(config.get("model") or "").strip()
-        model_provider = str(config.get("model_provider") or "").strip()
-        if not api_key:
-            raise CcSwitchError(f"Codex provider {provider_name or provider_id_value} does not have an API key in CC Switch.")
-        if not base_url:
-            raise CcSwitchError(f"Codex provider {provider_name or provider_id_value} does not have base_url in CC Switch.")
-        return {
-            "app": "codex",
-            "provider_id": provider_id_value,
-            "provider": provider_name,
-            "base_url": base_url,
-            "api_key": api_key,
-            "model": model,
-            "model_provider": model_provider,
-            "secret_access": True,
-            "secret_scope": "local_gateway_only",
-        }
+        if app == "claude":
+            runtime = claude_provider_runtime_from_settings(provider_id_value, provider_name, settings)
+        else:
+            runtime = codex_provider_runtime_from_settings(provider_id_value, provider_name, settings)
+        runtime["app"] = app
+        runtime["provider_id"] = provider_id_value
+        runtime["provider"] = provider_name
+        runtime["secret_access"] = True
+        runtime["secret_scope"] = "local_gateway_only"
+        return runtime
     except sqlite3.Error as exc:
-        raise CcSwitchError(f"Could not read CC Switch Codex provider: {exc}") from exc
+        raise CcSwitchError(f"Could not read CC Switch {app} provider: {exc}") from exc
     finally:
         conn.close()
+
+
+def claude_provider_runtime_from_settings(provider_id: str, provider_name: str, settings: dict[str, Any]) -> dict[str, Any]:
+    env = normalize_provider_mapping(settings.get("env"))
+    base_url = str(env.get("ANTHROPIC_BASE_URL") or env.get("base_url") or "").strip()
+    api_key = str(env.get("ANTHROPIC_API_KEY") or "").strip()
+    auth_token = str(env.get("ANTHROPIC_AUTH_TOKEN") or "").strip()
+    model = str(settings.get("model") or "").strip()
+    if not base_url:
+        raise CcSwitchError(f"Claude provider {provider_name or provider_id} does not have ANTHROPIC_BASE_URL in CC Switch.")
+    if not api_key and not auth_token:
+        raise CcSwitchError(f"Claude provider {provider_name or provider_id} does not have an API key/token in CC Switch.")
+    headers = {"x-api-key": api_key} if api_key else {"Authorization": f"Bearer {auth_token}"}
+    return {
+        "base_url": base_url,
+        "api_key": api_key or auth_token,
+        "auth_header": "x-api-key" if api_key else "Authorization",
+        "upstream_headers": headers,
+        "model": model,
+    }
+
+
+def codex_provider_runtime_from_settings(provider_id: str, provider_name: str, settings: dict[str, Any]) -> dict[str, Any]:
+    auth = normalize_provider_mapping(settings.get("auth"))
+    config_text = str(settings.get("config") or "")
+    config = parse_codex_config_toml(config_text)
+    api_key = str(auth.get("OPENAI_API_KEY") or auth.get("api_key") or "").strip()
+    base_url = codex_config_base_url(config)
+    model = str(config.get("model") or "").strip()
+    model_provider = str(config.get("model_provider") or "").strip()
+    if not api_key:
+        raise CcSwitchError(f"Codex provider {provider_name or provider_id} does not have an API key in CC Switch.")
+    if not base_url:
+        raise CcSwitchError(f"Codex provider {provider_name or provider_id} does not have base_url in CC Switch.")
+    return {
+        "base_url": base_url,
+        "api_key": api_key,
+        "upstream_headers": {"Authorization": f"Bearer {api_key}"},
+        "model": model,
+        "model_provider": model_provider,
+    }
 
 
 def parse_provider_settings_config(value: Any) -> dict[str, Any]:

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from labgpu.remote.ccswitch import read_ccswitch_summary, read_codex_provider_runtime, sqlite_truthy, switch_ccswitch_provider
+from labgpu.remote.ccswitch import read_ccswitch_summary, read_claude_provider_runtime, read_codex_provider_runtime, sqlite_truthy, switch_ccswitch_provider
 
 
 class CcSwitchTest(unittest.TestCase):
@@ -126,6 +126,38 @@ class CcSwitchTest(unittest.TestCase):
         self.assertEqual(runtime["base_url"], "https://www.dmxapi.com/v1")
         self.assertEqual(runtime["api_key"], "sk-secret")
         self.assertEqual(runtime["model"], "gpt-5.4")
+        self.assertTrue(runtime["secret_access"])
+        self.assertEqual(runtime["secret_scope"], "local_gateway_only")
+
+    def test_reads_claude_runtime_for_local_gateway_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_dir = Path(tmp) / ".cc-switch"
+            db_dir.mkdir()
+            db_path = db_dir / "cc-switch.db"
+            settings_config = {
+                "env": {
+                    "ANTHROPIC_AUTH_TOKEN": "sk-ant-secret",
+                    "ANTHROPIC_BASE_URL": "https://www.dmxapi.com",
+                },
+                "model": "opus",
+            }
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                "CREATE TABLE providers (id TEXT, app_type TEXT, name TEXT, settings_config TEXT, is_current BOOLEAN DEFAULT 0, PRIMARY KEY(id, app_type))"
+            )
+            conn.execute("INSERT INTO providers VALUES (?, ?, ?, ?, ?)", ("claude-dmx", "claude", "DMXAPI", json.dumps(settings_config), 1))
+            conn.commit()
+            conn.close()
+            (db_dir / "settings.json").write_text(json.dumps({"currentProviderClaude": "claude-dmx"}), encoding="utf-8")
+
+            runtime = read_claude_provider_runtime(home=tmp)
+
+        self.assertEqual(runtime["provider"], "DMXAPI")
+        self.assertEqual(runtime["base_url"], "https://www.dmxapi.com")
+        self.assertEqual(runtime["api_key"], "sk-ant-secret")
+        self.assertEqual(runtime["auth_header"], "Authorization")
+        self.assertEqual(runtime["upstream_headers"], {"Authorization": "Bearer sk-ant-secret"})
+        self.assertEqual(runtime["model"], "opus")
         self.assertTrue(runtime["secret_access"])
         self.assertEqual(runtime["secret_scope"], "local_gateway_only")
 

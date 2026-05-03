@@ -17,7 +17,7 @@ from typing import Any
 from labgpu.remote.ai_gateway import AIGatewaySession, start_ai_gateway
 from labgpu.remote.ai_session import AI_APP_LABELS, DEFAULT_AI_PATH_PREFIXES, EnterServerAIRequest, SUPPORTED_AI_APPS, build_ai_ssh_command, build_network_proxy_url, build_path_export, normalized_remote_command_path, normalized_remote_cwd, normalized_remote_path_prefixes
 from labgpu.remote.audit import append_audit
-from labgpu.remote.ccswitch import CcSwitchError, read_codex_provider_runtime
+from labgpu.remote.ccswitch import CcSwitchError, read_ai_provider_runtime
 from labgpu.remote.probe import probe_host
 from labgpu.remote.ssh_config import SSHHost
 from labgpu.remote.state import annotate_server
@@ -189,16 +189,19 @@ def open_ssh_terminal(
             proxy_port=proxy_port,
             local_proxy_port=local_proxy_port,
             remote_proxy_port=remote_proxy_port,
+            allow_remote_only=normalized_agent in AI_PROXY_TUNNEL_AGENTS and ai_mode in AI_SESSION_MODES,
         )
-        codex_direct_runtime: dict[str, Any] | None = None
-        if normalized_agent == "codex" and ai_mode in AI_SESSION_MODES:
+        direct_runtime: dict[str, Any] | None = None
+        if normalized_agent in {"claude", "codex"} and ai_mode in AI_SESSION_MODES:
             try:
-                codex_direct_runtime = read_codex_provider_runtime(provider_id)
-                provider_name = str(codex_direct_runtime.get("provider") or provider_name or "")
+                direct_runtime = read_ai_provider_runtime(normalized_agent, provider_id)
+                provider_name = str(direct_runtime.get("provider") or provider_name or "")
             except CcSwitchError as exc:
                 raise ValueError(str(exc)) from exc
+            if remote_gateway_port is None:
+                remote_gateway_port = choose_remote_proxy_port()
         port_state = is_local_tcp_port_open(ccswitch_proxy_port) if ccswitch_proxy_port else True
-        if ccswitch_proxy_port and port_state is False and codex_direct_runtime is None:
+        if ccswitch_proxy_port and port_state is False and direct_runtime is None:
             message = f"Local proxy port 127.0.0.1:{ccswitch_proxy_port} is not listening."
             if normalized_agent in AI_PROXY_TUNNEL_AGENTS and ai_mode in AI_SESSION_MODES:
                 message = f"CC Switch {ai_agent_label(normalized_agent)} proxy is configured but not listening on 127.0.0.1:{ccswitch_proxy_port}."
@@ -224,7 +227,7 @@ def open_ssh_terminal(
                     "server": alias,
                 }
         if normalized_agent in AI_PROXY_TUNNEL_AGENTS and ai_mode in AI_SESSION_MODES:
-            if not ccswitch_proxy_port:
+            if not ccswitch_proxy_port and direct_runtime is None:
                 raise ValueError(f"{ai_agent_label(normalized_agent)} AI session requires a CC Switch proxy port.")
             gateway_kwargs: dict[str, Any] = {
                 "target_port": ccswitch_proxy_port,
@@ -234,14 +237,14 @@ def open_ssh_terminal(
                     "provider": provider_name or "",
                     "server": alias,
                     "remote_cwd": remote_cwd or "",
-                    "ccswitch_proxy_port": ccswitch_proxy_port,
+                    "ccswitch_proxy_port": ccswitch_proxy_port or "",
                 },
             }
-            if codex_direct_runtime is not None:
+            if direct_runtime is not None:
                 gateway_kwargs.update(
                     {
-                        "target_base_url": str(codex_direct_runtime["base_url"]),
-                        "upstream_headers": {"Authorization": f"Bearer {codex_direct_runtime['api_key']}"},
+                        "target_base_url": str(direct_runtime["base_url"]),
+                        "upstream_headers": dict(direct_runtime["upstream_headers"]),
                     }
                 )
                 gateway_kwargs["metadata"]["upstream"] = "ccswitch_provider_direct"
@@ -338,13 +341,13 @@ def open_ssh_terminal(
     if network_remote_port:
         message += f" Network Tunnel: remote 127.0.0.1:{network_remote_port} -> local proxy 127.0.0.1:{network_local_port}."
     payload = terminal_result(host, "opened", ok=True, message=message, command=redacted_command)
-    if gateway and ccswitch_proxy_port and remote_gateway_port:
+    if gateway and remote_gateway_port:
         payload["ai_gateway"] = {
             "local_gateway_port": gateway.listen_port,
             "remote_gateway_port": remote_gateway_port,
             "ccswitch_proxy_port": ccswitch_proxy_port,
             "token_fingerprint": gateway.token_fingerprint,
-            "upstream_label": f"CC Switch Codex provider {provider_name}" if codex_direct_runtime else f"CC Switch 127.0.0.1:{ccswitch_proxy_port}",
+            "upstream_label": f"CC Switch {ai_agent_label(normalized_agent)} provider {provider_name}" if direct_runtime else f"CC Switch 127.0.0.1:{ccswitch_proxy_port}",
         }
         cwd = normalized_remote_cwd(remote_cwd)
         if cwd is not None:
@@ -416,19 +419,21 @@ def build_ssh_terminal_argv(
         proxy_port=proxy_port,
         local_proxy_port=local_proxy_port,
         remote_proxy_port=remote_proxy_port,
+        allow_remote_only=normalized_agent in AI_PROXY_TUNNEL_AGENTS and ai_mode in AI_SESSION_MODES,
     )
     network_local_port, network_remote_port = normalize_proxy_ports(
         local_proxy_port=network_local_proxy_port,
         remote_proxy_port=network_remote_proxy_port,
     )
-    forward_requested = bool((local_port and remote_port) or (network_local_port and network_remote_port))
+    ai_forward_requested = normalized_agent in AI_PROXY_TUNNEL_AGENTS and ai_mode in AI_SESSION_MODES and bool(remote_port)
+    forward_requested = bool((local_port and remote_port) or ai_forward_requested or (network_local_port and network_remote_port))
     ssh_options, ssh_target = isolated_ssh_args(host) if host and forward_requested else ([], alias)
     remote_path_prefixes = ai_path_prefixes_for_host(host)
     claude_command = normalized_remote_command_path(host.claude_command) if host else None
     codex_command = normalized_remote_command_path(host.codex_command) if host else None
     if normalized_agent in AI_PROXY_TUNNEL_AGENTS and ai_mode in AI_SESSION_MODES:
-        if not local_port or not remote_port:
-            raise ValueError(f"{ai_agent_label(normalized_agent)} AI session requires a CC Switch proxy port and remote gateway port.")
+        if not remote_port:
+            remote_port = choose_remote_proxy_port()
         gateway_port = normalize_proxy_port(local_gateway_port)
         if not gateway_port:
             raise ValueError(f"{ai_agent_label(normalized_agent)} AI session requires a local AI gateway port.")
@@ -551,6 +556,7 @@ def normalize_proxy_ports(
     proxy_port: str | int | None = None,
     local_proxy_port: str | int | None = None,
     remote_proxy_port: str | int | None = None,
+    allow_remote_only: bool = False,
 ) -> tuple[int | None, int | None]:
     legacy_value = str(proxy_port or "").strip()
     local_explicit = str(local_proxy_port or "").strip()
@@ -565,7 +571,7 @@ def normalize_proxy_ports(
         remote_port = choose_remote_proxy_port()
     else:
         remote_port = None
-    if remote_port and not local_port:
+    if remote_port and not local_port and not allow_remote_only:
         raise ValueError("Local proxy port is required when remote tunnel port is set.")
     return local_port, remote_port
 

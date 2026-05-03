@@ -21,6 +21,14 @@ class FakeGateway:
         self.closed = True
 
 
+def fake_provider_runtime(provider: str = "PackyCode", base_url: str = "https://api.example.test") -> dict[str, object]:
+    return {
+        "provider": provider,
+        "base_url": base_url,
+        "upstream_headers": {"Authorization": "Bearer sk-secret"},
+    }
+
+
 class RemoteActionsTest(unittest.TestCase):
     def test_refuses_other_users_process(self):
         host = SSHHost(alias="alpha")
@@ -274,9 +282,23 @@ class RemoteActionsTest(unittest.TestCase):
 
     def test_open_ssh_terminal_reports_claude_proxy_not_listening(self):
         host = SSHHost(alias="alpha_liu")
+        gateway = FakeGateway()
+
+        class Result:
+            returncode = 0
+            stderr = ""
+
         with (
+            patch("labgpu.remote.actions.sys.platform", "darwin"),
             patch("labgpu.remote.actions.is_local_tcp_port_open", return_value=False),
-            patch("labgpu.remote.actions.subprocess.run") as run,
+            patch(
+                "labgpu.remote.actions.read_ai_provider_runtime",
+                return_value=fake_provider_runtime("PackyCode"),
+            ),
+            patch("labgpu.remote.actions.start_ai_gateway", return_value=gateway) as start_gateway,
+            patch("labgpu.remote.actions.AI_GATEWAY_SESSIONS", []),
+            patch("labgpu.remote.actions.write_terminal_launch_script", return_value=Path("/tmp/labgpu-open.sh")),
+            patch("labgpu.remote.actions.subprocess.run", return_value=Result()),
             patch("labgpu.remote.actions.append_audit"),
         ):
             result = open_ssh_terminal(
@@ -287,10 +309,9 @@ class RemoteActionsTest(unittest.TestCase):
                 ai_mode="proxy_tunnel",
                 provider_name="PackyCode",
             )
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["result"], "local_proxy_not_listening")
-        self.assertIn("CC Switch Claude Code proxy is configured but not listening on 127.0.0.1:15721", result["message"])
-        run.assert_not_called()
+        self.assertTrue(result["ok"])
+        self.assertEqual(start_gateway.call_args.kwargs["target_base_url"], "https://api.example.test")
+        self.assertEqual(start_gateway.call_args.kwargs["upstream_headers"], {"Authorization": "Bearer sk-secret"})
 
     def test_open_ssh_terminal_starts_gateway_for_codex_proxy_tunnel(self):
         host = SSHHost(alias="alpha_liu")
@@ -304,12 +325,8 @@ class RemoteActionsTest(unittest.TestCase):
             patch("labgpu.remote.actions.sys.platform", "darwin"),
             patch("labgpu.remote.actions.is_local_tcp_port_open", return_value=True),
             patch(
-                "labgpu.remote.actions.read_codex_provider_runtime",
-                return_value={
-                    "provider": "OpenAI",
-                    "base_url": "https://api.example.test/v1",
-                    "api_key": "sk-secret",
-                },
+                "labgpu.remote.actions.read_ai_provider_runtime",
+                return_value=fake_provider_runtime("OpenAI", "https://api.example.test/v1"),
             ),
             patch("labgpu.remote.actions.start_ai_gateway", return_value=gateway) as start_gateway,
             patch("labgpu.remote.actions.AI_GATEWAY_SESSIONS", []),
@@ -334,10 +351,43 @@ class RemoteActionsTest(unittest.TestCase):
         self.assertEqual(result["ai_gateway"]["ccswitch_proxy_port"], 15721)
         self.assertNotIn(SESSION_TOKEN, result["command"])
 
+    def test_open_ssh_terminal_direct_provider_does_not_require_local_proxy_port(self):
+        host = SSHHost(alias="alpha_liu")
+        gateway = FakeGateway()
+
+        class Result:
+            returncode = 0
+            stderr = ""
+
+        with (
+            patch("labgpu.remote.actions.sys.platform", "darwin"),
+            patch("labgpu.remote.actions.random.randint", return_value=51234),
+            patch("labgpu.remote.actions.read_ai_provider_runtime", return_value=fake_provider_runtime("PackyCode")),
+            patch("labgpu.remote.actions.start_ai_gateway", return_value=gateway) as start_gateway,
+            patch("labgpu.remote.actions.AI_GATEWAY_SESSIONS", []),
+            patch("labgpu.remote.actions.write_terminal_launch_script", return_value=Path("/tmp/labgpu-open.sh")),
+            patch("labgpu.remote.actions.subprocess.run", return_value=Result()),
+            patch("labgpu.remote.actions.append_audit"),
+        ):
+            result = open_ssh_terminal(
+                host,
+                agent="claude",
+                ai_mode="proxy_tunnel",
+                provider_name="PackyCode",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(start_gateway.call_args.kwargs["target_port"], None)
+        self.assertEqual(start_gateway.call_args.kwargs["target_base_url"], "https://api.example.test")
+        self.assertEqual(result["ai_gateway"]["remote_gateway_port"], 51234)
+        self.assertIsNone(result["ai_gateway"]["ccswitch_proxy_port"])
+        self.assertIn("127.0.0.1:51234:127.0.0.1:49231", result["command"])
+
     def test_open_ssh_terminal_reports_network_proxy_not_listening(self):
         host = SSHHost(alias="alpha_liu")
         with (
             patch("labgpu.remote.actions.is_local_tcp_port_open", return_value=False),
+            patch("labgpu.remote.actions.read_ai_provider_runtime", return_value=fake_provider_runtime("PackyCode")),
             patch("labgpu.remote.actions.subprocess.run") as run,
             patch("labgpu.remote.actions.append_audit"),
         ):
@@ -352,7 +402,7 @@ class RemoteActionsTest(unittest.TestCase):
                 network_local_proxy_port="7890",
             )
         self.assertFalse(result["ok"])
-        self.assertEqual(result["result"], "local_proxy_not_listening")
+        self.assertEqual(result["result"], "network_proxy_not_listening")
         run.assert_not_called()
 
         def port_open(port):
@@ -360,6 +410,7 @@ class RemoteActionsTest(unittest.TestCase):
 
         with (
             patch("labgpu.remote.actions.is_local_tcp_port_open", side_effect=port_open),
+            patch("labgpu.remote.actions.read_ai_provider_runtime", return_value=fake_provider_runtime("PackyCode")),
             patch("labgpu.remote.actions.subprocess.run") as run,
             patch("labgpu.remote.actions.append_audit"),
         ):
@@ -389,6 +440,7 @@ class RemoteActionsTest(unittest.TestCase):
         with (
             patch("labgpu.remote.actions.sys.platform", "darwin"),
             patch("labgpu.remote.actions.is_local_tcp_port_open", return_value=True),
+            patch("labgpu.remote.actions.read_ai_provider_runtime", return_value=fake_provider_runtime("OpenAI", "https://api.example.test/v1")),
             patch("labgpu.remote.actions.start_ai_gateway", return_value=gateway),
             patch("labgpu.remote.actions.AI_GATEWAY_SESSIONS", []),
             patch("labgpu.remote.actions.write_terminal_launch_script", return_value=Path("/tmp/labgpu-open.sh")),
@@ -423,6 +475,7 @@ class RemoteActionsTest(unittest.TestCase):
         with (
             patch("labgpu.remote.actions.sys.platform", "darwin"),
             patch("labgpu.remote.actions.is_local_tcp_port_open", return_value=True),
+            patch("labgpu.remote.actions.read_ai_provider_runtime", return_value=fake_provider_runtime("DMXAPI")),
             patch("labgpu.remote.actions.start_ai_gateway", return_value=gateway) as start_gateway,
             patch("labgpu.remote.actions.AI_GATEWAY_SESSIONS", []),
             patch("labgpu.remote.actions.write_terminal_launch_script", return_value=Path("/tmp/labgpu-open.sh")),
@@ -455,6 +508,7 @@ class RemoteActionsTest(unittest.TestCase):
         with (
             patch("labgpu.remote.actions.sys.platform", "darwin"),
             patch("labgpu.remote.actions.is_local_tcp_port_open", return_value=True),
+            patch("labgpu.remote.actions.read_ai_provider_runtime", return_value=fake_provider_runtime("PackyCode")),
             patch("labgpu.remote.actions.start_ai_gateway", return_value=gateway) as start_gateway,
             patch("labgpu.remote.actions.AI_GATEWAY_SESSIONS", []),
             patch("labgpu.remote.actions.write_terminal_launch_script", return_value=Path("/tmp/labgpu-open.sh")) as write_script,
@@ -499,6 +553,7 @@ class RemoteActionsTest(unittest.TestCase):
         with (
             patch("labgpu.remote.actions.sys.platform", "darwin"),
             patch("labgpu.remote.actions.is_local_tcp_port_open", return_value=True),
+            patch("labgpu.remote.actions.read_ai_provider_runtime", return_value=fake_provider_runtime("PackyCode")),
             patch("labgpu.remote.actions.start_ai_gateway", return_value=gateway),
             patch("labgpu.remote.actions.AI_GATEWAY_SESSIONS", []),
             patch("labgpu.remote.actions.write_terminal_launch_script", return_value=Path("/tmp/labgpu-open.sh")),
