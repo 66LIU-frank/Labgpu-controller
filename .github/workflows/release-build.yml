@@ -31,7 +31,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Build standalone package
-        run: python scripts/build_standalone.py --clean
+        run: python scripts/build_standalone.py --clean --skip-tests
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:

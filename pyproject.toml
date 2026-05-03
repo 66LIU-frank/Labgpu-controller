@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "labgpu"
-version = "0.1.1"
+version = "0.1.2"
 description = "Personal GPU workspace for students using shared SSH servers."
 readme = "README.md"
 requires-python = ">=3.10"

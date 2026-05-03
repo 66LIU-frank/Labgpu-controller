@@ -53,8 +53,8 @@ create a GitHub Release automatically and attach the generated `.dmg` / `.zip`
 files.
 
 ```bash
-git tag -a v0.1.1-alpha -m "LabGPU v0.1.1 alpha"
-git push origin v0.1.1-alpha
+git tag -a v0.1.2-alpha -m "LabGPU v0.1.2 alpha"
+git push origin v0.1.2-alpha
 ```
 
 Release troubleshooting:
