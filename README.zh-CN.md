@@ -3,7 +3,7 @@
 [![CI](https://github.com/66LIU-frank/Labgpu-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/66LIU-frank/Labgpu-controller/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-v0.1.3--alpha-orange)
+![Status](https://img.shields.io/badge/status-v0.1.4--alpha-orange)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -173,8 +173,8 @@ standalone 路线使用 PyInstaller。GitHub 上的 `Release Build` workflow 会
 run 里，打 tag 才会自动创建 GitHub Release 并把产物挂上去。
 
 ```bash
-git tag -a v0.1.3-alpha -m "LabGPU v0.1.3 alpha"
-git push origin v0.1.3-alpha
+git tag -a v0.1.4-alpha -m "LabGPU v0.1.4 alpha"
+git push origin v0.1.4-alpha
 ```
 
 固定服务器范围：

@@ -303,7 +303,9 @@ class ServerHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        if parsed.path == "/":
+        if parsed.path == "/__labgpu/ready":
+            self._text("ok\n")
+        elif parsed.path == "/":
             self._html(render_index(self._data(parsed.query), onboarding=onboarding_state(ssh_config=self.ssh_config)))
         elif parsed.path == "/onboarding":
             self._html(render_onboarding_page(ssh_config=self.ssh_config))
@@ -771,6 +773,9 @@ class ServerHandler(BaseHTTPRequestHandler):
 
     def _html(self, body: str) -> None:
         self._send("text/html; charset=utf-8", body.encode("utf-8"))
+
+    def _text(self, body: str, *, status: HTTPStatus = HTTPStatus.OK) -> None:
+        self._send("text/plain; charset=utf-8", body.encode("utf-8"), status=status)
 
     def _json(self, value: object, *, status: HTTPStatus = HTTPStatus.OK) -> None:
         self._send("application/json; charset=utf-8", json.dumps(value, indent=2, ensure_ascii=False).encode("utf-8"), status=status)

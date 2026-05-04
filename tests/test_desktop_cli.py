@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from labgpu import __version__
 from labgpu.cli import desktop
 from labgpu.cli.main import build_parser
 
@@ -58,8 +59,11 @@ class DesktopCliTest(unittest.TestCase):
     def test_delayed_open_waits_for_local_ui(self):
         with patch("labgpu.cli.desktop.wait_for_local_ui", return_value=True) as wait, patch("labgpu.cli.desktop.open_desktop_window", return_value=True) as open_window:
             desktop.delayed_open_desktop_window("http://127.0.0.1:8798", "auto")
-        wait.assert_called_once_with("http://127.0.0.1:8798")
+        wait.assert_called_once_with("http://127.0.0.1:8798/__labgpu/ready")
         open_window.assert_called_once_with("http://127.0.0.1:8798", browser="auto")
+
+    def test_readiness_url_uses_lightweight_endpoint(self):
+        self.assertEqual(desktop.readiness_url("http://127.0.0.1:8798/"), "http://127.0.0.1:8798/__labgpu/ready")
 
     def test_wait_for_local_ui_returns_true_when_http_responds(self):
         class Response:
@@ -88,7 +92,9 @@ class DesktopCliTest(unittest.TestCase):
                 app_path = desktop.install_macos_app(target)
             launcher = app_path / "Contents" / "MacOS" / "LabGPU"
             self.assertTrue(launcher.exists())
-            self.assertIn("CFBundleExecutable", (app_path / "Contents" / "Info.plist").read_text())
+            plist_text = (app_path / "Contents" / "Info.plist").read_text()
+            self.assertIn("CFBundleExecutable", plist_text)
+            self.assertIn(f"<string>{__version__}</string>", plist_text)
             launcher_text = launcher.read_text()
             self.assertIn("find_labgpu()", launcher_text)
             self.assertIn('exec "$LABGPU_BIN" desktop', launcher_text)

@@ -10,6 +10,7 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
+from labgpu import __version__
 from labgpu.remote.dashboard import serve, split_hosts
 
 MAC_APP_BROWSERS = (
@@ -51,8 +52,12 @@ def find_free_port(host: str) -> int:
 
 
 def delayed_open_desktop_window(url: str, browser: str) -> None:
-    wait_for_local_ui(url)
+    wait_for_local_ui(readiness_url(url))
     open_desktop_window(url, browser=browser)
+
+
+def readiness_url(url: str) -> str:
+    return f"{url.rstrip('/')}/__labgpu/ready"
 
 
 def wait_for_local_ui(url: str, *, timeout: float = 20.0, interval: float = 0.2) -> bool:
@@ -157,7 +162,7 @@ def app_launcher_script() -> str:
 
 
 def app_info_plist() -> str:
-    return """<?xml version="1.0" encoding="UTF-8"?>
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -172,9 +177,9 @@ def app_info_plist() -> str:
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>{__version__}</string>
   <key>CFBundleVersion</key>
-  <string>0.1.0</string>
+  <string>{__version__}</string>
   <key>LSMinimumSystemVersion</key>
   <string>10.15</string>
 </dict>

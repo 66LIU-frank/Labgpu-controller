@@ -3,7 +3,7 @@
 [![CI](https://github.com/66LIU-frank/Labgpu-controller/actions/workflows/ci.yml/badge.svg)](https://github.com/66LIU-frank/Labgpu-controller/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Status](https://img.shields.io/badge/status-v0.1.3--alpha-orange)
+![Status](https://img.shields.io/badge/status-v0.1.4--alpha-orange)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -183,8 +183,8 @@ to the Actions run; tag pushes also publish a GitHub Release with those
 artifacts attached.
 
 ```bash
-git tag -a v0.1.3-alpha -m "LabGPU v0.1.3 alpha"
-git push origin v0.1.3-alpha
+git tag -a v0.1.4-alpha -m "LabGPU v0.1.4 alpha"
+git push origin v0.1.4-alpha
 ```
 
 For a fixed server set:
